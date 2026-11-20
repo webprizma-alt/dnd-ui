@@ -1,0 +1,303 @@
+import 'dotenv/config';
+import express from 'express';
+import fs from 'fs';
+import http from 'http';
+import path from 'path';
+import QRCode from 'qrcode';
+import { WebSocket, WebSocketServer } from 'ws';
+import { GameStore } from './src/server/gameStore.ts';
+import { renderTvMsxHtml } from './src/server/tvMsxHtml.ts';
+import type { ClientMessage, ClientRole, ServerMessage } from './src/shared/types.ts';
+
+interface ConnectedClient {
+  ws: WebSocket;
+  role: ClientRole | null;
+  accountId?: string;
+  playerId?: string;
+  isAlive: boolean;
+}
+
+const PORT = Number(process.env.PORT || 3000);
+const UPLOADS_DIR = path.resolve(process.cwd(), 'data', 'uploads');
+
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const store = new GameStore();
+const clients = new Set<ConnectedClient>();
+
+function getConnectedPlayerIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const client of clients) {
+    if (client.ws.readyState === WebSocket.OPEN && client.role === 'player' && client.playerId) {
+      ids.add(client.playerId);
+    }
+  }
+  return ids;
+}
+
+function sendJson(ws: WebSocket, message: ServerMessage) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
+}
+
+function sendStateToClient(client: ConnectedClient, connectedPlayerIds: Set<string>) {
+  if (!client.role || client.ws.readyState !== WebSocket.OPEN) return;
+
+  if (client.role === 'tv') {
+    sendJson(client.ws, {
+      type: 'tv:state',
+      payload: store.projectForTv(connectedPlayerIds),
+    });
+  } else if (client.role === 'dm') {
+    sendJson(client.ws, {
+      type: 'dm:state',
+      payload: store.projectForDm(connectedPlayerIds),
+    });
+  } else if (client.role === 'player') {
+    sendJson(client.ws, {
+      type: 'player:state',
+      payload: store.projectForPlayer(client.accountId, client.playerId, connectedPlayerIds),
+    });
+  }
+}
+
+function broadcastState() {
+  const connectedPlayerIds = getConnectedPlayerIds();
+  const tvPayload = store.projectForTv(connectedPlayerIds);
+  const dmPayload = store.projectForDm(connectedPlayerIds);
+
+  for (const client of clients) {
+    if (client.ws.readyState !== WebSocket.OPEN || !client.role) continue;
+    if (client.role === 'tv') {
+      sendJson(client.ws, { type: 'tv:state', payload: tvPayload });
+    } else if (client.role === 'dm') {
+      sendJson(client.ws, { type: 'dm:state', payload: dmPayload });
+    } else if (client.role === 'player') {
+      sendJson(client.ws, {
+        type: 'player:state',
+        payload: store.projectForPlayer(client.accountId, client.playerId, connectedPlayerIds),
+      });
+    }
+  }
+}
+
+async function startServer() {
+  const app = express();
+  app.use(express.json({ limit: '16mb' }));
+
+  app.use('/uploads', express.static(UPLOADS_DIR));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  app.get('/api/players', (_req, res) => {
+    res.json({ players: store.getPublicPlayers(getConnectedPlayerIds()) });
+  });
+
+  app.get('/tv-msx', (_req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderTvMsxHtml());
+  });
+
+  app.get('/api/qr', async (req, res) => {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url : '';
+    const format = typeof req.query.format === 'string' ? req.query.format : 'svg';
+    const fallbackOrigin = `${req.protocol}://${req.get('host')}/play`;
+    const targetUrl = rawUrl || fallbackOrigin;
+
+    try {
+      if (format === 'png') {
+        const pngBuffer = await QRCode.toBuffer(targetUrl, {
+          type: 'png',
+          margin: 1,
+          width: 240,
+          color: {
+            dark: '#0B0F17',
+            light: '#F8FAFC',
+          },
+        });
+        res.setHeader('Content-Type', 'image/png');
+        res.send(pngBuffer);
+        return;
+      }
+
+      const svg = await QRCode.toString(targetUrl, {
+        type: 'svg',
+        margin: 1,
+        width: 220,
+        color: {
+          dark: '#0B0F17',
+          light: '#F8FAFC',
+        },
+      });
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.send(svg);
+    } catch (err) {
+      console.error('QR generation error:', err);
+      res.status(500).json({ error: 'Не удалось сгенерировать QR-код' });
+    }
+  });
+
+  app.post('/api/map/upload', (req, res) => {
+    const { dataUrl, locationId } = req.body as {
+      dataUrl?: string;
+      filename?: string;
+      locationId?: string;
+    };
+    if (!dataUrl || typeof dataUrl !== 'string') {
+      res.status(400).json({ error: 'Отсутствуют данные изображения' });
+      return;
+    }
+
+    const match = /^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!match) {
+      res.status(400).json({ error: 'Неверный формат изображения (поддерживаются PNG, JPG, WEBP)' });
+      return;
+    }
+
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 12 * 1024 * 1024) {
+      res.status(413).json({ error: 'Файл слишком большой (максимум 12 МБ)' });
+      return;
+    }
+
+    const filename = `map-${Date.now()}.${ext}`;
+    const targetPath = path.join(UPLOADS_DIR, filename);
+    fs.writeFileSync(targetPath, buffer);
+
+    const publicUrl = `/uploads/${filename}`;
+    store.setMapImage(publicUrl, typeof locationId === 'string' ? locationId : undefined);
+    broadcastState();
+    res.json({ imageUrl: publicUrl });
+  });
+
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ server, path: '/ws' });
+
+  wss.on('connection', (ws) => {
+    const client: ConnectedClient = {
+      ws,
+      role: null,
+      isAlive: true,
+    };
+    clients.add(client);
+
+    ws.on('pong', () => {
+      client.isAlive = true;
+    });
+
+    ws.on('message', (rawData) => {
+      let msg: ClientMessage;
+      try {
+        msg = JSON.parse(rawData.toString()) as ClientMessage;
+      } catch {
+        sendJson(ws, { type: 'error', message: 'Некорректный формат сообщения' });
+        return;
+      }
+
+      if (msg.type === 'join') {
+        const prevRole = client.role;
+        const prevAccountId = client.accountId;
+        const prevPlayerId = client.playerId;
+        client.role = msg.role;
+        client.accountId = msg.accountId;
+        client.playerId = msg.playerId;
+
+        const connectedIds = getConnectedPlayerIds();
+        sendStateToClient(client, connectedIds);
+
+        if (
+          prevRole !== msg.role ||
+          prevAccountId !== msg.accountId ||
+          prevPlayerId !== msg.playerId
+        ) {
+          broadcastState();
+        }
+        return;
+      }
+
+      if (msg.type === 'account:register') {
+        const account = store.registerOrGetAccount(msg.name);
+        if (!account) {
+          sendJson(ws, { type: 'error', message: 'Введите имя участника' });
+          return;
+        }
+        client.role = 'player';
+        client.accountId = account.id;
+        client.playerId = undefined;
+        sendJson(ws, { type: 'account:registered', account });
+        broadcastState();
+        return;
+      }
+
+      const result = store.tryApplyAction(msg);
+      if (result.error) {
+        sendJson(ws, { type: 'error', message: result.error });
+      }
+      if (result.changed) {
+        broadcastState();
+      }
+    });
+
+    ws.on('close', () => {
+      const wasPlayer = client.role === 'player' && Boolean(client.playerId);
+      clients.delete(client);
+      if (wasPlayer) {
+        broadcastState();
+      }
+    });
+  });
+
+  const heartbeat = setInterval(() => {
+    for (const client of clients) {
+      if (!client.isAlive) {
+        client.ws.terminate();
+        clients.delete(client);
+        continue;
+      }
+      client.isAlive = false;
+      if (client.ws.readyState === WebSocket.OPEN) {
+        client.ws.ping();
+      }
+    }
+  }, 30000);
+
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distDir = path.resolve(process.cwd(), 'dist');
+    app.use(express.static(distDir));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
+  }
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Tabletop Sync server listening on http://0.0.0.0:${PORT}`);
+  });
+
+  const shutdown = () => {
+    clearInterval(heartbeat);
+    store.flushSave();
+    wss.close();
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

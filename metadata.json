@@ -1,0 +1,6 @@
+{
+  "name": "Tabletop Sync — DnD",
+  "description": "Синхронизированный сервер для локальных партий D&D: общий тактический экран на ТВ, персональные листы на смартфонах и консоль мастера.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
