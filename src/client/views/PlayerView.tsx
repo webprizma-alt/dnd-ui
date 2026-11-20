@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Award,
   Backpack,
   Bell,
   Camera,
@@ -33,11 +34,14 @@ import {
   formatModifier,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getEffectiveDraftAbilities,
+  getHeroFeats,
   getNextLevelThreshold,
   getProficiencyBonus,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
   resolveWeaponReachRange,
+  sanitizeBackgroundAbilityBonuses,
   sortLevels,
 } from '../../shared/catalogDefaults';
 import type { InventoryItem, ItemCategory, UserAccount } from '../../shared/types';
@@ -398,9 +402,22 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
     const draftBackground = draft
       ? catalogs.backgrounds.find((b) => b.id === draft.backgroundId)
       : null;
+    const draftBgFeat = draftBackground?.featId
+      ? catalogs.feats.find((f) => f.id === draftBackground.featId) ?? null
+      : null;
+    const draftBgBonuses = draft
+      ? sanitizeBackgroundAbilityBonuses(
+          draft.backgroundAbilityBonuses,
+          draft.backgroundId,
+          catalogs
+        )
+      : {};
+    const draftEffectiveAbilities = draft
+      ? getEffectiveDraftAbilities(draft, catalogs)
+      : {};
     const draftLevel = draft ? computeLevelFromXp(draft.xp, catalogs.levels) : 1;
     const draftProfBonus = getProficiencyBonus(draftLevel);
-    const draftDexVal = draft ? draft.abilities.dex : null;
+    const draftDexVal = draft ? draftEffectiveAbilities.dex : null;
     const draftDexMod =
       typeof draftDexVal === 'number' && !Number.isNaN(draftDexVal)
         ? getAbilityModifier(draftDexVal, catalogs.abilityModifiers)
@@ -616,7 +633,8 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   <div className="text-xs font-semibold text-slate-300">Характеристики</div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {catalogs.abilities.map((ab) => {
-                      const val = draft.abilities[ab.id];
+                      const val = draftEffectiveAbilities[ab.id];
+                      const bgBonus = draftBgBonuses[ab.id] ?? 0;
                       const hasValue = typeof val === 'number' && !Number.isNaN(val);
                       const mod = hasValue
                         ? getAbilityModifier(val, catalogs.abilityModifiers)
@@ -625,9 +643,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         <div
                           key={ab.id}
                           className={`rounded-xl border p-3 transition-colors ${
-                            hasValue
-                              ? 'bg-[#0B0F17] border-slate-700/90'
-                              : 'bg-[#0B0F17]/50 border-slate-800/70'
+                            bgBonus > 0
+                              ? 'bg-[#0B0F17] border-amber-500/60'
+                              : hasValue
+                                ? 'bg-[#0B0F17] border-slate-700/90'
+                                : 'bg-[#0B0F17]/50 border-slate-800/70'
                           }`}
                         >
                           <div className="flex items-baseline justify-between gap-1">
@@ -644,12 +664,19 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                             >
                               {mod !== null ? formatModifier(mod) : '—'}
                             </span>
-                            <span
-                              className={`text-xs font-mono tabular-nums ${
-                                hasValue ? 'text-slate-200' : 'text-slate-600'
-                              }`}
-                            >
-                              {hasValue ? val : '—'}
+                            <span className="flex items-center gap-1">
+                              {bgBonus > 0 && (
+                                <span className="px-1 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] font-mono font-semibold text-amber-300">
+                                  +{bgBonus}
+                                </span>
+                              )}
+                              <span
+                                className={`text-xs font-mono tabular-nums ${
+                                  hasValue ? 'text-slate-200' : 'text-slate-600'
+                                }`}
+                              >
+                                {hasValue ? val : '—'}
+                              </span>
                             </span>
                           </div>
                         </div>
@@ -657,6 +684,19 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                     })}
                   </div>
                 </div>
+
+                {/* Origin Feat Preview */}
+                {draftBgFeat && (
+                  <div className="space-y-1.5 pt-3 border-t border-slate-800/80">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                      <Award className="w-3.5 h-3.5 shrink-0" />
+                      <span>Черта предыстории: {draftBgFeat.name}</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {draftBgFeat.description}
+                    </p>
+                  </div>
+                )}
 
                 {/* Selected Skills */}
                 <div className="space-y-2 pt-3 border-t border-slate-800/80">
@@ -678,7 +718,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
                         const isExp = (draft.expertiseSkillIds ?? []).includes(sk.id);
                         const bonusAdd = isExp ? draftProfBonus * 2 : draftProfBonus;
-                        const abVal = draft.abilities[sk.abilityId];
+                        const abVal = draftEffectiveAbilities[sk.abilityId];
                         const totalMod =
                           typeof abVal === 'number'
                             ? getAbilityModifier(abVal, catalogs.abilityModifiers) + bonusAdd
@@ -730,6 +770,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         </div>
                       ))}
                     </div>
+                  )}
+                  {draftClass?.weaponProficiencyNote && (
+                    <p className="text-[11px] text-amber-200/90">
+                      {draftClass.weaponProficiencyNote}
+                    </p>
                   )}
                 </div>
 
@@ -1542,6 +1587,30 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
               </div>
             </div>
 
+            {/* Hero Feats (Origin Feat & Others) */}
+            {(() => {
+              const heroFeats = getHeroFeats(self, catalogs);
+              if (heroFeats.length === 0) return null;
+              return (
+                <div className="rounded-2xl bg-[#131A26] border border-slate-800 p-5 space-y-2.5">
+                  <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                    <Award className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Черты ({heroFeats.length})</span>
+                  </h2>
+                  <div className="divide-y divide-slate-800/80">
+                    {heroFeats.map((feat) => (
+                      <div key={feat.id} className="py-2.5 first:pt-0 last:pb-0 space-y-1">
+                        <div className="text-xs font-semibold text-amber-300">{feat.name}</div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {feat.description}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Learned Proficiencies */}
             <div className="rounded-2xl bg-[#131A26] border border-slate-800 p-5 space-y-2.5">
               <h2 className="text-sm font-semibold text-slate-200">
@@ -1562,6 +1631,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                     </div>
                   ))}
                 </div>
+              )}
+              {classRef?.weaponProficiencyNote && (
+                <p className="text-[11px] text-amber-200/90 pt-2 border-t border-slate-800/80">
+                  {classRef.weaponProficiencyNote}
+                </p>
               )}
             </div>
 

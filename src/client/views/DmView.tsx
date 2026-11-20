@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Award,
   Bell,
   BookOpen,
   Check,
@@ -11,6 +12,7 @@ import {
   EyeOff,
   Grid3X3,
   ImagePlus,
+  Lock,
   Map as MapIcon,
   MapPin,
   Minus,
@@ -38,6 +40,10 @@ import {
   formatWeaponReachRange,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getBackgroundLockedSkillIds,
+  getClassDefaultProficiencyIds,
+  getHeroAllowedSkillIds,
+  getHeroFeats,
   getMapLightingDescription,
   getNextLevelThreshold,
   getProficiencyBonus,
@@ -349,7 +355,15 @@ export function DmView({ onNavigate }: DmViewProps) {
 
   const handleToggleSkill = (skillId: string) => {
     if (!selectedPlayer) return;
+    const bgLocked = new Set(getBackgroundLockedSkillIds(selectedPlayer.backgroundId, catalogs));
+    const allowedSkills = getHeroAllowedSkillIds(
+      selectedPlayer.classId,
+      selectedPlayer.backgroundId,
+      catalogs
+    );
     const exists = selectedPlayer.proficientSkillIds.includes(skillId);
+    if (exists && bgLocked.has(skillId)) return;
+    if (!exists && allowedSkills && !allowedSkills.has(skillId)) return;
     const currentExp = selectedPlayer.expertiseSkillIds ?? [];
     const nextProf = exists
       ? selectedPlayer.proficientSkillIds.filter((id) => id !== skillId)
@@ -365,6 +379,11 @@ export function DmView({ onNavigate }: DmViewProps) {
 
   const handleToggleExpertise = (skillId: string) => {
     if (!selectedPlayer) return;
+    const allowedSkills = getHeroAllowedSkillIds(
+      selectedPlayer.classId,
+      selectedPlayer.backgroundId,
+      catalogs
+    );
     const currentExp = selectedPlayer.expertiseSkillIds ?? [];
     const hasExp = currentExp.includes(skillId);
     if (hasExp) {
@@ -374,6 +393,7 @@ export function DmView({ onNavigate }: DmViewProps) {
         expertiseSkillIds: currentExp.filter((id) => id !== skillId),
       });
     } else {
+      if (allowedSkills && !allowedSkills.has(skillId)) return;
       const nextProf = selectedPlayer.proficientSkillIds.includes(skillId)
         ? selectedPlayer.proficientSkillIds
         : [...selectedPlayer.proficientSkillIds, skillId];
@@ -2400,172 +2420,325 @@ export function DmView({ onNavigate }: DmViewProps) {
                             })}
                           </div>
                         </div>
+
+                        {/* DM-Only Saving Throw Proficiencies */}
+                        {(() => {
+                          const cls = catalogs.classes.find((c) => c.id === selectedPlayer.classId);
+                          const saveIds = cls?.savingThrowAbilityIds ?? [];
+                          if (saveIds.length === 0) return null;
+                          return (
+                            <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-sky-500/30 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold text-sky-300 flex items-center gap-1.5">
+                                  <Shield className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Владение спасбросками</span>
+                                </span>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/40 text-sky-300">
+                                  Только для ДМ
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {saveIds.map((abId) => {
+                                  const ab = catalogs.abilities.find((a) => a.id === abId);
+                                  if (!ab) return null;
+                                  const score = selectedPlayer.abilities[ab.id] ?? 10;
+                                  const saveMod =
+                                    getAbilityModifier(score, catalogs.abilityModifiers) + profBonus;
+                                  return (
+                                    <span
+                                      key={ab.id}
+                                      className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100 flex items-center gap-1.5"
+                                    >
+                                      <span>{ab.name}</span>
+                                      <span className="font-mono tabular-nums font-bold text-sky-300">
+                                        {formatModifier(saveMod)}
+                                      </span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Hero Feats (Origin Feat from Background + Any Additional Feats) */}
+                        {(() => {
+                          const heroFeats = getHeroFeats(selectedPlayer, catalogs);
+                          if (heroFeats.length === 0) return null;
+                          return (
+                            <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                              <div className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                                <Award className="w-3.5 h-3.5 shrink-0" />
+                                <span>Черты героя</span>
+                              </div>
+                              <div className="space-y-2 divide-y divide-slate-800/80">
+                                {heroFeats.map((feat) => (
+                                  <div key={feat.id} className="pt-2 first:pt-0 space-y-1">
+                                    <div className="text-xs font-semibold text-slate-100">
+                                      {feat.name}
+                                    </div>
+                                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                                      {feat.description}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
                     {/* SUB-TAB 3: SKILLS & LEARNED PROFICIENCIES */}
-                    {playerSubTab === 'skills' && (
-                      <div className="space-y-5">
-                        {/* Proficiencies (Weapon / Armor) */}
-                        <div className="space-y-2">
-                          <div className="flex items-baseline justify-between">
-                            <h3 className="text-xs font-semibold text-slate-200">
-                              Изученные владения ({selectedPlayer.proficiencyIds.length})
-                            </h3>
-                            <span className="text-[11px] text-slate-400">
-                              Бонус мастерства +{profBonus}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-1 gap-1.5">
-                            {catalogs.proficiencies.map((pr) => {
-                              const active = selectedPlayer.proficiencyIds.includes(pr.id);
-                              return (
-                                <button
-                                  key={pr.id}
-                                  type="button"
-                                  onClick={() => handleToggleProficiency(pr.id)}
-                                  className={`px-3 py-2 rounded-lg border text-left flex items-center justify-between gap-2 text-xs transition-colors ${
-                                    active
-                                      ? 'bg-amber-500/15 border-amber-500/60 text-slate-100'
-                                      : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <span className="truncate font-medium">{pr.name}</span>
-                                  <span className="text-[11px] shrink-0">
-                                    {active ? 'Изучено' : 'Нет'}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                    {playerSubTab === 'skills' && (() => {
+                      const selectedClass = catalogs.classes.find(
+                        (c) => c.id === selectedPlayer.classId
+                      );
+                      const classDefaultProfSet = new Set(
+                        getClassDefaultProficiencyIds(selectedPlayer.classId, catalogs)
+                      );
+                      const bgLockedSkillSet = new Set(
+                        getBackgroundLockedSkillIds(selectedPlayer.backgroundId, catalogs)
+                      );
+                      const allowedSkillSet = getHeroAllowedSkillIds(
+                        selectedPlayer.classId,
+                        selectedPlayer.backgroundId,
+                        catalogs
+                      );
 
-                        {/* Senses & Vision for Hero */}
-                        <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
-                            <VisionSelector
-                              catalogVisions={catalogs.visions}
-                              value={selectedPlayer.visions ?? []}
-                              onChange={(nextVisions) =>
-                                send({
-                                  type: 'dm:updateStats',
-                                  playerId: selectedPlayer.id,
-                                  visions: nextVisions,
-                                })
+                      const availableSkills = catalogs.skills.filter(
+                        (sk) => !allowedSkillSet || allowedSkillSet.has(sk.id)
+                      );
+                      const unavailableSkills = allowedSkillSet
+                        ? catalogs.skills.filter((sk) => !allowedSkillSet.has(sk.id))
+                        : [];
+
+                      const renderSkillRow = (
+                        sk: (typeof catalogs.skills)[number],
+                        isUnavailable: boolean
+                      ) => {
+                        const isBgLocked = bgLockedSkillSet.has(sk.id);
+                        const isExp = (selectedPlayer.expertiseSkillIds ?? []).includes(sk.id);
+                        const active =
+                          isBgLocked ||
+                          isExp ||
+                          selectedPlayer.proficientSkillIds.includes(sk.id);
+                        const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
+                        const score = selectedPlayer.abilities[sk.abilityId] ?? 10;
+                        const bonusAdd = isExp ? profBonus * 2 : active ? profBonus : 0;
+                        const totalMod =
+                          getAbilityModifier(score, catalogs.abilityModifiers) + bonusAdd;
+
+                        return (
+                          <div
+                            key={sk.id}
+                            className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
+                              isUnavailable && !active
+                                ? 'text-slate-600 opacity-55'
+                                : isExp
+                                  ? 'bg-sky-500/10 text-slate-100'
+                                  : isBgLocked
+                                    ? 'bg-emerald-500/10 text-slate-100'
+                                    : active
+                                      ? 'bg-amber-500/10 text-slate-100'
+                                      : 'text-slate-400 hover:bg-slate-800/40'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              disabled={isBgLocked || (isUnavailable && !active)}
+                              onClick={() => handleToggleSkill(sk.id)}
+                              title={
+                                isBgLocked
+                                  ? 'Навык предыстории (выдан автоматически, отключить нельзя)'
+                                  : isUnavailable
+                                    ? 'Навык недоступен выбранному классу и предыстории'
+                                    : undefined
                               }
-                              compact={true}
-                              title="Зрение героя"
-                            />
-                            <label className="block space-y-1 pt-1 border-t border-slate-800/80">
-                              <span className="text-[11px] text-slate-400">
-                                Чувства (дополнительно)
-                              </span>
-                              <input
-                                type="text"
-                                value={sensesDraft}
-                                onChange={(e) => setSensesDraft(e.target.value)}
-                                onBlur={() => {
-                                  if (sensesDraft !== (selectedPlayer.senses ?? '')) {
-                                    send({
-                                      type: 'dm:updateStats',
-                                      playerId: selectedPlayer.id,
-                                      senses: sensesDraft.trim(),
-                                    });
-                                  }
-                                }}
-                                placeholder="Например: острый слух, пасс. Восприятие 14"
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                              />
-                            </label>
-                          </div>
-                        </div>
-
-                        {/* Skills & Expertise */}
-                        <div className="space-y-2 pt-2 border-t border-slate-800">
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-xs font-semibold text-slate-200">
-                              Навыки (владение и экспертиза ×2)
-                            </h3>
-                            <span className="text-[11px] font-mono text-slate-400">
-                              БМ +{profBonus} · ×2 = +{profBonus * 2}
-                            </span>
-                          </div>
-                          <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
-                            {catalogs.skills.map((sk) => {
-                              const isExp = (selectedPlayer.expertiseSkillIds ?? []).includes(sk.id);
-                              const active =
-                                isExp || selectedPlayer.proficientSkillIds.includes(sk.id);
-                              const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
-                              const score = selectedPlayer.abilities[sk.abilityId] ?? 10;
-                              const bonusAdd = isExp ? profBonus * 2 : active ? profBonus : 0;
-                              const totalMod =
-                                getAbilityModifier(score, catalogs.abilityModifiers) + bonusAdd;
-
-                              return (
-                                <div
-                                  key={sk.id}
-                                  className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
-                                    isExp
-                                      ? 'bg-sky-500/10 text-slate-100'
+                              className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0 disabled:cursor-default"
+                            >
+                              <span
+                                className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                                  isExp
+                                    ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                    : isBgLocked
+                                      ? 'bg-emerald-500 border-emerald-500 text-slate-950'
                                       : active
-                                        ? 'bg-amber-500/10 text-slate-100'
-                                        : 'text-slate-400 hover:bg-slate-800/40'
-                                  }`}
-                                >
+                                        ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                        : 'border-slate-700'
+                                }`}
+                              >
+                                {isBgLocked ? (
+                                  <Lock className="w-2.5 h-2.5" />
+                                ) : active ? (
+                                  <Check className="w-2.5 h-2.5" />
+                                ) : null}
+                              </span>
+                              <span className="truncate font-medium">{sk.name}</span>
+                              <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                                {ab?.shortName ?? '—'}
+                              </span>
+                              {isBgLocked && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] text-emerald-300 shrink-0">
+                                  Предыстория
+                                </span>
+                              )}
+                              {isUnavailable && !active && (
+                                <span className="text-[10px] text-slate-500 shrink-0">
+                                  Недоступно
+                                </span>
+                              )}
+                            </button>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                disabled={isUnavailable && !isExp}
+                                onClick={() => handleToggleExpertise(sk.id)}
+                                title="Экспертиза (бонус владения ×2)"
+                                className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  isExp
+                                    ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
+                                    : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
+                                }`}
+                              >
+                                ×2
+                              </button>
+                              <span
+                                className={`w-8 text-right font-mono tabular-nums font-semibold ${
+                                  isExp
+                                    ? 'text-sky-300'
+                                    : isBgLocked
+                                      ? 'text-emerald-400'
+                                      : active
+                                        ? 'text-amber-400'
+                                        : 'text-slate-400'
+                                }`}
+                              >
+                                {formatModifier(totalMod)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <div className="space-y-5">
+                          {/* Proficiencies (Weapon / Armor) */}
+                          <div className="space-y-2">
+                            <div className="flex items-baseline justify-between">
+                              <h3 className="text-xs font-semibold text-slate-200">
+                                Изученные владения ({selectedPlayer.proficiencyIds.length})
+                              </h3>
+                              <span className="text-[11px] text-slate-400">
+                                Бонус мастерства +{profBonus}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1.5">
+                              {catalogs.proficiencies.map((pr) => {
+                                const active = selectedPlayer.proficiencyIds.includes(pr.id);
+                                const fromClass = classDefaultProfSet.has(pr.id);
+                                return (
                                   <button
+                                    key={pr.id}
                                     type="button"
-                                    onClick={() => handleToggleSkill(sk.id)}
-                                    className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0"
+                                    onClick={() => handleToggleProficiency(pr.id)}
+                                    className={`px-3 py-2 rounded-lg border text-left flex items-center justify-between gap-2 text-xs transition-colors ${
+                                      active
+                                        ? 'bg-amber-500/15 border-amber-500/60 text-slate-100'
+                                        : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                                    }`}
                                   >
-                                    <span
-                                      className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                                        isExp
-                                          ? 'bg-sky-400 border-sky-400 text-slate-950'
-                                          : active
-                                            ? 'bg-amber-500 border-amber-500 text-slate-950'
-                                            : 'border-slate-600'
-                                      }`}
-                                    >
-                                      {active && <Check className="w-2.5 h-2.5" />}
+                                    <span className="truncate font-medium flex items-center gap-1.5 min-w-0">
+                                      <span className="truncate">{pr.name}</span>
+                                      {fromClass && (
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] text-amber-300 shrink-0">
+                                          Класс
+                                        </span>
+                                      )}
                                     </span>
-                                    <span className="truncate font-medium">{sk.name}</span>
-                                    <span className="text-[10px] font-mono text-slate-500 shrink-0">
-                                      {ab?.shortName ?? '—'}
+                                    <span className="text-[11px] shrink-0">
+                                      {active ? 'Изучено' : 'Нет'}
                                     </span>
                                   </button>
+                                );
+                              })}
+                            </div>
+                            {selectedClass?.weaponProficiencyNote && (
+                              <p className="text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                                {selectedClass.weaponProficiencyNote}
+                              </p>
+                            )}
+                          </div>
 
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleExpertise(sk.id)}
-                                      title="Экспертиза (бонус владения ×2)"
-                                      className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors ${
-                                        isExp
-                                          ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
-                                          : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
-                                      }`}
-                                    >
-                                      ×2
-                                    </button>
-                                    <span
-                                      className={`w-8 text-right font-mono tabular-nums font-semibold ${
-                                        isExp
-                                          ? 'text-sky-300'
-                                          : active
-                                            ? 'text-amber-400'
-                                            : 'text-slate-400'
-                                      }`}
-                                    >
-                                      {formatModifier(totalMod)}
-                                    </span>
+                          {/* Senses & Vision for Hero */}
+                          <div className="space-y-2.5 pt-2 border-t border-slate-800">
+                            <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                              <VisionSelector
+                                catalogVisions={catalogs.visions}
+                                value={selectedPlayer.visions ?? []}
+                                onChange={(nextVisions) =>
+                                  send({
+                                    type: 'dm:updateStats',
+                                    playerId: selectedPlayer.id,
+                                    visions: nextVisions,
+                                  })
+                                }
+                                compact={true}
+                                title="Зрение героя"
+                              />
+                              <label className="block space-y-1 pt-1 border-t border-slate-800/80">
+                                <span className="text-[11px] text-slate-400">
+                                  Чувства (дополнительно)
+                                </span>
+                                <input
+                                  type="text"
+                                  value={sensesDraft}
+                                  onChange={(e) => setSensesDraft(e.target.value)}
+                                  onBlur={() => {
+                                    if (sensesDraft !== (selectedPlayer.senses ?? '')) {
+                                      send({
+                                        type: 'dm:updateStats',
+                                        playerId: selectedPlayer.id,
+                                        senses: sensesDraft.trim(),
+                                      });
+                                    }
+                                  }}
+                                  placeholder="Например: острый слух, пасс. Восприятие 14"
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                                />
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Skills & Expertise */}
+                          <div className="space-y-2 pt-2 border-t border-slate-800">
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className="text-xs font-semibold text-slate-200">
+                                Навыки (владение и экспертиза ×2)
+                              </h3>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                БМ +{profBonus} · ×2 = +{profBonus * 2}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 leading-relaxed">
+                              Навыки предыстории закреплены. Остальные классовые навыки можно изучать в ходе игры; недоступные классу навыки заблокированы.
+                            </p>
+                            <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
+                              {availableSkills.map((sk) => renderSkillRow(sk, false))}
+                              {unavailableSkills.length > 0 && (
+                                <>
+                                  <div className="px-3 py-1.5 bg-[#131A26]/70 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                    Недоступны по классу и предыстории ({unavailableSkills.length})
                                   </div>
-                                </div>
-                              );
-                            })}
+                                  {unavailableSkills.map((sk) => renderSkillRow(sk, true))}
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 )}
               </>

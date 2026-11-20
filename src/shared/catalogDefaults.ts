@@ -3,7 +3,9 @@ import type {
   AbilityRef,
   ArmorCategory,
   ArmorRef,
+  CharacterDraft,
   EntityVisionEntry,
+  FeatRef,
   GameCatalogs,
   InventoryItem,
   LevelThresholdRef,
@@ -102,37 +104,394 @@ export function createDefaultCatalogs(): GameCatalogs {
     abilities,
     abilityModifiers,
     classes: [
-      { id: 'artificer', name: 'Артефактор', description: 'Мастер магических изобретений, рун и алхимических устройств.' },
-      { id: 'bard', name: 'Бард', description: 'Вдохновитель и заклинатель, черпающий магию в музыке и слове.' },
-      { id: 'barbarian', name: 'Варвар', description: 'Неистовый боец, полагающийся на ярость и выносливость.' },
-      { id: 'fighter', name: 'Воин', description: 'Мастер тактики, оружия и доспехов в любом сражении.' },
-      { id: 'wizard', name: 'Волшебник', description: 'Ученый-маг, изучающий тайные заклинания по гримуару.' },
-      { id: 'druid', name: 'Друид', description: 'Хранитель природы, управляющий стихиями и обликом зверей.' },
-      { id: 'cleric', name: 'Жрец', description: 'Проводник божественной воли, целитель и защитник отряда.' },
-      { id: 'warlock', name: 'Колдун', description: 'Заклинатель, получивший силу через пакт с могущественной сущностью.' },
-      { id: 'monk', name: 'Монах', description: 'Мастер боевых искусств, направляющий внутреннюю энергию ци.' },
-      { id: 'paladin', name: 'Паладин', description: 'Воин клятвы, сочетающий тяжелую броню и священную магию.' },
-      { id: 'rogue', name: 'Плут', description: 'Специалист по скрытности, ловушкам и точным ударам.' },
-      { id: 'ranger', name: 'Следопыт', description: 'Охотник и разведчик диких земель, меткий стрелок.' },
-      { id: 'sorcerer', name: 'Чародей', description: 'Носитель врожденной магии, изменяющий плетение силой воли.' },
+      {
+        id: 'artificer',
+        name: 'Артефактор',
+        description: 'Мастер магических изобретений, рун и алхимических устройств.',
+        savingThrowAbilityIds: ['con', 'int'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['perception', 'history', 'sleight_of_hand', 'medicine', 'nature', 'investigation', 'arcana'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_shield'],
+      },
+      {
+        id: 'bard',
+        name: 'Бард',
+        description: 'Вдохновитель и заклинатель, черпающий магию в музыке и слове.',
+        savingThrowAbilityIds: ['dex', 'cha'],
+        skillChoiceCount: 3,
+        allowedSkillIds: [],
+        anySkillAllowed: true,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light'],
+      },
+      {
+        id: 'barbarian',
+        name: 'Варвар',
+        description: 'Неистовый боец, полагающийся на ярость и выносливость.',
+        savingThrowAbilityIds: ['str', 'con'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['athletics', 'perception', 'survival', 'intimidation', 'animal_handling', 'nature'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_martial', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_shield'],
+      },
+      {
+        id: 'fighter',
+        name: 'Воин',
+        description: 'Мастер тактики, оружия и доспехов в любом сражении.',
+        savingThrowAbilityIds: ['str', 'con'],
+        skillChoiceCount: 2,
+        allowedSkillIds: [
+          'acrobatics',
+          'athletics',
+          'perception',
+          'survival',
+          'intimidation',
+          'history',
+          'animal_handling',
+          'insight',
+          'persuasion',
+        ],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_martial', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_heavy', 'armor_shield'],
+      },
+      {
+        id: 'wizard',
+        name: 'Волшебник',
+        description: 'Ученый-маг, изучающий тайные заклинания по гримуару.',
+        savingThrowAbilityIds: ['int', 'wis'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['history', 'medicine', 'nature', 'insight', 'investigation', 'religion', 'arcana'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: [],
+      },
+      {
+        id: 'druid',
+        name: 'Друид',
+        description: 'Хранитель природы, управляющий стихиями и обликом зверей.',
+        savingThrowAbilityIds: ['int', 'wis'],
+        skillChoiceCount: 2,
+        allowedSkillIds: [
+          'perception',
+          'survival',
+          'medicine',
+          'animal_handling',
+          'nature',
+          'insight',
+          'religion',
+          'arcana',
+        ],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_shield'],
+      },
+      {
+        id: 'cleric',
+        name: 'Жрец',
+        description: 'Проводник божественной воли, целитель и защитник отряда.',
+        savingThrowAbilityIds: ['wis', 'cha'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['history', 'medicine', 'insight', 'religion', 'persuasion'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_shield'],
+      },
+      {
+        id: 'warlock',
+        name: 'Колдун',
+        description: 'Заклинатель, получивший силу через пакт с могущественной сущностью.',
+        savingThrowAbilityIds: ['wis', 'cha'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['intimidation', 'history', 'deception', 'nature', 'investigation', 'religion', 'arcana'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light'],
+      },
+      {
+        id: 'monk',
+        name: 'Монах',
+        description: 'Мастер боевых искусств, направляющий внутреннюю энергию ци.',
+        savingThrowAbilityIds: ['str', 'dex'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['acrobatics', 'athletics', 'history', 'insight', 'religion', 'stealth'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        weaponProficiencyNote: 'Также воинское оружие со свойством «Лёгкое»',
+        armorProficiencyIds: [],
+      },
+      {
+        id: 'paladin',
+        name: 'Паладин',
+        description: 'Воин клятвы, сочетающий тяжелую броню и священную магию.',
+        savingThrowAbilityIds: ['wis', 'cha'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['athletics', 'intimidation', 'medicine', 'insight', 'religion', 'persuasion'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_martial', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_heavy', 'armor_shield'],
+      },
+      {
+        id: 'rogue',
+        name: 'Плут',
+        description: 'Специалист по скрытности, ловушкам и точным ударам.',
+        savingThrowAbilityIds: ['dex', 'int'],
+        skillChoiceCount: 4,
+        allowedSkillIds: [
+          'acrobatics',
+          'athletics',
+          'perception',
+          'intimidation',
+          'sleight_of_hand',
+          'deception',
+          'insight',
+          'investigation',
+          'stealth',
+          'persuasion',
+        ],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        weaponProficiencyNote: 'Также воинское оружие со свойством «Фехтовальное» или «Лёгкое»',
+        armorProficiencyIds: ['armor_light'],
+      },
+      {
+        id: 'ranger',
+        name: 'Следопыт',
+        description: 'Охотник и разведчик диких земель, меткий стрелок.',
+        savingThrowAbilityIds: ['str', 'dex'],
+        skillChoiceCount: 3,
+        allowedSkillIds: [
+          'athletics',
+          'perception',
+          'survival',
+          'animal_handling',
+          'nature',
+          'insight',
+          'investigation',
+          'stealth',
+        ],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_martial', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: ['armor_light', 'armor_medium', 'armor_shield'],
+      },
+      {
+        id: 'sorcerer',
+        name: 'Чародей',
+        description: 'Носитель врожденной магии, изменяющий плетение силой воли.',
+        savingThrowAbilityIds: ['con', 'cha'],
+        skillChoiceCount: 2,
+        allowedSkillIds: ['intimidation', 'deception', 'insight', 'religion', 'arcana', 'persuasion'],
+        anySkillAllowed: false,
+        weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
+        armorProficiencyIds: [],
+      },
     ],
     backgrounds: [
-      { id: 'entertainer', name: 'Артист', description: 'Привык выступать перед публикой и завоевывать внимание толпы.' },
-      { id: 'wayfarer', name: 'Бродяга', description: 'Вырос на улицах и дорогах, умеет выживать и находить лазейки.' },
-      { id: 'noble', name: 'Дворянин', description: 'Воспитан в знатном роду, знаком с этикетом и политикой.' },
-      { id: 'sailor', name: 'Моряк', description: 'Закален штормами, знает корабельное дело и портовые нравы.' },
-      { id: 'sage', name: 'Мудрец', description: 'Посвятил годы книгам, архивам и поиску утраченных знаний.' },
-      { id: 'hermit', name: 'Отшельник', description: 'Провел долгое время в уединении, размышлениях и самопознании.' },
-      { id: 'scribe', name: 'Писарь', description: 'Искусен в документах, шифрах, летописях и переписке.' },
-      { id: 'acolyte', name: 'Послушник', description: 'Служил в храме, знает обряды, догматы и духовные традиции.' },
-      { id: 'criminal', name: 'Преступник', description: 'Имеет связи в теневом мире и опыт обхода закона.' },
-      { id: 'guide', name: 'Проводник', description: 'Знает тайные тропы, ориентируется на местности и в дикой природе.' },
-      { id: 'artisan', name: 'Ремесленник', description: 'Состоял в гильдии мастеров, разбирается в ремесле и материалах.' },
-      { id: 'soldier', name: 'Солдат', description: 'Прошел военную службу, обучен дисциплине и строевому бою.' },
-      { id: 'guard', name: 'Стражник', description: 'Нес караульную службу, натренирован замечать угрозы и нарушителей.' },
-      { id: 'merchant', name: 'Торговец', description: 'Умеет оценивать товары, торговаться и вести дела с купцами.' },
-      { id: 'farmer', name: 'Фермер', description: 'Привык к тяжелому труду на земле, уходу за животными и хозяйству.' },
-      { id: 'charlatan', name: 'Шарлатан', description: 'Мастер афер, подделок и убедительных вымышленных историй.' },
+      {
+        id: 'entertainer',
+        name: 'Артист',
+        description: 'Привык выступать перед публикой и завоевывать внимание толпы.',
+        abilityIds: ['str', 'dex', 'cha'],
+        featId: 'musician',
+        skillIds: ['acrobatics', 'performance'],
+      },
+      {
+        id: 'wayfarer',
+        name: 'Бродяга',
+        description: 'Вырос на улицах и дорогах, умеет выживать и находить лазейки.',
+        abilityIds: ['dex', 'wis', 'cha'],
+        featId: 'lucky',
+        skillIds: ['insight', 'stealth'],
+      },
+      {
+        id: 'noble',
+        name: 'Дворянин',
+        description: 'Воспитан в знатном роду, знаком с этикетом и политикой.',
+        abilityIds: ['str', 'int', 'cha'],
+        featId: 'skilled',
+        skillIds: ['history', 'persuasion'],
+      },
+      {
+        id: 'sailor',
+        name: 'Моряк',
+        description: 'Закален штормами, знает корабельное дело и портовые нравы.',
+        abilityIds: ['str', 'dex', 'wis'],
+        featId: 'tavern_brawler',
+        skillIds: ['acrobatics', 'perception'],
+      },
+      {
+        id: 'sage',
+        name: 'Мудрец',
+        description: 'Посвятил годы книгам, архивам и поиску утраченных знаний.',
+        abilityIds: ['con', 'int', 'wis'],
+        featId: 'magic_initiate_wizard',
+        skillIds: ['history', 'arcana'],
+      },
+      {
+        id: 'hermit',
+        name: 'Отшельник',
+        description: 'Провел долгое время в уединении, размышлениях и самопознании.',
+        abilityIds: ['con', 'wis', 'cha'],
+        featId: 'healer',
+        skillIds: ['medicine', 'religion'],
+      },
+      {
+        id: 'scribe',
+        name: 'Писарь',
+        description: 'Искусен в документах, шифрах, летописях и переписке.',
+        abilityIds: ['dex', 'int', 'wis'],
+        featId: 'skilled',
+        skillIds: ['perception', 'investigation'],
+      },
+      {
+        id: 'acolyte',
+        name: 'Послушник',
+        description: 'Служил в храме, знает обряды, догматы и духовные традиции.',
+        abilityIds: ['int', 'wis', 'cha'],
+        featId: 'magic_initiate_cleric',
+        skillIds: ['insight', 'religion'],
+      },
+      {
+        id: 'criminal',
+        name: 'Преступник',
+        description: 'Имеет связи в теневом мире и опыт обхода закона.',
+        abilityIds: ['dex', 'con', 'int'],
+        featId: 'alert',
+        skillIds: ['sleight_of_hand', 'stealth'],
+      },
+      {
+        id: 'guide',
+        name: 'Проводник',
+        description: 'Знает тайные тропы, ориентируется на местности и в дикой природе.',
+        abilityIds: ['dex', 'con', 'wis'],
+        featId: 'magic_initiate_druid',
+        skillIds: ['survival', 'stealth'],
+      },
+      {
+        id: 'artisan',
+        name: 'Ремесленник',
+        description: 'Состоял в гильдии мастеров, разбирается в ремесле и материалах.',
+        abilityIds: ['str', 'dex', 'int'],
+        featId: 'crafter',
+        skillIds: ['investigation', 'persuasion'],
+      },
+      {
+        id: 'soldier',
+        name: 'Солдат',
+        description: 'Прошел военную службу, обучен дисциплине и строевому бою.',
+        abilityIds: ['str', 'dex', 'con'],
+        featId: 'savage_attacker',
+        skillIds: ['athletics', 'intimidation'],
+      },
+      {
+        id: 'guard',
+        name: 'Стражник',
+        description: 'Нес караульную службу, натренирован замечать угрозы и нарушителей.',
+        abilityIds: ['str', 'int', 'wis'],
+        featId: 'alert',
+        skillIds: ['athletics', 'perception'],
+      },
+      {
+        id: 'merchant',
+        name: 'Торговец',
+        description: 'Умеет оценивать товары, торговаться и вести дела с купцами.',
+        abilityIds: ['con', 'int', 'cha'],
+        featId: 'lucky',
+        skillIds: ['persuasion', 'animal_handling'],
+      },
+      {
+        id: 'farmer',
+        name: 'Фермер',
+        description: 'Привык к тяжелому труду на земле, уходу за животными и хозяйству.',
+        abilityIds: ['str', 'con', 'wis'],
+        featId: 'tough',
+        skillIds: ['nature', 'animal_handling'],
+      },
+      {
+        id: 'charlatan',
+        name: 'Шарлатан',
+        description: 'Мастер афер, подделок и убедительных вымышленных историй.',
+        abilityIds: ['dex', 'con', 'cha'],
+        featId: 'skilled',
+        skillIds: ['sleight_of_hand', 'deception'],
+      },
+    ],
+    feats: [
+      {
+        id: 'alert',
+        name: 'Бдительный',
+        description:
+          'Владение Инициативой: при броске Инициативы добавляйте свой Бонус владения. Обмен Инициативой: сразу после броска Инициативы вы можете обменяться значениями Инициативы с одним согласным союзником в том же бою (если никто из вас не Недееспособен).',
+      },
+      {
+        id: 'lucky',
+        name: 'Везучий',
+        description:
+          'Очки везения (равны Бонусу владения, восстанавливаются после Долгого отдыха). Преимущество: потратьте 1 Очко везения при Тесте К20, чтобы получить Преимущество. Помеха: когда существо совершает бросок атаки по вам, потратьте 1 Очко везения, чтобы наложить Помеху.',
+      },
+      {
+        id: 'tavern_brawler',
+        name: 'Дебошир',
+        description:
+          'Усиленный безоружный удар (1к4 + мод. Силы дробящего урона) с перебросом «1» на кости урона. Владение импровизированным оружием. Толчок: 1 раз в ход при попадании Безоружным ударом частью действия Атака можно оттолкнуть цель на 5 футов.',
+      },
+      {
+        id: 'tough',
+        name: 'Крепкий',
+        description:
+          'Ваш максимум Хитов увеличивается на величину, равную удвоенному уровню персонажа, на котором вы получаете эту черту. При каждом последующем получении уровня ваш максимум Хитов увеличивается ещё на 2 Хита.',
+      },
+      {
+        id: 'healer',
+        name: 'Лекарь',
+        description:
+          'Боевой целитель: действием Использование потратьте 1 применение Комплекта целителя на существо в пределах 5 футов — оно может потратить Кость хитов и восстановить результат броска + ваш Бонус владения. Переброс лечения: перебрасывайте «1» на костях лечения.',
+      },
+      {
+        id: 'crafter',
+        name: 'Мастеровой',
+        description:
+          'Владение тремя Ремесленными инструментами. Скидка 20% при покупке немагических предметов. Быстрое изготовление: после Долгого отдыха можно изготовить простой предмет снаряжения (существует до следующего Долгого отдыха).',
+      },
+      {
+        id: 'musician',
+        name: 'Музыкант',
+        description:
+          'Владение тремя Музыкальными инструментами. Ободряющая песня: по завершении Короткого или Долгого отдыха вы можете сыграть песню и дать Героическое вдохновение союзникам (число целей равно вашему Бонусу владения).',
+      },
+      {
+        id: 'savage_attacker',
+        name: 'Неистово атакующий',
+        description:
+          'Один раз за ход, когда вы попадаете по цели оружием, вы можете бросить кости урона этого оружия дважды и использовать любой из результатов.',
+      },
+      {
+        id: 'skilled',
+        name: 'Одарённый',
+        description:
+          'Вы получаете владение тремя навыками или инструментами в любой комбинации на ваш выбор. Черту можно брать повторно.',
+      },
+      {
+        id: 'magic_initiate_wizard',
+        name: 'Посвящённый в магию (Волшебник)',
+        description:
+          'Вы изучаете 2 заговора и 1 заклинание 1-го уровня из списка Волшебника (заклинательная характеристика на выбор: Интеллект, Мудрость или Харизма). Заклинание всегда подготовлено, его можно сотворить 1 раз без траты ячейки за Долгий отдых.',
+      },
+      {
+        id: 'magic_initiate_druid',
+        name: 'Посвящённый в магию (Друид)',
+        description:
+          'Вы изучаете 2 заговора и 1 заклинание 1-го уровня из списка Друида (заклинательная характеристика на выбор: Интеллект, Мудрость или Харизма). Заклинание всегда подготовлено, его можно сотворить 1 раз без траты ячейки за Долгий отдых.',
+      },
+      {
+        id: 'magic_initiate_cleric',
+        name: 'Посвящённый в магию (Жрец)',
+        description:
+          'Вы изучаете 2 заговора и 1 заклинание 1-го уровня из списка Жреца (заклинательная характеристика на выбор: Интеллект, Мудрость или Харизма). Заклинание всегда подготовлено, его можно сотворить 1 раз без траты ячейки за Долгий отдых.',
+      },
     ],
     species: [
       {
@@ -892,7 +1251,7 @@ function hasProficiencyFor(
 }
 
 export function canPlayerEquipItem(
-  player: Pick<PlayerCharacter, 'proficiencyIds' | 'abilities'>,
+  player: Pick<PlayerCharacter, 'proficiencyIds' | 'abilities'> & { classId?: string },
   item: InventoryItem,
   catalogs: GameCatalogs
 ): { allowed: true } | { allowed: false; reason: string } {
@@ -905,6 +1264,11 @@ export function canPlayerEquipItem(
     const weaponCat: WeaponCategory | undefined = item.weaponCategory ?? catalogWeapon?.category;
     const weaponRange: WeaponRangeType | undefined =
       item.weaponRangeType ?? catalogWeapon?.rangeType;
+    const weaponProps = (item.properties ?? catalogWeapon?.properties ?? '').toLowerCase();
+    const classRef = player.classId
+      ? catalogs.classes.find((c) => c.id === player.classId)
+      : undefined;
+    const classNote = (classRef?.weaponProficiencyNote ?? '').toLowerCase();
 
     const missingParts: string[] = [];
 
@@ -912,11 +1276,19 @@ export function canPlayerEquipItem(
       const ok = hasProficiencyFor(player, catalogs, 'weapon_simple', [['прост', 'оруж']]);
       if (!ok) missingParts.push('простым оружием');
     } else if (weaponCat === 'martial') {
-      const ok = hasProficiencyFor(player, catalogs, 'weapon_martial', [
+      const hasMartial = hasProficiencyFor(player, catalogs, 'weapon_martial', [
         ['воинск', 'оруж'],
         ['военн', 'оруж'],
       ]);
-      if (!ok) missingParts.push('воинским оружием');
+      const allowedByLightProp =
+        (player.classId === 'monk' || player.classId === 'rogue' || classNote.includes('лёгк') || classNote.includes('легк')) &&
+        (weaponProps.includes('лёгк') || weaponProps.includes('легк'));
+      const allowedByFinesseProp =
+        (player.classId === 'rogue' || classNote.includes('фехтовал')) &&
+        weaponProps.includes('фехтовал');
+      if (!hasMartial && !allowedByLightProp && !allowedByFinesseProp) {
+        missingParts.push('воинским оружием');
+      }
     }
 
     if (weaponRange === 'melee') {
@@ -1352,4 +1724,157 @@ export function computeGridDistanceFt(
   const dy = cellY < minY ? minY - cellY : cellY > maxY ? cellY - maxY : 0;
   return Math.max(dx, dy) * FEET_PER_CELL;
 }
+
+// ============================================================================
+// PHB 2024 Character Creation Helpers (Backgrounds, Feats & Classes)
+// ============================================================================
+
+export function getBackgroundLockedSkillIds(
+  backgroundId: string | undefined,
+  catalogs: Pick<GameCatalogs, 'backgrounds' | 'skills'>
+): string[] {
+  if (!backgroundId) return [];
+  const bg = catalogs.backgrounds.find((b) => b.id === backgroundId);
+  if (!bg || !Array.isArray(bg.skillIds)) return [];
+  const validSkills = new Set(catalogs.skills.map((s) => s.id));
+  const out: string[] = [];
+  for (const id of bg.skillIds) {
+    if (validSkills.has(id) && !out.includes(id)) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+export function getClassSelectableSkillIds(
+  classId: string | undefined,
+  backgroundId: string | undefined,
+  catalogs: Pick<GameCatalogs, 'classes' | 'backgrounds' | 'skills'>
+): string[] {
+  if (!classId) return [];
+  const cls = catalogs.classes.find((c) => c.id === classId);
+  if (!cls) return [];
+  const bgLocked = new Set(getBackgroundLockedSkillIds(backgroundId, catalogs));
+  if (cls.anySkillAllowed) {
+    return catalogs.skills.map((s) => s.id).filter((id) => !bgLocked.has(id));
+  }
+  const validSkills = new Set(catalogs.skills.map((s) => s.id));
+  const pool = Array.isArray(cls.allowedSkillIds) ? cls.allowedSkillIds : [];
+  const out: string[] = [];
+  for (const id of pool) {
+    if (validSkills.has(id) && !bgLocked.has(id) && !out.includes(id)) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns the Set of skill IDs allowed for a hero given their class & background.
+ * Returns null if no class is selected (unrestricted fallback).
+ */
+export function getHeroAllowedSkillIds(
+  classId: string | undefined,
+  backgroundId: string | undefined,
+  catalogs: Pick<GameCatalogs, 'classes' | 'backgrounds' | 'skills'>
+): Set<string> | null {
+  if (!classId) return null;
+  const cls = catalogs.classes.find((c) => c.id === classId);
+  if (!cls) return null;
+  const bgLocked = getBackgroundLockedSkillIds(backgroundId, catalogs);
+  const classPool = getClassSelectableSkillIds(classId, backgroundId, catalogs);
+  return new Set([...bgLocked, ...classPool]);
+}
+
+export function getClassDefaultProficiencyIds(
+  classId: string | undefined,
+  catalogs: Pick<GameCatalogs, 'classes' | 'proficiencies'>
+): string[] {
+  if (!classId) return [];
+  const cls = catalogs.classes.find((c) => c.id === classId);
+  if (!cls) return [];
+  const validIds = new Set(catalogs.proficiencies.map((p) => p.id));
+  const combined = [...(cls.weaponProficiencyIds ?? []), ...(cls.armorProficiencyIds ?? [])];
+  const out: string[] = [];
+  for (const id of combined) {
+    if (validIds.has(id) && !out.includes(id)) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Enforces PHB 2024 background ability score bonus rules:
+ * - Only abilities listed in background.abilityIds may receive bonuses
+ * - Each eligible ability may receive at most +2 (0, 1, or 2)
+ * - Total points allocated across eligible abilities may not exceed 3
+ */
+export function sanitizeBackgroundAbilityBonuses(
+  bonuses: Record<string, number> | undefined,
+  backgroundId: string | undefined,
+  catalogs: Pick<GameCatalogs, 'backgrounds'>
+): Record<string, number> {
+  if (!backgroundId || !bonuses) return {};
+  const bg = catalogs.backgrounds.find((b) => b.id === backgroundId);
+  const allowed = Array.isArray(bg?.abilityIds) ? bg.abilityIds : [];
+  if (allowed.length === 0) return {};
+
+  const out: Record<string, number> = {};
+  let remaining = 3;
+  for (const abId of allowed) {
+    const raw = bonuses[abId];
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) continue;
+    const clamped = Math.min(2, Math.min(remaining, Math.floor(raw)));
+    if (clamped > 0) {
+      out[abId] = clamped;
+      remaining -= clamped;
+    }
+    if (remaining <= 0) break;
+  }
+  return out;
+}
+
+export function getEffectiveDraftAbilities(
+  draft: Pick<CharacterDraft, 'abilities' | 'backgroundId' | 'backgroundAbilityBonuses'>,
+  catalogs: Pick<GameCatalogs, 'abilities' | 'backgrounds'>
+): Record<string, number | null> {
+  const cleanBonuses = sanitizeBackgroundAbilityBonuses(
+    draft.backgroundAbilityBonuses,
+    draft.backgroundId,
+    catalogs
+  );
+  const result: Record<string, number | null> = {};
+  for (const ab of catalogs.abilities) {
+    const base = draft.abilities[ab.id];
+    const bonus = cleanBonuses[ab.id] ?? 0;
+    if (typeof base === 'number' && Number.isFinite(base)) {
+      result[ab.id] = Math.min(30, base + bonus);
+    } else if (bonus > 0) {
+      result[ab.id] = Math.min(30, 10 + bonus);
+    } else {
+      result[ab.id] = null;
+    }
+  }
+  return result;
+}
+
+export function getHeroFeats(
+  player: Pick<PlayerCharacter, 'backgroundId' | 'featIds'>,
+  catalogs: Pick<GameCatalogs, 'backgrounds' | 'feats'>
+): FeatRef[] {
+  const ids = new Set<string>();
+  const bg = catalogs.backgrounds.find((b) => b.id === player.backgroundId);
+  if (bg?.featId) ids.add(bg.featId);
+  if (Array.isArray(player.featIds)) {
+    for (const id of player.featIds) ids.add(id);
+  }
+  const out: FeatRef[] = [];
+  for (const id of ids) {
+    const ref = catalogs.feats.find((f) => f.id === id);
+    if (ref) out.push(ref);
+  }
+  return out;
+}
+
 

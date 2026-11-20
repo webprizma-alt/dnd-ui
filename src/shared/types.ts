@@ -39,6 +39,7 @@ export interface CharacterDraft {
   xp: number;
   gold: number;
   abilities: Record<string, number | null>;
+  backgroundAbilityBonuses?: Record<string, number>;
   proficientSkillIds: string[];
   expertiseSkillIds?: string[];
   proficiencyIds: string[];
@@ -70,16 +71,42 @@ export interface AbilityModifierRef {
   modifier: number;
 }
 
+export interface FeatRef {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface ClassRef {
   id: string;
   name: string;
   description: string;
+  /** Saving throw proficiencies (ability IDs, shown strictly to DM) */
+  savingThrowAbilityIds?: string[];
+  /** Number of class skills selectable at character creation */
+  skillChoiceCount?: number;
+  /** Allowed skill IDs for this class (ignored if anySkillAllowed is true) */
+  allowedSkillIds?: string[];
+  /** True when the class may choose from any skill (e.g. Bard) */
+  anySkillAllowed?: boolean;
+  /** Default weapon proficiency IDs linked to catalogs.proficiencies */
+  weaponProficiencyIds?: string[];
+  /** Optional extra weapon rule note (e.g. Monk Light martial / Rogue Finesse or Light martial) */
+  weaponProficiencyNote?: string;
+  /** Default armor training proficiency IDs linked to catalogs.proficiencies */
+  armorProficiencyIds?: string[];
 }
 
 export interface BackgroundRef {
   id: string;
   name: string;
   description: string;
+  /** Three eligible ability IDs for the 3-point (+2/+1 or +1/+1/+1) background bonus */
+  abilityIds?: string[];
+  /** Linked origin feat ID from catalogs.feats */
+  featId?: string | null;
+  /** Fixed skill IDs granted automatically by the background */
+  skillIds?: string[];
 }
 
 export interface SpeciesRef {
@@ -192,6 +219,7 @@ export interface GameCatalogs {
   abilityModifiers: AbilityModifierRef[];
   classes: ClassRef[];
   backgrounds: BackgroundRef[];
+  feats: FeatRef[];
   species: SpeciesRef[];
   levels: LevelThresholdRef[];
   skills: SkillRef[];
@@ -332,6 +360,7 @@ export interface PlayerCharacter extends PublicPlayerInfo {
   proficientSkillIds: string[];
   expertiseSkillIds?: string[];
   proficiencyIds: string[];
+  featIds?: string[];
   senses?: string;
   visions?: EntityVisionEntry[];
   inventory: InventoryItem[];
@@ -496,6 +525,7 @@ export type ClientMessage =
         proficientSkillIds?: string[];
         expertiseSkillIds?: string[];
         proficiencyIds?: string[];
+        featIds?: string[];
         senses?: string;
         visions?: EntityVisionEntry[];
       };
@@ -525,6 +555,7 @@ export type ClientMessage =
       proficientSkillIds?: string[];
       expertiseSkillIds?: string[];
       proficiencyIds?: string[];
+      featIds?: string[];
       senses?: string;
       visions?: EntityVisionEntry[];
     }
@@ -547,6 +578,7 @@ export type ClientMessage =
   | { type: 'dm:upsertCatalogItem'; catalog: 'abilityModifiers'; item: AbilityModifierRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'classes'; item: ClassRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'backgrounds'; item: BackgroundRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'feats'; item: FeatRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'species'; item: SpeciesRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'levels'; item: LevelThresholdRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'skills'; item: SkillRef }

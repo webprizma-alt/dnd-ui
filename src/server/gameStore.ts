@@ -7,10 +7,16 @@ import {
   computePlayerInitiative,
   createDefaultCatalogs,
   formatArmorClassFormula,
+  getBackgroundLockedSkillIds,
+  getClassDefaultProficiencyIds,
+  getClassSelectableSkillIds,
+  getEffectiveDraftAbilities,
+  getHeroAllowedSkillIds,
   inferWeaponRangeType,
   inferWeaponReachRange,
   parseLegacyArmorClass,
   resolveInventoryArmorCategory,
+  sanitizeBackgroundAbilityBonuses,
   sortAbilityModifiers,
   sortLevels,
 } from '../shared/catalogDefaults.ts';
@@ -428,6 +434,7 @@ function createEmptyDraft(catalogs: GameCatalogs, colorIndex: number): Character
     xp: 0,
     gold: 0,
     abilities,
+    backgroundAbilityBonuses: {},
     proficientSkillIds: [],
     expertiseSkillIds: [],
     proficiencyIds: [],
@@ -650,19 +657,96 @@ export class GameStore {
         : defaults.visions;
     const validVisionIds = new Set(rawVisions.map((v) => v.id));
 
+    const rawFeats =
+      Array.isArray(rawCatalogs.feats) && rawCatalogs.feats.length > 0
+        ? rawCatalogs.feats.map((f) => ({
+            id: f.id || makeId('feat'),
+            name: (f.name || '').trim() || 'Черта',
+            description: (f.description || '').trim(),
+          }))
+        : defaults.feats;
+
+    const defaultClassesById = new Map(defaults.classes.map((c) => [c.id, c]));
+    const rawClasses =
+      Array.isArray(rawCatalogs.classes) && rawCatalogs.classes.length > 0
+        ? rawCatalogs.classes.map((c) => {
+            const def = defaultClassesById.get(c.id);
+            const hasStructured =
+              Array.isArray(c.savingThrowAbilityIds) ||
+              Array.isArray(c.allowedSkillIds) ||
+              typeof c.anySkillAllowed === 'boolean' ||
+              Array.isArray(c.weaponProficiencyIds) ||
+              Array.isArray(c.armorProficiencyIds);
+            if (!hasStructured && def) {
+              return {
+                ...def,
+                name: c.name || def.name,
+                description: c.description || def.description,
+              };
+            }
+            return {
+              ...c,
+              savingThrowAbilityIds: Array.isArray(c.savingThrowAbilityIds)
+                ? c.savingThrowAbilityIds
+                : def?.savingThrowAbilityIds ?? [],
+              skillChoiceCount:
+                typeof c.skillChoiceCount === 'number' && Number.isFinite(c.skillChoiceCount)
+                  ? clamp(Math.round(c.skillChoiceCount), 0, 18)
+                  : def?.skillChoiceCount ?? 2,
+              allowedSkillIds: Array.isArray(c.allowedSkillIds)
+                ? c.allowedSkillIds
+                : def?.allowedSkillIds ?? [],
+              anySkillAllowed:
+                typeof c.anySkillAllowed === 'boolean'
+                  ? c.anySkillAllowed
+                  : def?.anySkillAllowed ?? false,
+              weaponProficiencyIds: Array.isArray(c.weaponProficiencyIds)
+                ? c.weaponProficiencyIds
+                : def?.weaponProficiencyIds ?? [],
+              weaponProficiencyNote:
+                typeof c.weaponProficiencyNote === 'string'
+                  ? c.weaponProficiencyNote
+                  : def?.weaponProficiencyNote,
+              armorProficiencyIds: Array.isArray(c.armorProficiencyIds)
+                ? c.armorProficiencyIds
+                : def?.armorProficiencyIds ?? [],
+            };
+          })
+        : defaults.classes;
+
+    const defaultBgsById = new Map(defaults.backgrounds.map((b) => [b.id, b]));
+    const rawBackgrounds =
+      Array.isArray(rawCatalogs.backgrounds) && rawCatalogs.backgrounds.length > 0
+        ? rawCatalogs.backgrounds.map((b) => {
+            const def = defaultBgsById.get(b.id);
+            const hasStructured =
+              Array.isArray(b.abilityIds) ||
+              b.featId !== undefined ||
+              Array.isArray(b.skillIds);
+            if (!hasStructured && def) {
+              return {
+                ...def,
+                name: b.name || def.name,
+                description: b.description || def.description,
+              };
+            }
+            return {
+              ...b,
+              abilityIds: Array.isArray(b.abilityIds) ? b.abilityIds : def?.abilityIds ?? [],
+              featId: b.featId !== undefined ? b.featId : def?.featId ?? null,
+              skillIds: Array.isArray(b.skillIds) ? b.skillIds : def?.skillIds ?? [],
+            };
+          })
+        : defaults.backgrounds;
+
     const catalogs: GameCatalogs = {
       abilities: rawAbilities,
       abilityModifiers: hadModifiersSchema
         ? sortAbilityModifiers(rawCatalogs.abilityModifiers!)
         : defaults.abilityModifiers,
-      classes:
-        Array.isArray(rawCatalogs.classes) && rawCatalogs.classes.length > 0
-          ? rawCatalogs.classes
-          : defaults.classes,
-      backgrounds:
-        Array.isArray(rawCatalogs.backgrounds) && rawCatalogs.backgrounds.length > 0
-          ? rawCatalogs.backgrounds
-          : defaults.backgrounds,
+      classes: rawClasses,
+      backgrounds: rawBackgrounds,
+      feats: rawFeats,
       species:
         Array.isArray(rawCatalogs.species) && rawCatalogs.species.length > 0
           ? rawCatalogs.species
@@ -1630,14 +1714,83 @@ export class GameStore {
       case 'dm:updateCreationDraft': {
         const req = this.state.creationRequests.find((r) => r.id === msg.requestId);
         if (!req) return false;
-        const { abilities, ...rest } = msg.patch;
-        req.draft = {
+        const prevClassId = req.draft.classId;
+        const prevBgId = req.draft.backgroundId;
+        const { abilities, backgroundAbilityBonuses, ...rest } = msg.patch;
+
+        const nextDraft: CharacterDraft = {
           ...req.draft,
           ...rest,
           abilities: abilities
             ? { ...req.draft.abilities, ...abilities }
             : req.draft.abilities,
+          backgroundAbilityBonuses:
+            backgroundAbilityBonuses !== undefined
+              ? backgroundAbilityBonuses
+              : req.draft.backgroundAbilityBonuses ?? {},
         };
+
+        const classChanged = rest.classId !== undefined && rest.classId !== prevClassId;
+        const bgChanged = rest.backgroundId !== undefined && rest.backgroundId !== prevBgId;
+
+        if (bgChanged && backgroundAbilityBonuses === undefined) {
+          nextDraft.backgroundAbilityBonuses = {};
+        }
+        nextDraft.backgroundAbilityBonuses = sanitizeBackgroundAbilityBonuses(
+          nextDraft.backgroundAbilityBonuses,
+          nextDraft.backgroundId,
+          this.state.catalogs
+        );
+
+        // Auto-apply class default weapon & armor proficiencies when class changes
+        if (classChanged && !Array.isArray(rest.proficiencyIds)) {
+          const prevClassDefaults = new Set(
+            getClassDefaultProficiencyIds(prevClassId, this.state.catalogs)
+          );
+          const nextClassDefaults = getClassDefaultProficiencyIds(
+            nextDraft.classId,
+            this.state.catalogs
+          );
+          const retained = nextDraft.proficiencyIds.filter((id) => !prevClassDefaults.has(id));
+          nextDraft.proficiencyIds = Array.from(new Set([...nextClassDefaults, ...retained]));
+        }
+
+        // Enforce background locked skills & class skill restrictions
+        const prevBgLocked = new Set(
+          getBackgroundLockedSkillIds(prevBgId, this.state.catalogs)
+        );
+        const nextBgLocked = getBackgroundLockedSkillIds(
+          nextDraft.backgroundId,
+          this.state.catalogs
+        );
+        const nextBgLockedSet = new Set(nextBgLocked);
+        const nextClassRef = this.state.catalogs.classes.find((c) => c.id === nextDraft.classId);
+        const nextClassSelectable = new Set(
+          getClassSelectableSkillIds(nextDraft.classId, nextDraft.backgroundId, this.state.catalogs)
+        );
+
+        let workingSkills = Array.isArray(nextDraft.proficientSkillIds)
+          ? [...nextDraft.proficientSkillIds]
+          : [];
+        if (bgChanged && !Array.isArray(rest.proficientSkillIds)) {
+          workingSkills = workingSkills.filter(
+            (id) => !prevBgLocked.has(id) || nextBgLockedSet.has(id)
+          );
+        }
+
+        const nonBgSkillsRaw = workingSkills.filter((id) => !nextBgLockedSet.has(id));
+        const filteredNonBg = nextClassRef
+          ? nonBgSkillsRaw
+              .filter((id) => nextClassSelectable.has(id))
+              .slice(0, nextClassRef.skillChoiceCount ?? 18)
+          : nonBgSkillsRaw;
+
+        nextDraft.proficientSkillIds = Array.from(new Set([...nextBgLocked, ...filteredNonBg]));
+        nextDraft.expertiseSkillIds = (nextDraft.expertiseSkillIds ?? []).filter((id) =>
+          nextDraft.proficientSkillIds.includes(id)
+        );
+
+        req.draft = nextDraft;
         if (req.status === 'queued') {
           req.status = 'in_progress';
         }
@@ -1656,6 +1809,7 @@ export class GameStore {
         const classId = req.draft.classId || this.state.catalogs.classes[0]?.id || '';
         const classRef = this.state.catalogs.classes.find((c) => c.id === classId);
         const backgroundId = req.draft.backgroundId || this.state.catalogs.backgrounds[0]?.id || '';
+        const bgRef = this.state.catalogs.backgrounds.find((b) => b.id === backgroundId);
         const speciesId = req.draft.speciesId || this.state.catalogs.species[0]?.id || '';
         const safeXp = Math.max(0, Math.floor(Number(req.draft.xp) || 0));
         const derivedLevel = computeLevelFromXp(safeXp, this.state.catalogs.levels);
@@ -1667,12 +1821,38 @@ export class GameStore {
           this.state.players.filter((p) => p.locationId === activeLoc.id).length
         );
         const newId = makeId('player');
-        const builtAbilities = buildDefaultAbilities(this.state.catalogs, req.draft.abilities);
+        const effectiveDraftAbilities = getEffectiveDraftAbilities(
+          {
+            abilities: req.draft.abilities,
+            backgroundId,
+            backgroundAbilityBonuses: req.draft.backgroundAbilityBonuses,
+          },
+          this.state.catalogs
+        );
+        const builtAbilities = buildDefaultAbilities(this.state.catalogs, effectiveDraftAbilities);
         const computedAc = computePlayerAc(
           { abilities: builtAbilities, inventory: [] },
           this.state.catalogs
         );
         const computedInit = computePlayerInitiative(builtAbilities, this.state.catalogs);
+
+        const bgLockedSkills = getBackgroundLockedSkillIds(backgroundId, this.state.catalogs);
+        const allowedSkills = getHeroAllowedSkillIds(classId, backgroundId, this.state.catalogs);
+        const draftSkills = Array.isArray(req.draft.proficientSkillIds)
+          ? req.draft.proficientSkillIds.filter((id) => !allowedSkills || allowedSkills.has(id))
+          : [];
+        const finalSkills = Array.from(new Set([...bgLockedSkills, ...draftSkills]));
+        const finalExpertise = Array.isArray(req.draft.expertiseSkillIds)
+          ? req.draft.expertiseSkillIds.filter((id) => finalSkills.includes(id))
+          : [];
+
+        const finalProficiencies =
+          Array.isArray(req.draft.proficiencyIds) && req.draft.proficiencyIds.length > 0
+            ? [...req.draft.proficiencyIds]
+            : getClassDefaultProficiencyIds(classId, this.state.catalogs);
+
+        const featIds = bgRef?.featId ? [bgRef.featId] : [];
+
         const newPlayer: PlayerCharacter = {
           id: newId,
           ownerAccountId: req.accountId,
@@ -1698,17 +1878,10 @@ export class GameStore {
           posY: spawn.y,
           gold: safeGold,
           abilities: builtAbilities,
-          proficientSkillIds: Array.isArray(req.draft.proficientSkillIds)
-            ? [...req.draft.proficientSkillIds]
-            : [],
-          expertiseSkillIds: Array.isArray(req.draft.expertiseSkillIds)
-            ? req.draft.expertiseSkillIds.filter((id) =>
-                (req.draft.proficientSkillIds || []).includes(id)
-              )
-            : [],
-          proficiencyIds: Array.isArray(req.draft.proficiencyIds)
-            ? [...req.draft.proficiencyIds]
-            : [],
+          proficientSkillIds: finalSkills,
+          expertiseSkillIds: finalExpertise,
+          proficiencyIds: finalProficiencies,
+          featIds,
           senses: (req.draft.senses || '').trim(),
           visions: normalizeEntityVisions(
             req.draft.visions,
@@ -1928,6 +2101,22 @@ export class GameStore {
             this.state.catalogs
           );
           const validVisionIds = new Set(this.state.catalogs.visions.map((v) => v.id));
+          const bgRef = this.state.catalogs.backgrounds.find((b) => b.id === backgroundId);
+          const bgLockedSkills = getBackgroundLockedSkillIds(backgroundId, this.state.catalogs);
+          const allowedSkills = getHeroAllowedSkillIds(classId, backgroundId, this.state.catalogs);
+          const incomingSkills = Array.isArray(incoming.proficientSkillIds)
+            ? incoming.proficientSkillIds.filter((id) => !allowedSkills || allowedSkills.has(id))
+            : [];
+          const initSkills = Array.from(new Set([...bgLockedSkills, ...incomingSkills]));
+          const initProficiencies = Array.isArray(incoming.proficiencyIds)
+            ? incoming.proficiencyIds
+            : getClassDefaultProficiencyIds(classId, this.state.catalogs);
+          const initFeats = Array.isArray(incoming.featIds)
+            ? incoming.featIds
+            : bgRef?.featId
+              ? [bgRef.featId]
+              : [];
+
           const newPlayer: PlayerCharacter = {
             id: newId,
             ownerAccountId: incoming.ownerAccountId || undefined,
@@ -1956,13 +2145,12 @@ export class GameStore {
             posY: spawn.y,
             gold: 0,
             abilities: builtAbilities,
-            proficientSkillIds: Array.isArray(incoming.proficientSkillIds)
-              ? incoming.proficientSkillIds
-              : [],
+            proficientSkillIds: initSkills,
             expertiseSkillIds: Array.isArray(incoming.expertiseSkillIds)
-              ? incoming.expertiseSkillIds
+              ? incoming.expertiseSkillIds.filter((id) => initSkills.includes(id))
               : [],
-            proficiencyIds: Array.isArray(incoming.proficiencyIds) ? incoming.proficiencyIds : [],
+            proficiencyIds: initProficiencies,
+            featIds: initFeats,
             senses: (incoming.senses || '').trim(),
             visions: Array.isArray(incoming.visions)
               ? normalizeEntityVisions(incoming.visions, validVisionIds)
@@ -2003,13 +2191,42 @@ export class GameStore {
         if (typeof msg.color === 'string' && msg.color) {
           player.color = msg.color;
         }
+        const prevClassId = player.classId;
+        const prevBgId = player.backgroundId;
         if (typeof msg.classId === 'string') {
           player.classId = msg.classId;
           const classRef = this.state.catalogs.classes.find((c) => c.id === msg.classId);
           player.role = classRef?.name || 'Без класса';
+          if (msg.classId !== prevClassId && !Array.isArray(msg.proficiencyIds)) {
+            const prevDefaults = new Set(getClassDefaultProficiencyIds(prevClassId, this.state.catalogs));
+            const nextDefaults = getClassDefaultProficiencyIds(msg.classId, this.state.catalogs);
+            const retained = player.proficiencyIds.filter((id) => !prevDefaults.has(id));
+            player.proficiencyIds = Array.from(new Set([...nextDefaults, ...retained]));
+          }
         }
         if (typeof msg.backgroundId === 'string') {
+          const oldBg = this.state.catalogs.backgrounds.find((b) => b.id === prevBgId);
+          const newBg = this.state.catalogs.backgrounds.find((b) => b.id === msg.backgroundId);
           player.backgroundId = msg.backgroundId;
+          if (msg.backgroundId !== prevBgId) {
+            const oldLocked = new Set(getBackgroundLockedSkillIds(prevBgId, this.state.catalogs));
+            const newLocked = getBackgroundLockedSkillIds(msg.backgroundId, this.state.catalogs);
+            if (!Array.isArray(msg.proficientSkillIds)) {
+              const kept = player.proficientSkillIds.filter(
+                (id) => !oldLocked.has(id) || newLocked.includes(id)
+              );
+              player.proficientSkillIds = Array.from(new Set([...newLocked, ...kept]));
+              player.expertiseSkillIds = (player.expertiseSkillIds ?? []).filter((id) =>
+                player.proficientSkillIds.includes(id)
+              );
+            }
+            if (!Array.isArray(msg.featIds)) {
+              const retainedFeats = (player.featIds ?? []).filter((id) => id !== oldBg?.featId);
+              player.featIds = newBg?.featId
+                ? Array.from(new Set([newBg.featId, ...retainedFeats]))
+                : retainedFeats;
+            }
+          }
         }
         if (typeof msg.speciesId === 'string') {
           player.speciesId = msg.speciesId;
@@ -2075,13 +2292,31 @@ export class GameStore {
         }
         player.ac = computePlayerAc(player, this.state.catalogs);
         if (Array.isArray(msg.proficientSkillIds)) {
-          player.proficientSkillIds = msg.proficientSkillIds;
+          const bgLocked = getBackgroundLockedSkillIds(player.backgroundId, this.state.catalogs);
+          const allowed = getHeroAllowedSkillIds(
+            player.classId,
+            player.backgroundId,
+            this.state.catalogs
+          );
+          const prevSet = new Set(player.proficientSkillIds);
+          const filtered = msg.proficientSkillIds.filter(
+            (id) => !allowed || allowed.has(id) || prevSet.has(id)
+          );
+          player.proficientSkillIds = Array.from(new Set([...bgLocked, ...filtered]));
           player.expertiseSkillIds = (player.expertiseSkillIds ?? []).filter((id) =>
             player.proficientSkillIds.includes(id)
           );
         }
         if (Array.isArray(msg.expertiseSkillIds)) {
-          const cleanExp = Array.from(new Set(msg.expertiseSkillIds));
+          const allowed = getHeroAllowedSkillIds(
+            player.classId,
+            player.backgroundId,
+            this.state.catalogs
+          );
+          const prevSet = new Set(player.proficientSkillIds);
+          const cleanExp = Array.from(new Set(msg.expertiseSkillIds)).filter(
+            (id) => !allowed || allowed.has(id) || prevSet.has(id)
+          );
           player.expertiseSkillIds = cleanExp;
           player.proficientSkillIds = Array.from(
             new Set([...player.proficientSkillIds, ...cleanExp])
@@ -2089,6 +2324,9 @@ export class GameStore {
         }
         if (Array.isArray(msg.proficiencyIds)) {
           player.proficiencyIds = msg.proficiencyIds;
+        }
+        if (Array.isArray(msg.featIds)) {
+          player.featIds = Array.from(new Set(msg.featIds));
         }
         if (typeof msg.senses === 'string') {
           player.senses = msg.senses;
@@ -2335,10 +2573,34 @@ export class GameStore {
         } else if (msg.catalog === 'classes') {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
+          const validAbilityIds = new Set(this.state.catalogs.abilities.map((a) => a.id));
+          const validSkillIds = new Set(this.state.catalogs.skills.map((s) => s.id));
+          const validProfIds = new Set(this.state.catalogs.proficiencies.map((p) => p.id));
           const normalized = {
             id: msg.item.id || makeId('cls'),
             name: cleanName,
             description: (msg.item.description || '').trim(),
+            savingThrowAbilityIds: Array.isArray(msg.item.savingThrowAbilityIds)
+              ? Array.from(new Set(msg.item.savingThrowAbilityIds)).filter((id) =>
+                  validAbilityIds.has(id)
+                )
+              : [],
+            skillChoiceCount: clamp(Math.round(Number(msg.item.skillChoiceCount ?? 2)), 0, 18),
+            anySkillAllowed: Boolean(msg.item.anySkillAllowed),
+            allowedSkillIds: Array.isArray(msg.item.allowedSkillIds)
+              ? Array.from(new Set(msg.item.allowedSkillIds)).filter((id) => validSkillIds.has(id))
+              : [],
+            weaponProficiencyIds: Array.isArray(msg.item.weaponProficiencyIds)
+              ? Array.from(new Set(msg.item.weaponProficiencyIds)).filter((id) =>
+                  validProfIds.has(id)
+                )
+              : [],
+            weaponProficiencyNote: (msg.item.weaponProficiencyNote || '').trim() || undefined,
+            armorProficiencyIds: Array.isArray(msg.item.armorProficiencyIds)
+              ? Array.from(new Set(msg.item.armorProficiencyIds)).filter((id) =>
+                  validProfIds.has(id)
+                )
+              : [],
           };
           const list = this.state.catalogs.classes;
           const idx = list.findIndex((x) => x.id === normalized.id);
@@ -2347,12 +2609,37 @@ export class GameStore {
         } else if (msg.catalog === 'backgrounds') {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
+          const validAbilityIds = new Set(this.state.catalogs.abilities.map((a) => a.id));
+          const validSkillIds = new Set(this.state.catalogs.skills.map((s) => s.id));
+          const validFeatIds = new Set(this.state.catalogs.feats.map((f) => f.id));
           const normalized = {
             id: msg.item.id || makeId('bg'),
             name: cleanName,
             description: (msg.item.description || '').trim(),
+            abilityIds: Array.isArray(msg.item.abilityIds)
+              ? Array.from(new Set(msg.item.abilityIds))
+                  .filter((id) => validAbilityIds.has(id))
+                  .slice(0, 3)
+              : [],
+            featId:
+              msg.item.featId && validFeatIds.has(msg.item.featId) ? msg.item.featId : null,
+            skillIds: Array.isArray(msg.item.skillIds)
+              ? Array.from(new Set(msg.item.skillIds)).filter((id) => validSkillIds.has(id))
+              : [],
           };
           const list = this.state.catalogs.backgrounds;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'feats') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const normalized = {
+            id: msg.item.id || makeId('feat'),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.feats;
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
@@ -2697,6 +2984,15 @@ export class GameStore {
           const fallbackBg = this.state.catalogs.backgrounds[0]?.id ?? '';
           for (const p of this.state.players) {
             if (p.backgroundId === msg.itemId) p.backgroundId = fallbackBg;
+          }
+        } else if (key === 'feats') {
+          for (const bg of this.state.catalogs.backgrounds) {
+            if (bg.featId === msg.itemId) bg.featId = null;
+          }
+          for (const p of this.state.players) {
+            if (Array.isArray(p.featIds)) {
+              p.featIds = p.featIds.filter((id) => id !== msg.itemId);
+            }
           }
         } else if (key === 'species') {
           const fallbackSp = this.state.catalogs.species[0]?.id ?? '';

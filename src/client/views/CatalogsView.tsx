@@ -49,6 +49,7 @@ import type {
   CatalogKey,
   ClassRef,
   EntityVisionEntry,
+  FeatRef,
   LevelThresholdRef,
   MonsterActionRef,
   MonsterRef,
@@ -93,14 +94,20 @@ const SECTIONS: CatalogSectionMeta[] = [
   {
     key: 'classes',
     label: 'Классы',
-    subtitle: 'Архетипы и профессии героев. В дальнейшем сюда будут привязываться классовые особенности.',
+    subtitle: 'Спасброски (только для ДМ), доступные навыки, владение оружием и тренированность с доспехами (PHB 2024).',
     icon: Swords,
   },
   {
     key: 'backgrounds',
     label: 'Предыстории',
-    subtitle: 'Прошлое персонажа до начала приключений и связанные с ним свойства.',
+    subtitle: 'Три характеристики (+3 очка, макс. +2 на одну), черта происхождения и фиксированные навыки (PHB 2024).',
     icon: ScrollText,
+  },
+  {
+    key: 'feats',
+    label: 'Черты',
+    subtitle: 'Черты предысторий (происхождения) и особые таланты героев: название и что даёт черта.',
+    icon: Sparkles,
   },
   {
     key: 'species',
@@ -181,6 +188,24 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
 
   // Vision form draft
   const [visionBehaviorDraft, setVisionBehaviorDraft] = useState<VisionBehavior>('normal');
+
+  // Class form drafts
+  const [classSavingThrowsDraft, setClassSavingThrowsDraft] = useState<string[]>([]);
+  const [classSkillCountDraft, setClassSkillCountDraft] = useState<number>(2);
+  const [classAnySkillDraft, setClassAnySkillDraft] = useState<boolean>(false);
+  const [classAllowedSkillsDraft, setClassAllowedSkillsDraft] = useState<string[]>([]);
+  const [classWeaponProfsDraft, setClassWeaponProfsDraft] = useState<string[]>([
+    'weapon_simple',
+    'weapon_melee',
+    'weapon_ranged',
+  ]);
+  const [classWeaponNoteDraft, setClassWeaponNoteDraft] = useState<string>('');
+  const [classArmorProfsDraft, setClassArmorProfsDraft] = useState<string[]>([]);
+
+  // Background form drafts
+  const [bgAbilityIdsDraft, setBgAbilityIdsDraft] = useState<string[]>([]);
+  const [bgFeatIdDraft, setBgFeatIdDraft] = useState<string>('');
+  const [bgSkillIdsDraft, setBgSkillIdsDraft] = useState<string[]>([]);
 
   // Weapon form drafts & filters
   const [weaponCategoryDraft, setWeaponCategoryDraft] = useState<WeaponCategory>('simple');
@@ -280,6 +305,16 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setModMaxScoreDraft(11);
     setModValueDraft(0);
     setVisionBehaviorDraft('normal');
+    setClassSavingThrowsDraft([]);
+    setClassSkillCountDraft(2);
+    setClassAnySkillDraft(false);
+    setClassAllowedSkillsDraft([]);
+    setClassWeaponProfsDraft(['weapon_simple', 'weapon_melee', 'weapon_ranged']);
+    setClassWeaponNoteDraft('');
+    setClassArmorProfsDraft([]);
+    setBgAbilityIdsDraft([]);
+    setBgFeatIdDraft('');
+    setBgSkillIdsDraft([]);
     setWeaponCategoryDraft('simple');
     setWeaponRangeDraft('melee');
     setWeaponReachDraft(5);
@@ -400,12 +435,33 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setModMinScoreDraft(mod.minScore);
       setModMaxScoreDraft(mod.maxScore);
       setModValueDraft(mod.modifier);
-    } else if (
-      activeSection === 'classes' ||
-      activeSection === 'backgrounds' ||
-      activeSection === 'species'
-    ) {
-      const entry = item as ClassRef | BackgroundRef | SpeciesRef;
+    } else if (activeSection === 'classes') {
+      const cls = item as ClassRef;
+      setEditingId(cls.id);
+      setNameDraft(cls.name);
+      setDescDraft(cls.description);
+      setClassSavingThrowsDraft([...(cls.savingThrowAbilityIds ?? [])]);
+      setClassSkillCountDraft(cls.skillChoiceCount ?? 2);
+      setClassAnySkillDraft(Boolean(cls.anySkillAllowed));
+      setClassAllowedSkillsDraft([...(cls.allowedSkillIds ?? [])]);
+      setClassWeaponProfsDraft([...(cls.weaponProficiencyIds ?? [])]);
+      setClassWeaponNoteDraft(cls.weaponProficiencyNote ?? '');
+      setClassArmorProfsDraft([...(cls.armorProficiencyIds ?? [])]);
+    } else if (activeSection === 'backgrounds') {
+      const bg = item as BackgroundRef;
+      setEditingId(bg.id);
+      setNameDraft(bg.name);
+      setDescDraft(bg.description);
+      setBgAbilityIdsDraft([...(bg.abilityIds ?? [])]);
+      setBgFeatIdDraft(bg.featId ?? '');
+      setBgSkillIdsDraft([...(bg.skillIds ?? [])]);
+    } else if (activeSection === 'feats') {
+      const ft = item as FeatRef;
+      setEditingId(ft.id);
+      setNameDraft(ft.name);
+      setDescDraft(ft.description);
+    } else if (activeSection === 'species') {
+      const entry = item as SpeciesRef;
       setEditingId(entry.id);
       setNameDraft(entry.name);
       setDescDraft(entry.description);
@@ -548,6 +604,13 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           id: editingId ?? '',
           name: nameDraft.trim(),
           description: descDraft.trim(),
+          savingThrowAbilityIds: classSavingThrowsDraft,
+          skillChoiceCount: Math.max(0, Math.min(18, Math.round(classSkillCountDraft || 0))),
+          anySkillAllowed: classAnySkillDraft,
+          allowedSkillIds: classAnySkillDraft ? [] : classAllowedSkillsDraft,
+          weaponProficiencyIds: classWeaponProfsDraft,
+          weaponProficiencyNote: classWeaponNoteDraft.trim() || undefined,
+          armorProficiencyIds: classArmorProfsDraft,
         },
       });
     } else if (activeSection === 'backgrounds') {
@@ -555,6 +618,20 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       send({
         type: 'dm:upsertCatalogItem',
         catalog: 'backgrounds',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+          abilityIds: bgAbilityIdsDraft.slice(0, 3),
+          featId: bgFeatIdDraft || null,
+          skillIds: bgSkillIdsDraft,
+        },
+      });
+    } else if (activeSection === 'feats') {
+      if (!nameDraft.trim()) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'feats',
         item: {
           id: editingId ?? '',
           name: nameDraft.trim(),
@@ -1128,9 +1205,371 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
-              {(activeSection === 'classes' ||
-                activeSection === 'backgrounds' ||
-                activeSection === 'species') && (
+              {activeSection === 'classes' && (
+                <div className="space-y-4">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название класса (напр. Друид)"
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <input
+                      type="text"
+                      value={descDraft}
+                      onChange={(e) => setDescDraft(e.target.value)}
+                      placeholder="Краткое описание класса"
+                      className="sm:col-span-6 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+
+                  {/* Saving Throws (DM Only) */}
+                  <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-200">
+                        Владение спасбросками (только для ДМ)
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        Выбрано: {classSavingThrowsDraft.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {catalogs.abilities.map((ab) => {
+                        const checked = classSavingThrowsDraft.includes(ab.id);
+                        return (
+                          <button
+                            key={ab.id}
+                            type="button"
+                            onClick={() =>
+                              setClassSavingThrowsDraft((prev) =>
+                                prev.includes(ab.id)
+                                  ? prev.filter((id) => id !== ab.id)
+                                  : [...prev, ab.id]
+                              )
+                            }
+                            className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                              checked
+                                ? 'bg-sky-500/20 border-sky-400/70 text-sky-200 font-medium'
+                                : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {ab.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Class Skills */}
+                  <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-slate-200">
+                        Владение навыками класса
+                      </span>
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        <label className="flex items-center gap-1.5 text-slate-300">
+                          <span>Сколько выбрать при создании:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={18}
+                            value={classSkillCountDraft}
+                            onChange={(e) =>
+                              setClassSkillCountDraft(
+                                Math.max(0, Math.min(18, Number(e.target.value) || 0))
+                              )
+                            }
+                            className="w-16 px-2 py-1 rounded bg-[#131A26] border border-slate-700 font-mono text-center text-slate-100"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-amber-300">
+                          <input
+                            type="checkbox"
+                            checked={classAnySkillDraft}
+                            onChange={(e) => setClassAnySkillDraft(e.target.checked)}
+                            className="rounded border-slate-600 bg-[#131A26]"
+                          />
+                          <span>Любые навыки (как у Барда)</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {!classAnySkillDraft && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
+                        {catalogs.skills.map((sk) => {
+                          const checked = classAllowedSkillsDraft.includes(sk.id);
+                          return (
+                            <button
+                              key={sk.id}
+                              type="button"
+                              onClick={() =>
+                                setClassAllowedSkillsDraft((prev) =>
+                                  prev.includes(sk.id)
+                                    ? prev.filter((id) => id !== sk.id)
+                                    : [...prev, sk.id]
+                                )
+                              }
+                              className={`px-2.5 py-1.5 rounded-lg border text-left text-xs truncate transition-colors ${
+                                checked
+                                  ? 'bg-amber-500/20 border-amber-500/60 text-amber-200 font-medium'
+                                  : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {sk.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Weapon & Armor Proficiencies */}
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                      <span className="text-xs font-semibold text-slate-200 block">
+                        Владение оружием по умолчанию
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {catalogs.proficiencies
+                          .filter((p) => p.category === 'weapon')
+                          .map((pr) => {
+                            const checked = classWeaponProfsDraft.includes(pr.id);
+                            return (
+                              <button
+                                key={pr.id}
+                                type="button"
+                                onClick={() =>
+                                  setClassWeaponProfsDraft((prev) =>
+                                    prev.includes(pr.id)
+                                      ? prev.filter((id) => id !== pr.id)
+                                      : [...prev, pr.id]
+                                  )
+                                }
+                                className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                                  checked
+                                    ? 'bg-amber-500/20 border-amber-500/60 text-amber-200 font-medium'
+                                    : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                {pr.name}
+                              </button>
+                            );
+                          })}
+                      </div>
+                      <input
+                        type="text"
+                        value={classWeaponNoteDraft}
+                        onChange={(e) => setClassWeaponNoteDraft(e.target.value)}
+                        placeholder="Особое примечание (напр. Воинское со свойством Лёгкое)"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-[11px] text-slate-200"
+                      />
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                      <span className="text-xs font-semibold text-slate-200 block">
+                        Тренированность с доспехами по умолчанию
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {catalogs.proficiencies
+                          .filter((p) => p.category === 'armor')
+                          .map((pr) => {
+                            const checked = classArmorProfsDraft.includes(pr.id);
+                            return (
+                              <button
+                                key={pr.id}
+                                type="button"
+                                onClick={() =>
+                                  setClassArmorProfsDraft((prev) =>
+                                    prev.includes(pr.id)
+                                      ? prev.filter((id) => id !== pr.id)
+                                      : [...prev, pr.id]
+                                  )
+                                }
+                                className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                                  checked
+                                    ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-200 font-medium'
+                                    : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                {pr.name}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'backgrounds' && (
+                <div className="space-y-4">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название предыстории (напр. Солдат)"
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <input
+                      type="text"
+                      value={descDraft}
+                      onChange={(e) => setDescDraft(e.target.value)}
+                      placeholder="Краткое описание предыстории"
+                      className="sm:col-span-6 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {/* 3 eligible abilities */}
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-200">
+                          3 характеристики предыстории (+3 очка)
+                        </span>
+                        <span className="text-[11px] font-mono text-amber-400">
+                          {bgAbilityIdsDraft.length} / 3
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {catalogs.abilities.map((ab) => {
+                          const checked = bgAbilityIdsDraft.includes(ab.id);
+                          const atLimit = !checked && bgAbilityIdsDraft.length >= 3;
+                          return (
+                            <button
+                              key={ab.id}
+                              type="button"
+                              disabled={atLimit}
+                              onClick={() =>
+                                setBgAbilityIdsDraft((prev) =>
+                                  prev.includes(ab.id)
+                                    ? prev.filter((id) => id !== ab.id)
+                                    : prev.length < 3
+                                      ? [...prev, ab.id]
+                                      : prev
+                                )
+                              }
+                              className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                                checked
+                                  ? 'bg-amber-500/20 border-amber-500/60 text-amber-200 font-medium'
+                                  : atLimit
+                                    ? 'bg-[#131A26] border-slate-800/60 text-slate-600 cursor-not-allowed'
+                                    : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {ab.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Linked Origin Feat */}
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                      <span className="text-xs font-semibold text-slate-200 block">
+                        Черта предыстории
+                      </span>
+                      <select
+                        value={bgFeatIdDraft}
+                        onChange={(e) => setBgFeatIdDraft(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                      >
+                        <option value="">— Не выбрана —</option>
+                        {catalogs.feats.map((ft) => (
+                          <option key={ft.id} value={ft.id}>
+                            {ft.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Fixed Background Skills */}
+                  <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-200">
+                        Фиксированные навыки предыстории
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        Выбрано: {bgSkillIdsDraft.length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
+                      {catalogs.skills.map((sk) => {
+                        const checked = bgSkillIdsDraft.includes(sk.id);
+                        return (
+                          <button
+                            key={sk.id}
+                            type="button"
+                            onClick={() =>
+                              setBgSkillIdsDraft((prev) =>
+                                prev.includes(sk.id)
+                                  ? prev.filter((id) => id !== sk.id)
+                                  : [...prev, sk.id]
+                              )
+                            }
+                            className={`px-2.5 py-1.5 rounded-lg border text-left text-xs truncate transition-colors ${
+                              checked
+                                ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-200 font-medium'
+                                : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {sk.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'feats' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название черты (напр. Бдительный)"
+                      className="sm:col-span-9 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-3 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить черту'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Что даёт черта..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
+              {activeSection === 'species' && (
                 <div className="grid sm:grid-cols-12 gap-3">
                   <input
                     type="text"
@@ -2329,12 +2768,221 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
-              {(activeSection === 'classes' ||
-                activeSection === 'backgrounds' ||
-                activeSection === 'species') && (
+              {activeSection === 'classes' && (
                 <div className="divide-y divide-slate-800/80">
-                  {(catalogs[activeSection] as Array<ClassRef | BackgroundRef | SpeciesRef>)
-                    .filter((entry) => !q || entry.name.toLowerCase().includes(q) || entry.description.toLowerCase().includes(q))
+                  {catalogs.classes
+                    .filter(
+                      (cls) =>
+                        !q ||
+                        cls.name.toLowerCase().includes(q) ||
+                        cls.description.toLowerCase().includes(q)
+                    )
+                    .map((cls) => {
+                      const saves = (cls.savingThrowAbilityIds ?? [])
+                        .map((id) => abilitiesMap.get(id)?.name)
+                        .filter(Boolean)
+                        .join(', ');
+                      const skillNames = cls.anySkillAllowed
+                        ? 'Любые навыки'
+                        : (cls.allowedSkillIds ?? [])
+                            .map((id) => catalogs.skills.find((s) => s.id === id)?.name)
+                            .filter(Boolean)
+                            .join(', ');
+                      const weaponNames = (cls.weaponProficiencyIds ?? [])
+                        .map((id) => catalogs.proficiencies.find((p) => p.id === id)?.name)
+                        .filter(Boolean)
+                        .join(', ');
+                      const armorNames = (cls.armorProficiencyIds ?? [])
+                        .map((id) => catalogs.proficiencies.find((p) => p.id === id)?.name)
+                        .filter(Boolean)
+                        .join(', ');
+
+                      return (
+                        <div
+                          key={cls.id}
+                          className="px-4 py-3.5 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                        >
+                          <div className="min-w-0 space-y-1.5">
+                            <div className="text-sm font-semibold text-slate-100">{cls.name}</div>
+                            {cls.description && (
+                              <p className="text-xs text-slate-400">{cls.description}</p>
+                            )}
+                            <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1 pt-1 text-[11px]">
+                              <div>
+                                <span className="text-slate-500">Спасброски (ДМ): </span>
+                                <span className="text-sky-300 font-medium">{saves || '—'}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">
+                                  Навыки (выбор {cls.skillChoiceCount ?? 2}):{' '}
+                                </span>
+                                <span className="text-amber-200">{skillNames || '—'}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Оружие: </span>
+                                <span className="text-slate-200">
+                                  {weaponNames || 'Нет'}
+                                  {cls.weaponProficiencyNote ? ` · ${cls.weaponProficiencyNote}` : ''}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">Доспехи: </span>
+                                <span className="text-emerald-300">{armorNames || 'Нет'}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(cls)}
+                              className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                              aria-label="Редактировать"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(cls.id)}
+                              className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                              aria-label="Удалить"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {activeSection === 'backgrounds' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.backgrounds
+                    .filter(
+                      (bg) =>
+                        !q ||
+                        bg.name.toLowerCase().includes(q) ||
+                        bg.description.toLowerCase().includes(q)
+                    )
+                    .map((bg) => {
+                      const abNames = (bg.abilityIds ?? [])
+                        .map((id) => abilitiesMap.get(id)?.name)
+                        .filter(Boolean)
+                        .join(', ');
+                      const feat = bg.featId
+                        ? catalogs.feats.find((f) => f.id === bg.featId)
+                        : null;
+                      const skNames = (bg.skillIds ?? [])
+                        .map((id) => catalogs.skills.find((s) => s.id === id)?.name)
+                        .filter(Boolean)
+                        .join(', ');
+                      return (
+                        <div
+                          key={bg.id}
+                          className="px-4 py-3.5 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                        >
+                          <div className="min-w-0 space-y-1.5">
+                            <div className="text-sm font-semibold text-slate-100">{bg.name}</div>
+                            {bg.description && (
+                              <p className="text-xs text-slate-400">{bg.description}</p>
+                            )}
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
+                              <span>
+                                <span className="text-slate-500">Характеристики (+3): </span>
+                                <span className="text-amber-300 font-medium">{abNames || '—'}</span>
+                              </span>
+                              <span>
+                                <span className="text-slate-500">Черта: </span>
+                                <span className="text-sky-300 font-medium">
+                                  {feat?.name ?? '—'}
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-slate-500">Навыки: </span>
+                                <span className="text-emerald-300 font-medium">
+                                  {skNames || '—'}
+                                </span>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(bg)}
+                              className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                              aria-label="Редактировать"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(bg.id)}
+                              className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                              aria-label="Удалить"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {activeSection === 'feats' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.feats
+                    .filter(
+                      (ft) =>
+                        !q ||
+                        ft.name.toLowerCase().includes(q) ||
+                        ft.description.toLowerCase().includes(q)
+                    )
+                    .map((ft) => (
+                      <div
+                        key={ft.id}
+                        className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="text-sm font-semibold text-slate-100">{ft.name}</div>
+                          {ft.description && (
+                            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                              {ft.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(ft)}
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                            aria-label="Редактировать"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(ft.id)}
+                            className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                            aria-label="Удалить"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {activeSection === 'species' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.species
+                    .filter(
+                      (entry) =>
+                        !q ||
+                        entry.name.toLowerCase().includes(q) ||
+                        entry.description.toLowerCase().includes(q)
+                    )
                     .map((entry) => (
                       <div
                         key={entry.id}
