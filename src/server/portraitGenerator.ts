@@ -215,6 +215,13 @@ export async function generateMonsterPortrait(
     .map((ab) => `${ab.name}: ${monster.abilities?.[ab.id] ?? 10}`)
     .join(', ');
 
+  const traitsSummary =
+    monster.traits && monster.traits.length > 0
+      ? monster.traits
+          .map((t) => `${t.name}${t.description ? ` — ${t.description}` : ''}`)
+          .join('; ')
+      : '';
+
   const actionsSummary =
     monster.actions && monster.actions.length > 0
       ? monster.actions
@@ -228,7 +235,11 @@ export async function generateMonsterPortrait(
     `- Name: ${monster.name}`,
     `- Armor Class: ${monster.ac}, Hit Points: ${monster.maxHp}${monster.hpFormula ? ` (${monster.hpFormula})` : ''}, Speed: ${monster.speed} ft`,
     `- Abilities: ${statsSummary}`,
-    `- Signature Actions & Traits: ${actionsSummary}`,
+    ...(monster.senses ? [`- Senses: ${monster.senses}`] : []),
+    ...(monster.resistances ? [`- Resistances: ${monster.resistances}`] : []),
+    ...(monster.immunities ? [`- Immunities: ${monster.immunities}`] : []),
+    ...(traitsSummary ? [`- Special Traits: ${traitsSummary}`] : []),
+    `- Signature Actions: ${actionsSummary}`,
   ];
 
   if (extraPrompt && extraPrompt.trim()) {

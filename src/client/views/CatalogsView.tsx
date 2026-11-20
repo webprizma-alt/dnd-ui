@@ -203,6 +203,12 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     cha: 10,
   });
   const [monsterSkillsDraft, setMonsterSkillsDraft] = useState<string[]>([]);
+  const [monsterImmunitiesDraft, setMonsterImmunitiesDraft] = useState('');
+  const [monsterResistancesDraft, setMonsterResistancesDraft] = useState('');
+  const [monsterSensesDraft, setMonsterSensesDraft] = useState('');
+  const [monsterTraitsDraft, setMonsterTraitsDraft] = useState<MonsterActionRef[]>([
+    { id: 'trt-draft-1', name: '', description: '' },
+  ]);
   const [monsterActionsDraft, setMonsterActionsDraft] = useState<MonsterActionRef[]>([
     { id: 'act-draft-1', name: '', description: '' },
   ]);
@@ -264,6 +270,10 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setMonsterXpDraft(10);
     setMonsterAbilitiesDraft(buildDefaultMonsterAbilities());
     setMonsterSkillsDraft([]);
+    setMonsterImmunitiesDraft('');
+    setMonsterResistancesDraft('');
+    setMonsterSensesDraft('');
+    setMonsterTraitsDraft([{ id: `trt-${Date.now().toString(36)}`, name: '', description: '' }]);
     setMonsterActionsDraft([{ id: `act-${Date.now().toString(36)}`, name: '', description: '' }]);
     if (sec === 'levels' && dmState) {
       const sorted = sortLevels(dmState.catalogs.levels);
@@ -409,6 +419,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       }
       setMonsterAbilitiesDraft(nextAb);
       setMonsterSkillsDraft([...(mon.proficientSkillIds || [])]);
+      setMonsterImmunitiesDraft(mon.immunities || '');
+      setMonsterResistancesDraft(mon.resistances || '');
+      setMonsterSensesDraft(mon.senses || '');
+      setMonsterTraitsDraft(
+        mon.traits && mon.traits.length > 0
+          ? mon.traits.map((t) => ({ ...t }))
+          : [{ id: `trt-${Date.now().toString(36)}`, name: '', description: '' }]
+      );
       setMonsterActionsDraft(
         mon.actions && mon.actions.length > 0
           ? mon.actions.map((a) => ({ ...a }))
@@ -562,6 +580,13 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       });
     } else if (activeSection === 'monsters') {
       if (!nameDraft.trim()) return;
+      const cleanTraits = monsterTraitsDraft
+        .filter((t) => t.name.trim().length > 0)
+        .map((t) => ({
+          id: t.id || `trt-${Date.now().toString(36)}`,
+          name: t.name.trim(),
+          description: t.description.trim(),
+        }));
       const cleanActions = monsterActionsDraft
         .filter((a) => a.name.trim().length > 0)
         .map((a) => ({
@@ -582,6 +607,10 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           speed: Math.max(0, Math.round(monsterSpeedDraft || 0)),
           abilities: monsterAbilitiesDraft,
           proficientSkillIds: monsterSkillsDraft,
+          immunities: monsterImmunitiesDraft.trim() || undefined,
+          resistances: monsterResistancesDraft.trim() || undefined,
+          senses: monsterSensesDraft.trim() || undefined,
+          traits: cleanTraits,
           xpReward: Math.max(0, Math.floor(monsterXpDraft || 0)),
           actions: cleanActions,
         },
@@ -1520,14 +1549,19 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                     </div>
                   </div>
 
-                  {/* Skills Multi-select */}
+                  {/* Skills Multi-select with live +N bonus */}
                   <div className="space-y-1.5">
-                    <span className="text-[11px] font-medium text-slate-300">
-                      Навыки ({monsterSkillsDraft.length} выбрано)
-                    </span>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] font-medium text-slate-300">
+                        Навыки ({monsterSkillsDraft.length} выбрано · владение +2 к модификатору)
+                      </span>
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {catalogs.skills.map((sk) => {
                         const active = monsterSkillsDraft.includes(sk.id);
+                        const abScore = monsterAbilitiesDraft[sk.abilityId] ?? 10;
+                        const abMod = getAbilityModifier(abScore, catalogs.abilityModifiers);
+                        const totalBonus = active ? abMod + 2 : abMod;
                         return (
                           <button
                             key={sk.id}
@@ -1539,16 +1573,148 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                   : [...prev, sk.id]
                               )
                             }
-                            className={`px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
+                            className={`px-2.5 py-1 rounded-md border text-[11px] inline-flex items-center gap-1.5 transition-colors ${
                               active
                                 ? 'bg-amber-500/20 border-amber-500/70 text-amber-300 font-medium'
                                 : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
                             }`}
                           >
-                            {sk.name}
+                            <span>{sk.name}</span>
+                            <span
+                              className={`font-mono tabular-nums ${
+                                active ? 'text-amber-200 font-semibold' : 'text-slate-500'
+                              }`}
+                            >
+                              {formatModifier(totalBonus)}
+                            </span>
                           </button>
                         );
                       })}
+                    </div>
+                    {monsterSkillsDraft.length > 0 && (
+                      <div className="text-[11px] text-slate-300 pt-0.5">
+                        <span className="text-slate-500">Выбрано: </span>
+                        {catalogs.skills
+                          .filter((sk) => monsterSkillsDraft.includes(sk.id))
+                          .map((sk) => {
+                            const abMod = getAbilityModifier(
+                              monsterAbilitiesDraft[sk.abilityId] ?? 10,
+                              catalogs.abilityModifiers
+                            );
+                            return `${sk.name} ${formatModifier(abMod + 2)}`;
+                          })
+                          .join(', ')}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Immunities, Resistances, Senses */}
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[11px] text-slate-400">Иммунитеты</span>
+                      <input
+                        type="text"
+                        value={monsterImmunitiesDraft}
+                        onChange={(e) => setMonsterImmunitiesDraft(e.target.value)}
+                        placeholder="Например: Яд; Отравление"
+                        className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] text-slate-400">Сопротивления</span>
+                      <input
+                        type="text"
+                        value={monsterResistancesDraft}
+                        onChange={(e) => setMonsterResistancesDraft(e.target.value)}
+                        placeholder="Например: Огонь, Холод"
+                        className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] text-slate-400">Чувства</span>
+                      <input
+                        type="text"
+                        value={monsterSensesDraft}
+                        onChange={(e) => setMonsterSensesDraft(e.target.value)}
+                        placeholder="Например: Тёмное зрение 60 фт., пасс. Восприятие 13"
+                        className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Monster Traits */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-slate-300">
+                        Особенности монстра ({monsterTraitsDraft.filter((t) => t.name.trim()).length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMonsterTraitsDraft((prev) => [
+                            ...prev,
+                            {
+                              id: `trt-${Date.now().toString(36)}-${prev.length}`,
+                              name: '',
+                              description: '',
+                            },
+                          ])
+                        }
+                        className="px-2.5 py-1 rounded-md bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-[11px] text-amber-400 flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Добавить особенность</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {monsterTraitsDraft.map((trt, idx) => (
+                        <div
+                          key={trt.id}
+                          className="grid sm:grid-cols-12 gap-2 items-start p-2.5 rounded-lg bg-[#0B0F17] border border-slate-800"
+                        >
+                          <input
+                            type="text"
+                            value={trt.name}
+                            onChange={(e) =>
+                              setMonsterTraitsDraft((prev) =>
+                                prev.map((row, i) =>
+                                  i === idx ? { ...row, name: e.target.value } : row
+                                )
+                              )
+                            }
+                            placeholder="Название (напр. Тактика стаи)"
+                            className="sm:col-span-3 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                          />
+                          <input
+                            type="text"
+                            value={trt.description}
+                            onChange={(e) =>
+                              setMonsterTraitsDraft((prev) =>
+                                prev.map((row, i) =>
+                                  i === idx ? { ...row, description: e.target.value } : row
+                                )
+                              )
+                            }
+                            placeholder="Описание особенности..."
+                            className="sm:col-span-8 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-200"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMonsterTraitsDraft((prev) =>
+                                prev.length > 1
+                                  ? prev.filter((_, i) => i !== idx)
+                                  : [{ ...trt, name: '', description: '' }]
+                              )
+                            }
+                            className="sm:col-span-1 p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 justify-self-end"
+                            aria-label="Удалить особенность"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -2196,6 +2362,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         (m) =>
                           !q ||
                           m.name.toLowerCase().includes(q) ||
+                          (m.immunities || '').toLowerCase().includes(q) ||
+                          (m.resistances || '').toLowerCase().includes(q) ||
+                          (m.senses || '').toLowerCase().includes(q) ||
+                          (m.traits || []).some(
+                            (t) =>
+                              t.name.toLowerCase().includes(q) ||
+                              t.description.toLowerCase().includes(q)
+                          ) ||
                           m.actions.some(
                             (a) =>
                               a.name.toLowerCase().includes(q) ||
@@ -2203,9 +2377,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                           )
                       )
                       .map((mon) => {
-                        const skillNames = catalogs.skills
+                        const skillLabels = catalogs.skills
                           .filter((sk) => mon.proficientSkillIds.includes(sk.id))
-                          .map((sk) => sk.name);
+                          .map((sk) => {
+                            const abScore = mon.abilities?.[sk.abilityId] ?? 10;
+                            const abMod = getAbilityModifier(abScore, catalogs.abilityModifiers);
+                            return `${sk.name} ${formatModifier(abMod + 2)}`;
+                          });
+                        const monsterTraits = mon.traits ?? [];
                         const isUploadingThis = uploadingMonsterId === mon.id;
 
                         return (
@@ -2325,11 +2504,57 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                               })}
                             </div>
 
-                            {/* Skills */}
-                            {skillNames.length > 0 && (
-                              <div className="text-xs text-slate-300">
-                                <span className="text-slate-500">Навыки: </span>
-                                {skillNames.join(', ')}
+                            {/* Skills, Resistances, Immunities, Senses */}
+                            {(skillLabels.length > 0 ||
+                              mon.resistances ||
+                              mon.immunities ||
+                              mon.senses) && (
+                              <div className="space-y-1 text-xs text-slate-300">
+                                {skillLabels.length > 0 && (
+                                  <div>
+                                    <span className="text-slate-500">Навыки: </span>
+                                    <span className="font-mono tabular-nums text-slate-200">
+                                      {skillLabels.join(', ')}
+                                    </span>
+                                  </div>
+                                )}
+                                {mon.resistances && (
+                                  <div>
+                                    <span className="text-slate-500">Сопротивления: </span>
+                                    <span>{mon.resistances}</span>
+                                  </div>
+                                )}
+                                {mon.immunities && (
+                                  <div>
+                                    <span className="text-slate-500">Иммунитеты: </span>
+                                    <span>{mon.immunities}</span>
+                                  </div>
+                                )}
+                                {mon.senses && (
+                                  <div>
+                                    <span className="text-slate-500">Чувства: </span>
+                                    <span>{mon.senses}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Traits */}
+                            {monsterTraits.length > 0 && (
+                              <div className="space-y-1.5 pt-2 border-t border-slate-800/70">
+                                <div className="text-[11px] font-semibold text-slate-400">
+                                  Особенности
+                                </div>
+                                <div className="space-y-1">
+                                  {monsterTraits.map((trt) => (
+                                    <div key={trt.id} className="text-xs leading-relaxed">
+                                      <span className="font-semibold text-sky-300">
+                                        {trt.name}.{' '}
+                                      </span>
+                                      <span className="text-slate-300">{trt.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
 

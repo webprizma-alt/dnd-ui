@@ -2295,6 +2295,15 @@ export class GameStore {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
           const builtAbilities = buildDefaultAbilities(this.state.catalogs, msg.item.abilities);
+          const normalizedTraits = Array.isArray(msg.item.traits)
+            ? msg.item.traits
+                .filter((tr) => tr && tr.name && tr.name.trim())
+                .map((tr) => ({
+                  id: tr.id || makeId('trt'),
+                  name: tr.name.trim(),
+                  description: (tr.description || '').trim(),
+                }))
+            : [];
           const normalizedActions = Array.isArray(msg.item.actions)
             ? msg.item.actions
                 .filter((act) => act && act.name && act.name.trim())
@@ -2330,6 +2339,10 @@ export class GameStore {
             proficientSkillIds: Array.isArray(msg.item.proficientSkillIds)
               ? msg.item.proficientSkillIds
               : [],
+            immunities: (msg.item.immunities || '').trim() || undefined,
+            resistances: (msg.item.resistances || '').trim() || undefined,
+            senses: (msg.item.senses || '').trim() || undefined,
+            traits: normalizedTraits,
             xpReward: Math.max(0, Math.floor(Number(msg.item.xpReward) || 0)),
             actions: normalizedActions,
             portraitUrl,

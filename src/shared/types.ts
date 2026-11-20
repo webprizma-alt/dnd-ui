@@ -147,6 +147,10 @@ export interface MonsterRef {
   speed: number;
   abilities: Record<string, number>;
   proficientSkillIds: string[];
+  immunities?: string;
+  resistances?: string;
+  senses?: string;
+  traits?: MonsterActionRef[];
   xpReward: number;
   actions: MonsterActionRef[];
   portraitUrl?: string | null;

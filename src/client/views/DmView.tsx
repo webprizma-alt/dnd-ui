@@ -2494,11 +2494,30 @@ export function DmView({ onNavigate }: DmViewProps) {
                 </form>
 
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold text-slate-400">
-                    Все фишки ({dmState.tokens.length})
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-400">
+                      Все фишки ({dmState.tokens.length})
+                    </span>
+                    <span className="text-[11px] text-slate-500">по инициативе ↓</span>
                   </div>
-                  <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800">
-                    {dmState.tokens.map((tok) => {
+                  <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
+                    {[...dmState.tokens]
+                      .sort((a, b) => {
+                        const aIsObj = a.kind === 'object';
+                        const bIsObj = b.kind === 'object';
+                        if (aIsObj !== bIsObj) return aIsObj ? 1 : -1;
+                        if (aIsObj && bIsObj) return 0;
+                        const aPlayer = a.playerId
+                          ? dmState.players.find((p) => p.id === a.playerId)
+                          : null;
+                        const bPlayer = b.playerId
+                          ? dmState.players.find((p) => p.id === b.playerId)
+                          : null;
+                        const aInit = aPlayer?.initiative ?? a.initiative ?? 0;
+                        const bInit = bPlayer?.initiative ?? b.initiative ?? 0;
+                        return bInit - aInit;
+                      })
+                      .map((tok) => {
                       const isTurn = dmState.scene.activeTurnTokenId === tok.id;
                       const linkedPlayer = tok.playerId
                         ? dmState.players.find((p) => p.id === tok.playerId)
@@ -2511,9 +2530,26 @@ export function DmView({ onNavigate }: DmViewProps) {
                       const tokHp = tok.hp ?? tokMaxHp;
                       const tokAc = tok.ac ?? linkedMonster?.ac;
                       const isMonsterExpanded = expandedMonsterTokenId === tok.id;
+                      const monsterSkillLabels = linkedMonster
+                        ? catalogs.skills
+                            .filter((sk) => linkedMonster.proficientSkillIds.includes(sk.id))
+                            .map((sk) => {
+                              const abMod = getAbilityModifier(
+                                linkedMonster.abilities?.[sk.abilityId] ?? 10,
+                                catalogs.abilityModifiers
+                              );
+                              return `${sk.name} ${formatModifier(abMod + 2)}`;
+                            })
+                        : [];
+                      const monsterTraits = linkedMonster?.traits ?? [];
 
                       return (
-                        <div key={tok.id} className="px-3 py-2.5 space-y-2 text-xs">
+                        <div
+                          key={tok.id}
+                          className={`px-3 py-2.5 space-y-2 text-xs transition-colors ${
+                            isTurn ? 'bg-amber-500/10 border-l-2 border-l-amber-400' : ''
+                          }`}
+                        >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <span
@@ -2670,7 +2706,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   >
                                     {isMonsterExpanded
                                       ? 'Скрыть блок'
-                                      : `Действия (${linkedMonster.actions.length}) · ${linkedMonster.xpReward} XP`}
+                                      : `Статблок (${linkedMonster.actions.length}) · ${linkedMonster.xpReward} XP`}
                                   </button>
                                 )}
                               </div>
@@ -2682,11 +2718,64 @@ export function DmView({ onNavigate }: DmViewProps) {
                                     <span>Скор. {linkedMonster.speed} фт.</span>
                                     <span>Опыт {linkedMonster.xpReward} XP</span>
                                   </div>
+                                  {(monsterSkillLabels.length > 0 ||
+                                    linkedMonster.resistances ||
+                                    linkedMonster.immunities ||
+                                    linkedMonster.senses) && (
+                                    <div className="space-y-0.5 pt-1 border-t border-slate-800/80 text-slate-300">
+                                      {monsterSkillLabels.length > 0 && (
+                                        <div>
+                                          <span className="text-slate-500">Навыки: </span>
+                                          <span className="font-mono tabular-nums">
+                                            {monsterSkillLabels.join(', ')}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {linkedMonster.resistances && (
+                                        <div>
+                                          <span className="text-slate-500">Сопротивления: </span>
+                                          <span>{linkedMonster.resistances}</span>
+                                        </div>
+                                      )}
+                                      {linkedMonster.immunities && (
+                                        <div>
+                                          <span className="text-slate-500">Иммунитеты: </span>
+                                          <span>{linkedMonster.immunities}</span>
+                                        </div>
+                                      )}
+                                      {linkedMonster.senses && (
+                                        <div>
+                                          <span className="text-slate-500">Чувства: </span>
+                                          <span>{linkedMonster.senses}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {monsterTraits.length > 0 && (
+                                    <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                                      <div className="text-[10px] font-semibold text-slate-500">
+                                        Особенности
+                                      </div>
+                                      {monsterTraits.map((trt) => (
+                                        <div key={trt.id} className="text-slate-300 leading-snug">
+                                          <span className="font-semibold text-sky-300">
+                                            {trt.name}.{' '}
+                                          </span>
+                                          <span>{trt.description}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   {linkedMonster.actions.length > 0 && (
                                     <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                                      <div className="text-[10px] font-semibold text-slate-500">
+                                        Действия
+                                      </div>
                                       {linkedMonster.actions.map((act) => (
                                         <div key={act.id} className="text-slate-300 leading-snug">
-                                          <span className="font-semibold text-amber-300">{act.name}. </span>
+                                          <span className="font-semibold text-amber-300">
+                                            {act.name}.{' '}
+                                          </span>
                                           <span>{act.description}</span>
                                         </div>
                                       ))}
