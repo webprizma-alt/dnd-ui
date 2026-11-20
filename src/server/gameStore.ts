@@ -8,6 +8,7 @@ import {
   createDefaultCatalogs,
   formatArmorClassFormula,
   inferWeaponRangeType,
+  inferWeaponReachRange,
   parseLegacyArmorClass,
   resolveInventoryArmorCategory,
   sortAbilityModifiers,
@@ -19,17 +20,20 @@ import type {
   CharacterCreationRequest,
   CharacterDraft,
   ClientMessage,
+  EntityVisionEntry,
   FullGameState,
   GameCatalogs,
   GameEventEntry,
   GameLocation,
   LocationHotspot,
+  MapLighting,
   MapToken,
   PlayerCharacter,
   PlayerGameState,
   PublicPlayerInfo,
   TvGameState,
   UserAccount,
+  VisionBehavior,
 } from '../shared/types.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -66,6 +70,45 @@ function roundCoord(value: number, snapToGrid: boolean): number {
   return Math.round(value * 100) / 100;
 }
 
+function normalizeMapLighting(value: unknown, fallback: MapLighting = 'bright'): MapLighting {
+  if (value === 'bright' || value === 'dim' || value === 'darkness') return value;
+  return fallback;
+}
+
+function normalizeVisionBehavior(value: unknown): VisionBehavior {
+  if (
+    value === 'normal' ||
+    value === 'darkvision' ||
+    value === 'blindsight' ||
+    value === 'truesight' ||
+    value === 'tremorsense'
+  ) {
+    return value;
+  }
+  return 'normal';
+}
+
+function normalizeEntityVisions(
+  raw: unknown,
+  validVisionIds?: Set<string>
+): EntityVisionEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const byId = new Map<string, EntityVisionEntry>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const visionId = String((item as EntityVisionEntry).visionId || '').trim();
+    if (!visionId) continue;
+    if (validVisionIds && !validVisionIds.has(visionId)) continue;
+    const rawRange = (item as EntityVisionEntry).rangeFt;
+    const rangeFt =
+      typeof rawRange === 'number' && Number.isFinite(rawRange) && rawRange > 0
+        ? clamp(Math.round(rawRange), 5, 1200)
+        : null;
+    byId.set(visionId, { visionId, rangeFt });
+  }
+  return Array.from(byId.values());
+}
+
 function getDefaultSpawnPosition(loc: GameLocation, index: number): { x: number; y: number } {
   if (loc.kind === 'city') {
     const centerX = Math.max(1, loc.map.cols * 0.48 + ((index % 3) - 1) * 0.85);
@@ -97,6 +140,7 @@ export function createDefaultLocations(): GameLocation[] {
         rows: 9,
         showGrid: false,
         gridOpacity: 0.2,
+        lighting: 'bright',
       },
       hotspots: [
         {
@@ -331,6 +375,7 @@ export function createDefaultLocations(): GameLocation[] {
         rows: 9,
         showGrid: true,
         gridOpacity: 0.25,
+        lighting: 'dim',
       },
       hotspots: [
         {
@@ -384,7 +429,10 @@ function createEmptyDraft(catalogs: GameCatalogs, colorIndex: number): Character
     gold: 0,
     abilities,
     proficientSkillIds: [],
+    expertiseSkillIds: [],
     proficiencyIds: [],
+    senses: '',
+    visions: [{ visionId: 'normal', rangeFt: null }],
     privateNote: '',
   };
 }
@@ -521,14 +569,43 @@ export class GameStore {
 
     const rawWeapons =
       Array.isArray(rawCatalogs.weapons) && rawCatalogs.weapons.length > 0
-        ? rawCatalogs.weapons.map((w) => ({
-            ...w,
-            category: w.category === 'martial' ? ('martial' as const) : ('simple' as const),
-            rangeType:
+        ? rawCatalogs.weapons.map((w) => {
+            const rangeType =
               w.rangeType === 'melee' || w.rangeType === 'ranged'
                 ? w.rangeType
-                : inferWeaponRangeType(w.name, w.properties),
-          }))
+                : inferWeaponRangeType(w.name, w.properties);
+            const inferred = inferWeaponReachRange(rangeType, w.properties);
+            if (rangeType === 'ranged') {
+              const normal =
+                typeof w.rangeNormalFt === 'number' && Number.isFinite(w.rangeNormalFt) && w.rangeNormalFt > 0
+                  ? Math.round(w.rangeNormalFt)
+                  : inferred.rangeNormalFt ?? 80;
+              const max =
+                typeof w.rangeMaxFt === 'number' && Number.isFinite(w.rangeMaxFt) && w.rangeMaxFt > 0
+                  ? Math.max(normal, Math.round(w.rangeMaxFt))
+                  : Math.max(normal, inferred.rangeMaxFt ?? normal * 4);
+              return {
+                ...w,
+                category: w.category === 'martial' ? ('martial' as const) : ('simple' as const),
+                rangeType,
+                reachFt: undefined,
+                rangeNormalFt: normal,
+                rangeMaxFt: max,
+              };
+            }
+            const reach =
+              typeof w.reachFt === 'number' && Number.isFinite(w.reachFt) && w.reachFt > 0
+                ? Math.round(w.reachFt)
+                : inferred.reachFt ?? 5;
+            return {
+              ...w,
+              category: w.category === 'martial' ? ('martial' as const) : ('simple' as const),
+              rangeType,
+              reachFt: reach,
+              rangeNormalFt: undefined,
+              rangeMaxFt: undefined,
+            };
+          })
         : defaults.weapons;
 
     const rawArmors =
@@ -562,6 +639,17 @@ export class GameStore {
       if (defaultShield) rawArmors.push(defaultShield);
     }
 
+    const rawVisions =
+      Array.isArray(rawCatalogs.visions) && rawCatalogs.visions.length > 0
+        ? rawCatalogs.visions.map((v) => ({
+            id: v.id || makeId('vis'),
+            name: (v.name || '').trim() || 'Зрение',
+            behavior: normalizeVisionBehavior(v.behavior ?? v.id),
+            description: (v.description || '').trim(),
+          }))
+        : defaults.visions;
+    const validVisionIds = new Set(rawVisions.map((v) => v.id));
+
     const catalogs: GameCatalogs = {
       abilities: rawAbilities,
       abilityModifiers: hadModifiersSchema
@@ -588,9 +676,15 @@ export class GameStore {
           ? rawCatalogs.skills
           : defaults.skills,
       proficiencies: rawProficiencies,
+      visions: rawVisions,
       weapons: rawWeapons,
       armors: rawArmors,
-      monsters: Array.isArray(rawCatalogs.monsters) ? rawCatalogs.monsters : defaults.monsters,
+      monsters: Array.isArray(rawCatalogs.monsters)
+        ? rawCatalogs.monsters.map((m) => ({
+            ...m,
+            visions: normalizeEntityVisions(m.visions, validVisionIds),
+          }))
+        : defaults.monsters,
     };
 
     const hadAccountsSchema = Array.isArray(parsed.accounts);
@@ -618,6 +712,7 @@ export class GameStore {
                 ? loc.map.showGrid
                 : loc.kind === 'tactical',
             gridOpacity: typeof loc.map?.gridOpacity === 'number' ? loc.map.gridOpacity : 0.25,
+            lighting: normalizeMapLighting(loc.map?.lighting, 'bright'),
           },
           hotspots: Array.isArray(loc.hotspots) ? loc.hotspots : [],
           tokens: Array.isArray(loc.tokens)
@@ -720,7 +815,15 @@ export class GameStore {
         gold: typeof p.gold === 'number' ? Math.max(0, p.gold) : 0,
         abilities: builtAbilities,
         proficientSkillIds: Array.isArray(p.proficientSkillIds) ? p.proficientSkillIds : [],
+        expertiseSkillIds: Array.isArray(p.expertiseSkillIds) ? p.expertiseSkillIds : [],
         proficiencyIds: Array.isArray(p.proficiencyIds) ? p.proficiencyIds : [],
+        senses: typeof p.senses === 'string' ? p.senses : '',
+        visions:
+          Array.isArray(p.visions) && p.visions.length > 0
+            ? normalizeEntityVisions(p.visions, validVisionIds)
+            : validVisionIds.has('normal')
+              ? [{ visionId: 'normal', rangeFt: null }]
+              : [],
         inventory: builtInventory,
         privateNote: typeof p.privateNote === 'string' ? p.privateNote : '',
       };
@@ -1288,6 +1391,7 @@ export class GameStore {
               ...incoming.map,
               cols,
               rows,
+              lighting: normalizeMapLighting(incoming.map.lighting ?? existing.map.lighting, 'bright'),
             };
           }
           // Update player cached locationName
@@ -1330,6 +1434,7 @@ export class GameStore {
                   : incoming.kind === 'tactical',
               gridOpacity:
                 typeof incoming.map?.gridOpacity === 'number' ? incoming.map.gridOpacity : 0.25,
+              lighting: normalizeMapLighting(incoming.map?.lighting, 'bright'),
             },
             hotspots: parentLoc
               ? [
@@ -1596,9 +1701,19 @@ export class GameStore {
           proficientSkillIds: Array.isArray(req.draft.proficientSkillIds)
             ? [...req.draft.proficientSkillIds]
             : [],
+          expertiseSkillIds: Array.isArray(req.draft.expertiseSkillIds)
+            ? req.draft.expertiseSkillIds.filter((id) =>
+                (req.draft.proficientSkillIds || []).includes(id)
+              )
+            : [],
           proficiencyIds: Array.isArray(req.draft.proficiencyIds)
             ? [...req.draft.proficiencyIds]
             : [],
+          senses: (req.draft.senses || '').trim(),
+          visions: normalizeEntityVisions(
+            req.draft.visions,
+            new Set(this.state.catalogs.visions.map((v) => v.id))
+          ),
           inventory: [],
           privateNote: (req.draft.privateNote || '').trim(),
         };
@@ -1777,9 +1892,28 @@ export class GameStore {
           existing.ac = computePlayerAc(existing, this.state.catalogs);
           if (Array.isArray(incoming.proficientSkillIds)) {
             existing.proficientSkillIds = incoming.proficientSkillIds;
+            existing.expertiseSkillIds = (existing.expertiseSkillIds ?? []).filter((id) =>
+              existing.proficientSkillIds.includes(id)
+            );
+          }
+          if (Array.isArray(incoming.expertiseSkillIds)) {
+            const cleanExp = Array.from(new Set(incoming.expertiseSkillIds));
+            existing.expertiseSkillIds = cleanExp;
+            existing.proficientSkillIds = Array.from(
+              new Set([...existing.proficientSkillIds, ...cleanExp])
+            );
           }
           if (Array.isArray(incoming.proficiencyIds)) {
             existing.proficiencyIds = incoming.proficiencyIds;
+          }
+          if (typeof incoming.senses === 'string') {
+            existing.senses = incoming.senses.trim();
+          }
+          if (Array.isArray(incoming.visions)) {
+            existing.visions = normalizeEntityVisions(
+              incoming.visions,
+              new Set(this.state.catalogs.visions.map((v) => v.id))
+            );
           }
         } else {
           const newId = makeId('player');
@@ -1793,6 +1927,7 @@ export class GameStore {
             { abilities: builtAbilities, inventory: [] },
             this.state.catalogs
           );
+          const validVisionIds = new Set(this.state.catalogs.visions.map((v) => v.id));
           const newPlayer: PlayerCharacter = {
             id: newId,
             ownerAccountId: incoming.ownerAccountId || undefined,
@@ -1824,7 +1959,16 @@ export class GameStore {
             proficientSkillIds: Array.isArray(incoming.proficientSkillIds)
               ? incoming.proficientSkillIds
               : [],
+            expertiseSkillIds: Array.isArray(incoming.expertiseSkillIds)
+              ? incoming.expertiseSkillIds
+              : [],
             proficiencyIds: Array.isArray(incoming.proficiencyIds) ? incoming.proficiencyIds : [],
+            senses: (incoming.senses || '').trim(),
+            visions: Array.isArray(incoming.visions)
+              ? normalizeEntityVisions(incoming.visions, validVisionIds)
+              : validVisionIds.has('normal')
+                ? [{ visionId: 'normal', rangeFt: null }]
+                : [],
             privateNote: '',
             inventory: [],
           };
@@ -1932,9 +2076,28 @@ export class GameStore {
         player.ac = computePlayerAc(player, this.state.catalogs);
         if (Array.isArray(msg.proficientSkillIds)) {
           player.proficientSkillIds = msg.proficientSkillIds;
+          player.expertiseSkillIds = (player.expertiseSkillIds ?? []).filter((id) =>
+            player.proficientSkillIds.includes(id)
+          );
+        }
+        if (Array.isArray(msg.expertiseSkillIds)) {
+          const cleanExp = Array.from(new Set(msg.expertiseSkillIds));
+          player.expertiseSkillIds = cleanExp;
+          player.proficientSkillIds = Array.from(
+            new Set([...player.proficientSkillIds, ...cleanExp])
+          );
         }
         if (Array.isArray(msg.proficiencyIds)) {
           player.proficiencyIds = msg.proficiencyIds;
+        }
+        if (typeof msg.senses === 'string') {
+          player.senses = msg.senses;
+        }
+        if (Array.isArray(msg.visions)) {
+          player.visions = normalizeEntityVisions(
+            msg.visions,
+            new Set(this.state.catalogs.visions.map((v) => v.id))
+          );
         }
         this.syncActiveLocationView();
         this.bumpVersion();
@@ -1958,6 +2121,9 @@ export class GameStore {
           if (msg.item.catalogItemId) existingSame.catalogItemId = msg.item.catalogItemId;
           if (msg.item.weaponCategory) existingSame.weaponCategory = msg.item.weaponCategory;
           if (msg.item.weaponRangeType) existingSame.weaponRangeType = msg.item.weaponRangeType;
+          if (typeof msg.item.reachFt === 'number') existingSame.reachFt = msg.item.reachFt;
+          if (typeof msg.item.rangeNormalFt === 'number') existingSame.rangeNormalFt = msg.item.rangeNormalFt;
+          if (typeof msg.item.rangeMaxFt === 'number') existingSame.rangeMaxFt = msg.item.rangeMaxFt;
           if (msg.item.armorCategory) existingSame.armorCategory = msg.item.armorCategory;
           if (msg.item.damage) existingSame.damage = msg.item.damage;
           if (msg.item.properties) existingSame.properties = msg.item.properties;
@@ -1981,6 +2147,9 @@ export class GameStore {
             catalogItemId: msg.item.catalogItemId,
             weaponCategory: msg.item.weaponCategory,
             weaponRangeType: msg.item.weaponRangeType,
+            reachFt: msg.item.reachFt,
+            rangeNormalFt: msg.item.rangeNormalFt,
+            rangeMaxFt: msg.item.rangeMaxFt,
             armorCategory: msg.item.armorCategory,
             damage: msg.item.damage,
             properties: msg.item.properties,
@@ -2022,6 +2191,9 @@ export class GameStore {
         if (typeof msg.patch.description === 'string') item.description = msg.patch.description;
         if (typeof msg.patch.equipped === 'boolean') item.equipped = msg.patch.equipped;
         if (msg.patch.category) item.category = msg.patch.category;
+        if (typeof msg.patch.reachFt === 'number') item.reachFt = msg.patch.reachFt;
+        if (typeof msg.patch.rangeNormalFt === 'number') item.rangeNormalFt = msg.patch.rangeNormalFt;
+        if (typeof msg.patch.rangeMaxFt === 'number') item.rangeMaxFt = msg.patch.rangeMaxFt;
         player.ac = computePlayerAc(player, this.state.catalogs);
         this.bumpVersion();
         this.scheduleSave();
@@ -2108,6 +2280,7 @@ export class GameStore {
           ...msg.patch,
           cols: nextCols,
           rows: nextRows,
+          lighting: normalizeMapLighting(msg.patch.lighting ?? targetLoc.map.lighting, 'bright'),
         };
         targetLoc.tokens = targetLoc.tokens.map((t) => ({
           ...t,
@@ -2235,15 +2408,76 @@ export class GameStore {
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
-        } else if (msg.catalog === 'weapons') {
+        } else if (msg.catalog === 'visions') {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
           const normalized = {
+            id: msg.item.id || makeId('vis'),
+            name: cleanName,
+            behavior: normalizeVisionBehavior(msg.item.behavior),
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.visions;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'weapons') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const rangeType = msg.item.rangeType === 'ranged' ? ('ranged' as const) : ('melee' as const);
+          const inferred = inferWeaponReachRange(rangeType, msg.item.properties);
+          const reachFt =
+            rangeType === 'melee'
+              ? clamp(
+                  Math.round(
+                    typeof msg.item.reachFt === 'number' && Number.isFinite(msg.item.reachFt) && msg.item.reachFt > 0
+                      ? msg.item.reachFt
+                      : inferred.reachFt ?? 5
+                  ),
+                  5,
+                  100
+                )
+              : undefined;
+          const rangeNormalFt =
+            rangeType === 'ranged'
+              ? clamp(
+                  Math.round(
+                    typeof msg.item.rangeNormalFt === 'number' &&
+                      Number.isFinite(msg.item.rangeNormalFt) &&
+                      msg.item.rangeNormalFt > 0
+                      ? msg.item.rangeNormalFt
+                      : inferred.rangeNormalFt ?? 80
+                  ),
+                  5,
+                  2000
+                )
+              : undefined;
+          const rangeMaxFt =
+            rangeType === 'ranged'
+              ? clamp(
+                  Math.max(
+                    rangeNormalFt ?? 80,
+                    Math.round(
+                      typeof msg.item.rangeMaxFt === 'number' &&
+                        Number.isFinite(msg.item.rangeMaxFt) &&
+                        msg.item.rangeMaxFt > 0
+                        ? msg.item.rangeMaxFt
+                        : inferred.rangeMaxFt ?? (rangeNormalFt ?? 80) * 4
+                    )
+                  ),
+                  5,
+                  4000
+                )
+              : undefined;
+          const normalized = {
             id: msg.item.id || makeId('wpn'),
             category: msg.item.category === 'martial' ? ('martial' as const) : ('simple' as const),
-            rangeType: msg.item.rangeType === 'ranged' ? ('ranged' as const) : ('melee' as const),
+            rangeType,
             name: cleanName,
             damage: (msg.item.damage || '').trim(),
+            reachFt,
+            rangeNormalFt,
+            rangeMaxFt,
             properties: (msg.item.properties || '').trim(),
             mastery: (msg.item.mastery || '').trim(),
             weight: (msg.item.weight || '').trim(),
@@ -2307,11 +2541,42 @@ export class GameStore {
           const normalizedActions = Array.isArray(msg.item.actions)
             ? msg.item.actions
                 .filter((act) => act && act.name && act.name.trim())
-                .map((act) => ({
-                  id: act.id || makeId('act'),
-                  name: act.name.trim(),
-                  description: (act.description || '').trim(),
-                }))
+                .map((act) => {
+                  const attackType =
+                    act.attackType === 'melee' || act.attackType === 'ranged'
+                      ? act.attackType
+                      : null;
+                  const reachFt =
+                    attackType === 'melee' &&
+                    typeof act.reachFt === 'number' &&
+                    Number.isFinite(act.reachFt) &&
+                    act.reachFt > 0
+                      ? clamp(Math.round(act.reachFt), 5, 200)
+                      : null;
+                  const rangeNormalFt =
+                    attackType === 'ranged' &&
+                    typeof act.rangeNormalFt === 'number' &&
+                    Number.isFinite(act.rangeNormalFt) &&
+                    act.rangeNormalFt > 0
+                      ? clamp(Math.round(act.rangeNormalFt), 5, 2000)
+                      : null;
+                  const rangeMaxFt =
+                    attackType === 'ranged' &&
+                    typeof act.rangeMaxFt === 'number' &&
+                    Number.isFinite(act.rangeMaxFt) &&
+                    act.rangeMaxFt > 0
+                      ? clamp(Math.max(rangeNormalFt ?? 5, Math.round(act.rangeMaxFt)), 5, 4000)
+                      : null;
+                  return {
+                    id: act.id || makeId('act'),
+                    name: act.name.trim(),
+                    description: (act.description || '').trim(),
+                    attackType,
+                    reachFt,
+                    rangeNormalFt,
+                    rangeMaxFt,
+                  };
+                })
             : [];
           const list = this.state.catalogs.monsters;
           const existingMonster = msg.item.id ? list.find((x) => x.id === msg.item.id) : undefined;
@@ -2319,6 +2584,7 @@ export class GameStore {
             msg.item.portraitUrl !== undefined
               ? msg.item.portraitUrl
               : existingMonster?.portraitUrl ?? null;
+          const validVisionIds = new Set(this.state.catalogs.visions.map((v) => v.id));
           const normalized = {
             id: msg.item.id || makeId('mon'),
             name: cleanName,
@@ -2336,12 +2602,19 @@ export class GameStore {
             ),
             speed: clamp(Math.round(Number(msg.item.speed) || 30), 0, 300),
             abilities: builtAbilities,
-            proficientSkillIds: Array.isArray(msg.item.proficientSkillIds)
-              ? msg.item.proficientSkillIds
+            proficientSkillIds: Array.from(
+              new Set([
+                ...(Array.isArray(msg.item.proficientSkillIds) ? msg.item.proficientSkillIds : []),
+                ...(Array.isArray(msg.item.expertiseSkillIds) ? msg.item.expertiseSkillIds : []),
+              ])
+            ),
+            expertiseSkillIds: Array.isArray(msg.item.expertiseSkillIds)
+              ? Array.from(new Set(msg.item.expertiseSkillIds))
               : [],
             immunities: (msg.item.immunities || '').trim() || undefined,
             resistances: (msg.item.resistances || '').trim() || undefined,
             senses: (msg.item.senses || '').trim() || undefined,
+            visions: normalizeEntityVisions(msg.item.visions, validVisionIds),
             traits: normalizedTraits,
             xpReward: Math.max(0, Math.floor(Number(msg.item.xpReward) || 0)),
             actions: normalizedActions,
@@ -2384,11 +2657,19 @@ export class GameStore {
         } else if (key === 'skills') {
           for (const p of this.state.players) {
             p.proficientSkillIds = p.proficientSkillIds.filter((id) => id !== msg.itemId);
+            p.expertiseSkillIds = (p.expertiseSkillIds ?? []).filter((id) => id !== msg.itemId);
           }
           for (const req of this.state.creationRequests) {
             req.draft.proficientSkillIds = req.draft.proficientSkillIds.filter(
               (id) => id !== msg.itemId
             );
+            req.draft.expertiseSkillIds = (req.draft.expertiseSkillIds ?? []).filter(
+              (id) => id !== msg.itemId
+            );
+          }
+          for (const m of this.state.catalogs.monsters) {
+            m.proficientSkillIds = m.proficientSkillIds.filter((id) => id !== msg.itemId);
+            m.expertiseSkillIds = (m.expertiseSkillIds ?? []).filter((id) => id !== msg.itemId);
           }
         } else if (key === 'proficiencies') {
           for (const p of this.state.players) {
@@ -2396,6 +2677,16 @@ export class GameStore {
           }
           for (const req of this.state.creationRequests) {
             req.draft.proficiencyIds = req.draft.proficiencyIds.filter((id) => id !== msg.itemId);
+          }
+        } else if (key === 'visions') {
+          for (const p of this.state.players) {
+            p.visions = (p.visions ?? []).filter((v) => v.visionId !== msg.itemId);
+          }
+          for (const req of this.state.creationRequests) {
+            req.draft.visions = (req.draft.visions ?? []).filter((v) => v.visionId !== msg.itemId);
+          }
+          for (const m of this.state.catalogs.monsters) {
+            m.visions = (m.visions ?? []).filter((v) => v.visionId !== msg.itemId);
           }
         } else if (key === 'classes') {
           const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';

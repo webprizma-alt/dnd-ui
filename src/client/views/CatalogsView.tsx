@@ -6,6 +6,7 @@ import {
   Calculator,
   Check,
   Dna,
+  Eye,
   Image as ImageIcon,
   Loader2,
   Map as MapIcon,
@@ -28,9 +29,12 @@ import {
 import {
   formatAbilityRange,
   formatArmorClassFormula,
+  formatEntityVisions,
   formatModifier,
+  formatWeaponReachRange,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getVisionBehaviorLabel,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
   sortAbilityModifiers,
@@ -44,6 +48,7 @@ import type {
   BackgroundRef,
   CatalogKey,
   ClassRef,
+  EntityVisionEntry,
   LevelThresholdRef,
   MonsterActionRef,
   MonsterRef,
@@ -51,10 +56,13 @@ import type {
   ProficiencyRef,
   SkillRef,
   SpeciesRef,
+  VisionBehavior,
+  VisionRef,
   WeaponCategory,
   WeaponRangeType,
   WeaponRef,
 } from '../../shared/types';
+import { VisionSelector } from '../components/VisionSelector';
 import { compressImageFileToDataUrl } from '../imageUtils';
 import { useGameSocket } from '../useGameSocket';
 
@@ -119,6 +127,12 @@ const SECTIONS: CatalogSectionMeta[] = [
     icon: Shield,
   },
   {
+    key: 'visions',
+    label: 'Зрение',
+    subtitle: 'Типы зрения и особых чувств (1 клетка = 5 фт.) для расчёта видимости на тактической карте ДМ.',
+    icon: Eye,
+  },
+  {
     key: 'weapons',
     label: 'Оружие',
     subtitle: 'Простое и воинское, рукопашное и дальнобойное оружие: урон, свойства, мастерство, вес и цена.',
@@ -165,9 +179,15 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
   const [modMaxScoreDraft, setModMaxScoreDraft] = useState(11);
   const [modValueDraft, setModValueDraft] = useState(0);
 
+  // Vision form draft
+  const [visionBehaviorDraft, setVisionBehaviorDraft] = useState<VisionBehavior>('normal');
+
   // Weapon form drafts & filters
   const [weaponCategoryDraft, setWeaponCategoryDraft] = useState<WeaponCategory>('simple');
   const [weaponRangeDraft, setWeaponRangeDraft] = useState<WeaponRangeType>('melee');
+  const [weaponReachDraft, setWeaponReachDraft] = useState<number>(5);
+  const [weaponRangeNormalDraft, setWeaponRangeNormalDraft] = useState<number>(80);
+  const [weaponRangeMaxDraft, setWeaponRangeMaxDraft] = useState<number>(320);
   const [weaponDamageDraft, setWeaponDamageDraft] = useState('');
   const [weaponPropsDraft, setWeaponPropsDraft] = useState('');
   const [weaponMasteryDraft, setWeaponMasteryDraft] = useState('');
@@ -203,14 +223,26 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     cha: 10,
   });
   const [monsterSkillsDraft, setMonsterSkillsDraft] = useState<string[]>([]);
+  const [monsterExpertiseDraft, setMonsterExpertiseDraft] = useState<string[]>([]);
   const [monsterImmunitiesDraft, setMonsterImmunitiesDraft] = useState('');
   const [monsterResistancesDraft, setMonsterResistancesDraft] = useState('');
   const [monsterSensesDraft, setMonsterSensesDraft] = useState('');
+  const [monsterVisionsDraft, setMonsterVisionsDraft] = useState<EntityVisionEntry[]>([
+    { visionId: 'normal', rangeFt: null },
+  ]);
   const [monsterTraitsDraft, setMonsterTraitsDraft] = useState<MonsterActionRef[]>([
     { id: 'trt-draft-1', name: '', description: '' },
   ]);
   const [monsterActionsDraft, setMonsterActionsDraft] = useState<MonsterActionRef[]>([
-    { id: 'act-draft-1', name: '', description: '' },
+    {
+      id: 'act-draft-1',
+      name: '',
+      description: '',
+      attackType: null,
+      reachFt: null,
+      rangeNormalFt: null,
+      rangeMaxFt: null,
+    },
   ]);
 
   // Monster portrait upload & AI generation modal state
@@ -247,8 +279,12 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setModMinScoreDraft(10);
     setModMaxScoreDraft(11);
     setModValueDraft(0);
+    setVisionBehaviorDraft('normal');
     setWeaponCategoryDraft('simple');
     setWeaponRangeDraft('melee');
+    setWeaponReachDraft(5);
+    setWeaponRangeNormalDraft(80);
+    setWeaponRangeMaxDraft(320);
     setWeaponDamageDraft('');
     setWeaponPropsDraft('');
     setWeaponMasteryDraft('');
@@ -270,11 +306,23 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setMonsterXpDraft(10);
     setMonsterAbilitiesDraft(buildDefaultMonsterAbilities());
     setMonsterSkillsDraft([]);
+    setMonsterExpertiseDraft([]);
     setMonsterImmunitiesDraft('');
     setMonsterResistancesDraft('');
     setMonsterSensesDraft('');
+    setMonsterVisionsDraft([{ visionId: 'normal', rangeFt: null }]);
     setMonsterTraitsDraft([{ id: `trt-${Date.now().toString(36)}`, name: '', description: '' }]);
-    setMonsterActionsDraft([{ id: `act-${Date.now().toString(36)}`, name: '', description: '' }]);
+    setMonsterActionsDraft([
+      {
+        id: `act-${Date.now().toString(36)}`,
+        name: '',
+        description: '',
+        attackType: null,
+        reachFt: null,
+        rangeNormalFt: null,
+        rangeMaxFt: null,
+      },
+    ]);
     if (sec === 'levels' && dmState) {
       const sorted = sortLevels(dmState.catalogs.levels);
       const last = sorted[sorted.length - 1];
@@ -378,12 +426,21 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setNameDraft(pr.name);
       setProfCategoryDraft(pr.category);
       setDescDraft(pr.description);
+    } else if (activeSection === 'visions') {
+      const vis = item as VisionRef;
+      setEditingId(vis.id);
+      setNameDraft(vis.name);
+      setVisionBehaviorDraft(vis.behavior || 'normal');
+      setDescDraft(vis.description);
     } else if (activeSection === 'weapons') {
       const wp = item as WeaponRef;
       setEditingId(wp.id);
       setNameDraft(wp.name);
       setWeaponCategoryDraft(wp.category);
       setWeaponRangeDraft(wp.rangeType || 'melee');
+      setWeaponReachDraft(wp.reachFt ?? 5);
+      setWeaponRangeNormalDraft(wp.rangeNormalFt ?? 80);
+      setWeaponRangeMaxDraft(wp.rangeMaxFt ?? 320);
       setWeaponDamageDraft(wp.damage);
       setWeaponPropsDraft(wp.properties);
       setWeaponMasteryDraft(wp.mastery);
@@ -419,9 +476,15 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       }
       setMonsterAbilitiesDraft(nextAb);
       setMonsterSkillsDraft([...(mon.proficientSkillIds || [])]);
+      setMonsterExpertiseDraft([...(mon.expertiseSkillIds || [])]);
       setMonsterImmunitiesDraft(mon.immunities || '');
       setMonsterResistancesDraft(mon.resistances || '');
       setMonsterSensesDraft(mon.senses || '');
+      setMonsterVisionsDraft(
+        Array.isArray(mon.visions) && mon.visions.length > 0
+          ? mon.visions.map((v) => ({ ...v }))
+          : []
+      );
       setMonsterTraitsDraft(
         mon.traits && mon.traits.length > 0
           ? mon.traits.map((t) => ({ ...t }))
@@ -429,8 +492,24 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       );
       setMonsterActionsDraft(
         mon.actions && mon.actions.length > 0
-          ? mon.actions.map((a) => ({ ...a }))
-          : [{ id: `act-${Date.now().toString(36)}`, name: '', description: '' }]
+          ? mon.actions.map((a) => ({
+              ...a,
+              attackType: a.attackType ?? null,
+              reachFt: a.reachFt ?? null,
+              rangeNormalFt: a.rangeNormalFt ?? null,
+              rangeMaxFt: a.rangeMaxFt ?? null,
+            }))
+          : [
+              {
+                id: `act-${Date.now().toString(36)}`,
+                name: '',
+                description: '',
+                attackType: null,
+                reachFt: null,
+                rangeNormalFt: null,
+                rangeMaxFt: null,
+              },
+            ]
       );
     }
   };
@@ -527,8 +606,23 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           description: descDraft.trim(),
         },
       });
+    } else if (activeSection === 'visions') {
+      if (!nameDraft.trim()) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'visions',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          behavior: visionBehaviorDraft,
+          description: descDraft.trim(),
+        },
+      });
     } else if (activeSection === 'weapons') {
       if (!nameDraft.trim()) return;
+      const safeReach = Math.max(5, Math.round(weaponReachDraft || 5));
+      const safeNormal = Math.max(5, Math.round(weaponRangeNormalDraft || 80));
+      const safeMax = Math.max(safeNormal, Math.round(weaponRangeMaxDraft || safeNormal * 4));
       send({
         type: 'dm:upsertCatalogItem',
         catalog: 'weapons',
@@ -538,6 +632,9 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           rangeType: weaponRangeDraft,
           name: nameDraft.trim(),
           damage: weaponDamageDraft.trim() || '—',
+          reachFt: weaponRangeDraft === 'melee' ? safeReach : undefined,
+          rangeNormalFt: weaponRangeDraft === 'ranged' ? safeNormal : undefined,
+          rangeMaxFt: weaponRangeDraft === 'ranged' ? safeMax : undefined,
           properties: weaponPropsDraft.trim() || '—',
           mastery: weaponMasteryDraft.trim() || '—',
           weight: weaponWeightDraft.trim() || '—',
@@ -593,6 +690,16 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           id: a.id || `act-${Date.now().toString(36)}`,
           name: a.name.trim(),
           description: a.description.trim(),
+          attackType: a.attackType ?? null,
+          reachFt: a.attackType === 'melee' && a.reachFt ? Math.max(5, Math.round(a.reachFt)) : null,
+          rangeNormalFt:
+            a.attackType === 'ranged' && a.rangeNormalFt
+              ? Math.max(5, Math.round(a.rangeNormalFt))
+              : null,
+          rangeMaxFt:
+            a.attackType === 'ranged' && a.rangeMaxFt
+              ? Math.max(5, Math.round(a.rangeMaxFt))
+              : null,
         }));
       send({
         type: 'dm:upsertCatalogItem',
@@ -606,10 +713,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           initiative: Math.round(monsterInitDraft || 10),
           speed: Math.max(0, Math.round(monsterSpeedDraft || 0)),
           abilities: monsterAbilitiesDraft,
-          proficientSkillIds: monsterSkillsDraft,
+          proficientSkillIds: Array.from(
+            new Set([...monsterSkillsDraft, ...monsterExpertiseDraft])
+          ),
+          expertiseSkillIds: monsterExpertiseDraft,
           immunities: monsterImmunitiesDraft.trim() || undefined,
           resistances: monsterResistancesDraft.trim() || undefined,
           senses: monsterSensesDraft.trim() || undefined,
+          visions: monsterVisionsDraft,
           traits: cleanTraits,
           xpReward: Math.max(0, Math.floor(monsterXpDraft || 0)),
           actions: cleanActions,
@@ -1143,6 +1254,46 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
+              {activeSection === 'visions' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название (напр. Тёмное зрение)"
+                      className="sm:col-span-5 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <select
+                      value={visionBehaviorDraft}
+                      onChange={(e) => setVisionBehaviorDraft(e.target.value as VisionBehavior)}
+                      className="sm:col-span-5 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    >
+                      <option value="normal">Механика: Обычное зрение (только освещённая зона)</option>
+                      <option value="darkvision">Механика: Тёмное зрение (полумрак→яркий, темнота→полумрак)</option>
+                      <option value="blindsight">Механика: Слепое зрение (видит в темноте/ослеплении)</option>
+                      <option value="truesight">Механика: Истинное зрение (видит сквозь тьму и иллюзии)</option>
+                      <option value="tremorsense">Механика: Чувство вибрации (ощущает по поверхности)</option>
+                    </select>
+                    <button
+                      type="submit"
+                      className="sm:col-span-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Подробное описание правил этого зрения..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
               {activeSection === 'weapons' && (
                 <div className="space-y-3">
                   {/* Dual Toggles: Простое/Воинское & Рукопашное/Дальнобойное */}
@@ -1176,7 +1327,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">Дистанция:</span>
+                      <span className="text-xs text-slate-400">Тип:</span>
                       <div className="inline-flex p-1 rounded-lg bg-[#0B0F17] border border-slate-800">
                         <button
                           type="button"
@@ -1202,6 +1353,47 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         </button>
                       </div>
                     </div>
+
+                    {/* Structured Reach / Range inputs */}
+                    {weaponRangeDraft === 'melee' ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">Досягаемость:</span>
+                        <input
+                          type="number"
+                          min={5}
+                          max={100}
+                          step={5}
+                          value={weaponReachDraft}
+                          onChange={(e) => setWeaponReachDraft(Number(e.target.value) || 5)}
+                          className="w-20 px-2.5 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                        />
+                        <span className="text-xs text-slate-400">фт.</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">Дистанция (норм./макс.):</span>
+                        <input
+                          type="number"
+                          min={5}
+                          max={2000}
+                          step={5}
+                          value={weaponRangeNormalDraft}
+                          onChange={(e) => setWeaponRangeNormalDraft(Number(e.target.value) || 80)}
+                          className="w-20 px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                        />
+                        <span className="text-xs text-slate-500">/</span>
+                        <input
+                          type="number"
+                          min={5}
+                          max={4000}
+                          step={5}
+                          value={weaponRangeMaxDraft}
+                          onChange={(e) => setWeaponRangeMaxDraft(Number(e.target.value) || 320)}
+                          className="w-20 px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                        />
+                        <span className="text-xs text-slate-400">фт.</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid sm:grid-cols-12 gap-3">
@@ -1549,45 +1741,92 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                     </div>
                   </div>
 
-                  {/* Skills Multi-select with live +N bonus */}
+                  {/* Skills Multi-select with live +N bonus & Expertise ×2 */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-[11px] font-medium text-slate-300">
-                        Навыки ({monsterSkillsDraft.length} выбрано · владение +2 к модификатору)
+                        Навыки ({monsterSkillsDraft.length} выбрано · владение +2, экспертиза ×2 = +4)
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {catalogs.skills.map((sk) => {
-                        const active = monsterSkillsDraft.includes(sk.id);
+                        const isExp = monsterExpertiseDraft.includes(sk.id);
+                        const active = isExp || monsterSkillsDraft.includes(sk.id);
                         const abScore = monsterAbilitiesDraft[sk.abilityId] ?? 10;
                         const abMod = getAbilityModifier(abScore, catalogs.abilityModifiers);
-                        const totalBonus = active ? abMod + 2 : abMod;
+                        const totalBonus = isExp ? abMod + 4 : active ? abMod + 2 : abMod;
                         return (
-                          <button
+                          <div
                             key={sk.id}
-                            type="button"
-                            onClick={() =>
-                              setMonsterSkillsDraft((prev) =>
-                                prev.includes(sk.id)
-                                  ? prev.filter((id) => id !== sk.id)
-                                  : [...prev, sk.id]
-                              )
-                            }
-                            className={`px-2.5 py-1 rounded-md border text-[11px] inline-flex items-center gap-1.5 transition-colors ${
-                              active
-                                ? 'bg-amber-500/20 border-amber-500/70 text-amber-300 font-medium'
-                                : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                            className={`inline-flex items-stretch rounded-md border text-[11px] overflow-hidden transition-colors ${
+                              isExp
+                                ? 'bg-sky-500/20 border-sky-400/70'
+                                : active
+                                  ? 'bg-amber-500/20 border-amber-500/70'
+                                  : 'bg-[#0B0F17] border-slate-800'
                             }`}
                           >
-                            <span>{sk.name}</span>
-                            <span
-                              className={`font-mono tabular-nums ${
-                                active ? 'text-amber-200 font-semibold' : 'text-slate-500'
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (active) {
+                                  setMonsterSkillsDraft((prev) =>
+                                    prev.filter((id) => id !== sk.id)
+                                  );
+                                  setMonsterExpertiseDraft((prev) =>
+                                    prev.filter((id) => id !== sk.id)
+                                  );
+                                } else {
+                                  setMonsterSkillsDraft((prev) => [...prev, sk.id]);
+                                }
+                              }}
+                              className={`px-2 py-1 inline-flex items-center gap-1.5 transition-colors ${
+                                isExp
+                                  ? 'text-sky-200 font-medium'
+                                  : active
+                                    ? 'text-amber-300 font-medium'
+                                    : 'text-slate-400 hover:text-slate-200'
                               }`}
                             >
-                              {formatModifier(totalBonus)}
-                            </span>
-                          </button>
+                              <span>{sk.name}</span>
+                              <span
+                                className={`font-mono tabular-nums ${
+                                  isExp
+                                    ? 'text-sky-300 font-semibold'
+                                    : active
+                                      ? 'text-amber-200 font-semibold'
+                                      : 'text-slate-500'
+                                }`}
+                              >
+                                {formatModifier(totalBonus)}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Экспертиза (бонус владения ×2 = +4)"
+                              onClick={() => {
+                                if (isExp) {
+                                  setMonsterExpertiseDraft((prev) =>
+                                    prev.filter((id) => id !== sk.id)
+                                  );
+                                } else {
+                                  setMonsterExpertiseDraft((prev) => [...prev, sk.id]);
+                                  setMonsterSkillsDraft((prev) =>
+                                    prev.includes(sk.id) ? prev : [...prev, sk.id]
+                                  );
+                                }
+                              }}
+                              className={`px-1.5 py-1 border-l font-mono text-[10px] font-semibold transition-colors ${
+                                isExp
+                                  ? 'border-sky-400/60 bg-sky-500/30 text-sky-200'
+                                  : active
+                                    ? 'border-amber-500/40 text-amber-300/70 hover:text-sky-300 hover:bg-sky-500/15'
+                                    : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:bg-slate-800/70'
+                              }`}
+                            >
+                              ×2
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -1595,13 +1834,19 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       <div className="text-[11px] text-slate-300 pt-0.5">
                         <span className="text-slate-500">Выбрано: </span>
                         {catalogs.skills
-                          .filter((sk) => monsterSkillsDraft.includes(sk.id))
+                          .filter(
+                            (sk) =>
+                              monsterSkillsDraft.includes(sk.id) ||
+                              monsterExpertiseDraft.includes(sk.id)
+                          )
                           .map((sk) => {
+                            const isExp = monsterExpertiseDraft.includes(sk.id);
                             const abMod = getAbilityModifier(
                               monsterAbilitiesDraft[sk.abilityId] ?? 10,
                               catalogs.abilityModifiers
                             );
-                            return `${sk.name} ${formatModifier(abMod + 2)}`;
+                            const bonus = abMod + (isExp ? 4 : 2);
+                            return `${sk.name} ${formatModifier(bonus)}${isExp ? ' (×2)' : ''}`;
                           })
                           .join(', ')}
                       </div>
@@ -1631,15 +1876,25 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       />
                     </label>
                     <label className="space-y-1">
-                      <span className="text-[11px] text-slate-400">Чувства</span>
+                      <span className="text-[11px] text-slate-400">Чувства (дополнительно)</span>
                       <input
                         type="text"
                         value={monsterSensesDraft}
                         onChange={(e) => setMonsterSensesDraft(e.target.value)}
-                        placeholder="Например: Тёмное зрение 60 фт., пасс. Восприятие 13"
+                        placeholder="Например: пасс. Восприятие 13, обострённый нюх"
                         className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
                       />
                     </label>
+                  </div>
+
+                  {/* Structured Monster Visions */}
+                  <div className="p-3 rounded-lg bg-[#0B0F17]/70 border border-slate-800/80">
+                    <VisionSelector
+                      catalogVisions={catalogs.visions}
+                      value={monsterVisionsDraft}
+                      onChange={setMonsterVisionsDraft}
+                      title="Зрение монстра"
+                    />
                   </div>
 
                   {/* Monster Traits */}
@@ -1733,6 +1988,10 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                               id: `act-${Date.now().toString(36)}-${prev.length}`,
                               name: '',
                               description: '',
+                              attackType: null,
+                              reachFt: null,
+                              rangeNormalFt: null,
+                              rangeMaxFt: null,
                             },
                           ])
                         }
@@ -1747,46 +2006,187 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       {monsterActionsDraft.map((act, idx) => (
                         <div
                           key={act.id}
-                          className="grid sm:grid-cols-12 gap-2 items-start p-2.5 rounded-lg bg-[#0B0F17] border border-slate-800"
+                          className="space-y-2 p-2.5 rounded-lg bg-[#0B0F17] border border-slate-800"
                         >
-                          <input
-                            type="text"
-                            value={act.name}
-                            onChange={(e) =>
-                              setMonsterActionsDraft((prev) =>
-                                prev.map((row, i) =>
-                                  i === idx ? { ...row, name: e.target.value } : row
+                          <div className="grid sm:grid-cols-12 gap-2 items-start">
+                            <input
+                              type="text"
+                              value={act.name}
+                              onChange={(e) =>
+                                setMonsterActionsDraft((prev) =>
+                                  prev.map((row, i) =>
+                                    i === idx ? { ...row, name: e.target.value } : row
+                                  )
                                 )
-                              )
-                            }
-                            placeholder="Название (напр. Укус)"
-                            className="sm:col-span-3 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                          />
-                          <input
-                            type="text"
-                            value={act.description}
-                            onChange={(e) =>
-                              setMonsterActionsDraft((prev) =>
-                                prev.map((row, i) =>
-                                  i === idx ? { ...row, description: e.target.value } : row
+                              }
+                              placeholder="Название (напр. Укус)"
+                              className="sm:col-span-3 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                            />
+                            <input
+                              type="text"
+                              value={act.description}
+                              onChange={(e) =>
+                                setMonsterActionsDraft((prev) =>
+                                  prev.map((row, i) =>
+                                    i === idx ? { ...row, description: e.target.value } : row
+                                  )
                                 )
-                              )
-                            }
-                            placeholder="Бросок атаки, досягаемость и урон..."
-                            className="sm:col-span-8 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-200"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMonsterActionsDraft((prev) =>
-                                prev.length > 1 ? prev.filter((_, i) => i !== idx) : [{ ...act, name: '', description: '' }]
-                              )
-                            }
-                            className="sm:col-span-1 p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 justify-self-end"
-                            aria-label="Удалить действие"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                              }
+                              placeholder="Бросок атаки, досягаемость и урон..."
+                              className="sm:col-span-8 px-2.5 py-1.5 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-200"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMonsterActionsDraft((prev) =>
+                                  prev.length > 1
+                                    ? prev.filter((_, i) => i !== idx)
+                                    : [
+                                        {
+                                          ...act,
+                                          name: '',
+                                          description: '',
+                                          attackType: null,
+                                          reachFt: null,
+                                          rangeNormalFt: null,
+                                          rangeMaxFt: null,
+                                        },
+                                      ]
+                                )
+                              }
+                              className="sm:col-span-1 p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-slate-800 justify-self-end"
+                              aria-label="Удалить действие"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Optional tactical reach / range */}
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                            <span>Дистанция (необяз.):</span>
+                            <select
+                              value={act.attackType ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value as '' | WeaponRangeType;
+                                setMonsterActionsDraft((prev) =>
+                                  prev.map((row, i) =>
+                                    i !== idx
+                                      ? row
+                                      : val === 'melee'
+                                        ? {
+                                            ...row,
+                                            attackType: 'melee',
+                                            reachFt: row.reachFt ?? 5,
+                                            rangeNormalFt: null,
+                                            rangeMaxFt: null,
+                                          }
+                                        : val === 'ranged'
+                                          ? {
+                                              ...row,
+                                              attackType: 'ranged',
+                                              reachFt: null,
+                                              rangeNormalFt: row.rangeNormalFt ?? 60,
+                                              rangeMaxFt: row.rangeMaxFt ?? 120,
+                                            }
+                                          : {
+                                              ...row,
+                                              attackType: null,
+                                              reachFt: null,
+                                              rangeNormalFt: null,
+                                              rangeMaxFt: null,
+                                            }
+                                  )
+                                );
+                              }}
+                              className="px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-xs text-slate-200"
+                            >
+                              <option value="">Не указана</option>
+                              <option value="melee">Рукопашная (досягаемость)</option>
+                              <option value="ranged">Дальнобойная (норм. / макс.)</option>
+                            </select>
+
+                            {act.attackType === 'melee' && (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={5}
+                                  max={200}
+                                  step={5}
+                                  value={act.reachFt ?? ''}
+                                  onChange={(e) =>
+                                    setMonsterActionsDraft((prev) =>
+                                      prev.map((row, i) =>
+                                        i === idx
+                                          ? {
+                                              ...row,
+                                              reachFt: e.target.value
+                                                ? Math.max(5, Number(e.target.value))
+                                                : null,
+                                            }
+                                          : row
+                                      )
+                                    )
+                                  }
+                                  placeholder="5"
+                                  className="w-16 px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                                />
+                                <span>фт.</span>
+                              </div>
+                            )}
+
+                            {act.attackType === 'ranged' && (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={5}
+                                  max={2000}
+                                  step={5}
+                                  value={act.rangeNormalFt ?? ''}
+                                  onChange={(e) =>
+                                    setMonsterActionsDraft((prev) =>
+                                      prev.map((row, i) =>
+                                        i === idx
+                                          ? {
+                                              ...row,
+                                              rangeNormalFt: e.target.value
+                                                ? Math.max(5, Number(e.target.value))
+                                                : null,
+                                            }
+                                          : row
+                                      )
+                                    )
+                                  }
+                                  placeholder="60"
+                                  className="w-16 px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                                />
+                                <span>/</span>
+                                <input
+                                  type="number"
+                                  min={5}
+                                  max={4000}
+                                  step={5}
+                                  value={act.rangeMaxFt ?? ''}
+                                  onChange={(e) =>
+                                    setMonsterActionsDraft((prev) =>
+                                      prev.map((row, i) =>
+                                        i === idx
+                                          ? {
+                                              ...row,
+                                              rangeMaxFt: e.target.value
+                                                ? Math.max(5, Number(e.target.value))
+                                                : null,
+                                            }
+                                          : row
+                                      )
+                                    )
+                                  }
+                                  placeholder="120"
+                                  className="w-16 px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                                />
+                                <span>фт.</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2092,6 +2492,56 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
+              {activeSection === 'visions' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.visions
+                    .filter(
+                      (v) =>
+                        !q ||
+                        v.name.toLowerCase().includes(q) ||
+                        v.description.toLowerCase().includes(q)
+                    )
+                    .map((vis) => (
+                      <div
+                        key={vis.id}
+                        className="p-4 flex items-start justify-between gap-4 hover:bg-slate-800/20 transition-colors"
+                      >
+                        <div className="space-y-1.5 min-w-0">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-100">
+                              {vis.name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-[11px] font-medium text-sky-300">
+                              {getVisionBehaviorLabel(vis.behavior)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 whitespace-pre-line leading-relaxed">
+                            {vis.description || 'Без описания'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(vis)}
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                            aria-label="Редактировать"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(vis.id)}
+                            className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                            aria-label="Удалить"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
               {activeSection === 'weapons' && (
                 <div>
                   <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/40 flex flex-wrap items-center justify-between gap-2">
@@ -2147,6 +2597,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         <tr className="border-b border-slate-800 text-[11px] text-slate-400 bg-[#0B0F17]/50">
                           <th className="py-2.5 px-3 font-medium">Название</th>
                           <th className="py-2.5 px-3 font-medium">Классификация</th>
+                          <th className="py-2.5 px-3 font-medium">Дистанция</th>
                           <th className="py-2.5 px-3 font-medium">Урон</th>
                           <th className="py-2.5 px-3 font-medium">Свойства</th>
                           <th className="py-2.5 px-3 font-medium">Мастерство</th>
@@ -2167,57 +2618,63 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                 w.properties.toLowerCase().includes(q) ||
                                 w.mastery.toLowerCase().includes(q))
                           )
-                          .map((wp) => (
-                            <tr key={wp.id} className="hover:bg-slate-800/30 transition-colors">
-                              <td className="py-2.5 px-3 font-semibold text-slate-100 whitespace-nowrap">
-                                {wp.name}
-                              </td>
-                              <td className="py-2.5 px-3 whitespace-nowrap">
-                                <span className="text-amber-400">
-                                  {getWeaponCategoryLabel(wp.category)}
-                                </span>
-                                <span className="text-slate-600"> · </span>
-                                <span className="text-sky-400">
-                                  {getWeaponRangeLabel(wp.rangeType || 'melee')}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 font-mono text-slate-200 whitespace-nowrap">
-                                {wp.damage}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-300 max-w-[240px]">
-                                {wp.properties}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
-                                {wp.mastery}
-                              </td>
-                              <td className="py-2.5 px-3 font-mono tabular-nums text-slate-400 whitespace-nowrap">
-                                {wp.weight}
-                              </td>
-                              <td className="py-2.5 px-3 font-mono tabular-nums text-amber-300 whitespace-nowrap">
-                                {wp.price}
-                              </td>
-                              <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                                <div className="inline-flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => startEdit(wp)}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-                                    aria-label="Редактировать"
-                                  >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDelete(wp.id)}
-                                    className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
-                                    aria-label="Удалить"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
+                          .map((wp) => {
+                            const reachLabel = formatWeaponReachRange(wp.rangeType || 'melee', wp);
+                            return (
+                              <tr key={wp.id} className="hover:bg-slate-800/30 transition-colors">
+                                <td className="py-2.5 px-3 font-semibold text-slate-100 whitespace-nowrap">
+                                  {wp.name}
+                                </td>
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  <span className="text-amber-400">
+                                    {getWeaponCategoryLabel(wp.category)}
+                                  </span>
+                                  <span className="text-slate-600"> · </span>
+                                  <span className="text-sky-400">
+                                    {getWeaponRangeLabel(wp.rangeType || 'melee')}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono tabular-nums text-rose-300 whitespace-nowrap">
+                                  {reachLabel || '—'}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-slate-200 whitespace-nowrap">
+                                  {wp.damage}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-300 max-w-[240px]">
+                                  {wp.properties}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                                  {wp.mastery}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono tabular-nums text-slate-400 whitespace-nowrap">
+                                  {wp.weight}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono tabular-nums text-amber-300 whitespace-nowrap">
+                                  {wp.price}
+                                </td>
+                                <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => startEdit(wp)}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                                      aria-label="Редактировать"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDelete(wp.id)}
+                                      className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                                      aria-label="Удалить"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                     </table>
                   </div>
@@ -2378,13 +2835,20 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       )
                       .map((mon) => {
                         const skillLabels = catalogs.skills
-                          .filter((sk) => mon.proficientSkillIds.includes(sk.id))
+                          .filter(
+                            (sk) =>
+                              mon.proficientSkillIds.includes(sk.id) ||
+                              (mon.expertiseSkillIds ?? []).includes(sk.id)
+                          )
                           .map((sk) => {
+                            const isExp = (mon.expertiseSkillIds ?? []).includes(sk.id);
                             const abScore = mon.abilities?.[sk.abilityId] ?? 10;
                             const abMod = getAbilityModifier(abScore, catalogs.abilityModifiers);
-                            return `${sk.name} ${formatModifier(abMod + 2)}`;
+                            const bonus = abMod + (isExp ? 4 : 2);
+                            return `${sk.name} ${formatModifier(bonus)}${isExp ? ' (×2)' : ''}`;
                           });
                         const monsterTraits = mon.traits ?? [];
+                        const visionLabels = formatEntityVisions(mon.visions, catalogs.visions);
                         const isUploadingThis = uploadingMonsterId === mon.id;
 
                         return (
@@ -2504,10 +2968,11 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                               })}
                             </div>
 
-                            {/* Skills, Resistances, Immunities, Senses */}
+                            {/* Skills, Resistances, Immunities, Visions, Senses */}
                             {(skillLabels.length > 0 ||
                               mon.resistances ||
                               mon.immunities ||
+                              visionLabels.length > 0 ||
                               mon.senses) && (
                               <div className="space-y-1 text-xs text-slate-300">
                                 {skillLabels.length > 0 && (
@@ -2528,6 +2993,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                   <div>
                                     <span className="text-slate-500">Иммунитеты: </span>
                                     <span>{mon.immunities}</span>
+                                  </div>
+                                )}
+                                {visionLabels.length > 0 && (
+                                  <div>
+                                    <span className="text-slate-500">Зрение: </span>
+                                    <span className="text-sky-300 font-medium">
+                                      {visionLabels.join(', ')}
+                                    </span>
                                   </div>
                                 )}
                                 {mon.senses && (
@@ -2565,14 +3038,22 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                   Действия
                                 </div>
                                 <div className="space-y-1">
-                                  {mon.actions.map((act) => (
-                                    <div key={act.id} className="text-xs leading-relaxed">
-                                      <span className="font-semibold text-amber-300">
-                                        {act.name}.{' '}
-                                      </span>
-                                      <span className="text-slate-300">{act.description}</span>
-                                    </div>
-                                  ))}
+                                  {mon.actions.map((act) => {
+                                    const reachStr = formatWeaponReachRange(act.attackType, act);
+                                    return (
+                                      <div key={act.id} className="text-xs leading-relaxed">
+                                        <span className="font-semibold text-amber-300">
+                                          {act.name}.{' '}
+                                        </span>
+                                        {reachStr && (
+                                          <span className="inline-block mr-1.5 px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-[10px] font-mono text-rose-300">
+                                            {act.attackType === 'ranged' ? 'Дальн.' : 'Досяг.'} {reachStr}
+                                          </span>
+                                        )}
+                                        <span className="text-slate-300">{act.description}</span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}

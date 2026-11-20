@@ -11,6 +11,7 @@ import type {
   CharacterDraft,
   GameCatalogs,
 } from '../../shared/types';
+import { VisionSelector } from './VisionSelector';
 
 interface CharacterCreationModalProps {
   request: CharacterCreationRequest;
@@ -41,12 +42,34 @@ export function CharacterCreationModal({
   const derivedInit = 10 + dexMod;
   const canFinalize = draft.name.trim().length > 0;
 
+  const expertiseSkillIds = draft.expertiseSkillIds ?? [];
+
   const handleToggleSkill = (skillId: string) => {
     const exists = draft.proficientSkillIds.includes(skillId);
-    const next = exists
+    const nextProf = exists
       ? draft.proficientSkillIds.filter((id) => id !== skillId)
       : [...draft.proficientSkillIds, skillId];
-    onUpdateDraft({ proficientSkillIds: next });
+    const nextExp = exists
+      ? expertiseSkillIds.filter((id) => id !== skillId)
+      : expertiseSkillIds;
+    onUpdateDraft({ proficientSkillIds: nextProf, expertiseSkillIds: nextExp });
+  };
+
+  const handleToggleExpertise = (skillId: string) => {
+    const hasExp = expertiseSkillIds.includes(skillId);
+    if (hasExp) {
+      onUpdateDraft({
+        expertiseSkillIds: expertiseSkillIds.filter((id) => id !== skillId),
+      });
+    } else {
+      const nextProf = draft.proficientSkillIds.includes(skillId)
+        ? draft.proficientSkillIds
+        : [...draft.proficientSkillIds, skillId];
+      onUpdateDraft({
+        proficientSkillIds: nextProf,
+        expertiseSkillIds: [...expertiseSkillIds, skillId],
+      });
+    }
   };
 
   const handleToggleProficiency = (profId: string) => {
@@ -315,39 +338,52 @@ export function CharacterCreationModal({
               </div>
             </div>
 
-            {/* Proficient Skills */}
+            {/* Proficient & Expertise Skills */}
             <div className="space-y-2.5">
-              <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline justify-between gap-2">
                 <h3 className="text-xs font-semibold text-slate-200">
-                  Навыки ({draft.proficientSkillIds.length} выбрано)
+                  Навыки ({draft.proficientSkillIds.length}
+                  {expertiseSkillIds.length > 0 ? ` · ×2: ${expertiseSkillIds.length}` : ''})
                 </h3>
-                <span className="text-[11px] text-slate-400">Бонус мастерства +{profBonus}</span>
+                <span className="text-[11px] text-slate-400">
+                  БМ +{profBonus} (×2 = +{profBonus * 2})
+                </span>
               </div>
               <div className="max-h-72 overflow-y-auto divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800">
                 {catalogs.skills.map((sk) => {
-                  const active = draft.proficientSkillIds.includes(sk.id);
+                  const isExp = expertiseSkillIds.includes(sk.id);
+                  const active = isExp || draft.proficientSkillIds.includes(sk.id);
                   const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
                   const rawScore = draft.abilities[sk.abilityId];
+                  const bonusAdd = isExp ? profBonus * 2 : active ? profBonus : 0;
                   const mod =
                     typeof rawScore === 'number'
-                      ? getAbilityModifier(rawScore, catalogs.abilityModifiers) + (active ? profBonus : 0)
+                      ? getAbilityModifier(rawScore, catalogs.abilityModifiers) + bonusAdd
                       : null;
 
                   return (
-                    <button
+                    <div
                       key={sk.id}
-                      type="button"
-                      onClick={() => handleToggleSkill(sk.id)}
-                      className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 text-xs transition-colors ${
-                        active ? 'bg-amber-500/10 text-slate-100' : 'text-slate-400 hover:bg-slate-800/40'
+                      className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
+                        isExp
+                          ? 'bg-sky-500/10 text-slate-100'
+                          : active
+                            ? 'bg-amber-500/10 text-slate-100'
+                            : 'text-slate-400 hover:bg-slate-800/40'
                       }`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSkill(sk.id)}
+                        className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0"
+                      >
                         <span
                           className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                            active
-                              ? 'bg-amber-500 border-amber-500 text-slate-950'
-                              : 'border-slate-600'
+                            isExp
+                              ? 'bg-sky-400 border-sky-400 text-slate-950'
+                              : active
+                                ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                : 'border-slate-600'
                           }`}
                         >
                           {active && <Check className="w-2.5 h-2.5" />}
@@ -356,19 +392,60 @@ export function CharacterCreationModal({
                         <span className="text-[10px] font-mono text-slate-500 shrink-0">
                           {ab?.shortName ?? '—'}
                         </span>
+                      </button>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleExpertise(sk.id)}
+                          title="Экспертиза (бонус владения ×2)"
+                          className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors ${
+                            isExp
+                              ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
+                              : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
+                          }`}
+                        >
+                          ×2
+                        </button>
+                        <span
+                          className={`w-8 text-right font-mono tabular-nums font-semibold ${
+                            isExp
+                              ? 'text-sky-300'
+                              : active
+                                ? 'text-amber-400'
+                                : 'text-slate-500'
+                          }`}
+                        >
+                          {mod !== null ? formatModifier(mod) : '—'}
+                        </span>
                       </div>
-                      <span
-                        className={`font-mono tabular-nums font-semibold shrink-0 ${
-                          active ? 'text-amber-400' : 'text-slate-500'
-                        }`}
-                      >
-                        {mod !== null ? formatModifier(mod) : '—'}
-                      </span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
             </div>
+          </div>
+
+          {/* Section 4.5: Vision & Senses */}
+          <div className="pt-4 border-t border-slate-800 space-y-2.5">
+            <VisionSelector
+              catalogVisions={catalogs.visions}
+              value={draft.visions ?? []}
+              onChange={(nextVisions) => onUpdateDraft({ visions: nextVisions })}
+              title="Зрение персонажа"
+            />
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-slate-300">
+                Чувства (дополнительно, необязательно)
+              </span>
+              <input
+                type="text"
+                value={draft.senses ?? ''}
+                onChange={(e) => onUpdateDraft({ senses: e.target.value })}
+                placeholder="Например: пасс. Восприятие 13, обострённый слух"
+                className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+              />
+            </label>
           </div>
 
           {/* Section 5: Optional Private Note */}

@@ -3,12 +3,18 @@ import type {
   AbilityRef,
   ArmorCategory,
   ArmorRef,
+  EntityVisionEntry,
   GameCatalogs,
   InventoryItem,
   LevelThresholdRef,
+  MapLighting,
+  MonsterActionRef,
   PlayerCharacter,
+  VisionBehavior,
+  VisionRef,
   WeaponCategory,
   WeaponRangeType,
+  WeaponRef,
 } from './types';
 
 export function createDefaultCatalogs(): GameCatalogs {
@@ -317,6 +323,43 @@ export function createDefaultCatalogs(): GameCatalogs {
         description: 'Использование щитов для повышения Класса Защиты (+2).',
       },
     ],
+    visions: [
+      {
+        id: 'normal',
+        name: 'Обычное зрение',
+        behavior: 'normal',
+        description:
+          'Персонаж видит только в пределах освещённой зоны. В темноте он «ослеплён».',
+      },
+      {
+        id: 'truesight',
+        name: 'Истинное зрение',
+        behavior: 'truesight',
+        description:
+          'Если у вас есть Истинное зрение, ваше зрение улучшается в пределах указанной дальности. В этих пределах ваше зрение проникает сквозь следующее:\n\nТемнота. Вы можете видеть в обычной и магической Темноте.\n\nНевидимость. Вы видите существ и предметы, у которых есть состояние Невидимый.\n\nВизуальные иллюзии. Визуальные иллюзии кажутся вам прозрачными, и вы автоматически преуспеваете в спасбросках против них.\n\nПреображения. Вы распознаёте истинную форму любого видимого вами изменённого магией существа или объекта.\n\nЭфирный план. Вы можете видеть на Эфирный план.',
+      },
+      {
+        id: 'blindsight',
+        name: 'Слепое зрение',
+        behavior: 'blindsight',
+        description:
+          'Обладая Слепым зрением, вы можете видеть в определённых пределах, не полагаясь на обычное зрение. В пределах, ограниченных дальностью Слепого зрения, вы видите всё, что не находится за Полным укрытием, даже если у вас есть состояние Ослеплённый, или вы находитесь в области Темноты. Кроме того, в этих пределах вы можете видеть существ, у которых есть состояние Невидимый.',
+      },
+      {
+        id: 'darkvision',
+        name: 'Тёмное зрение',
+        behavior: 'darkvision',
+        description:
+          'Если у вас есть Тёмное зрение, то в пределах дальности этого зрения вы видите в Тусклом свете будто в Ярком свете, а в Темноте будто в Тусклом свете. Вы не различаете цвета, видя Тёмным зрением в Темноте, а видите всё как оттенки серого.',
+      },
+      {
+        id: 'tremorsense',
+        name: 'Чувство вибрации',
+        behavior: 'tremorsense',
+        description:
+          'Существо, обладающее Чувством вибрации, может определять местоположение существ и движущихся объектов в определённых пределах, если и обладатель Чувства вибрации, и ощущаемое им существо или объект находятся в контакте с одной и той же поверхностью (как, например, земля, стена, потолок) или жидкостью.\n\nЧувство вибрации не может определять местоположение существ или объектов, находящихся в воздухе. Чувство вибрации не считается зрением.',
+      },
+    ],
     weapons: [
       {
         id: 'wpn-dagger',
@@ -324,6 +367,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Кинжал',
         damage: '1к4 колющий',
+        reachFt: 5,
         properties: 'Фехтовальное, Лёгкое, Метательное (20/60)',
         mastery: 'Зазубрина',
         weight: '1 фнт.',
@@ -335,6 +379,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Дубина',
         damage: '1к4 дробящий',
+        reachFt: 5,
         properties: 'Лёгкое',
         mastery: 'Замедление',
         weight: '2 фнт.',
@@ -346,6 +391,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Боевой посох',
         damage: '1к6 дробящий',
+        reachFt: 5,
         properties: 'Универсальное (1к8)',
         mastery: 'Опрокидывание',
         weight: '4 фнт.',
@@ -357,6 +403,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Копьё',
         damage: '1к6 колющий',
+        reachFt: 5,
         properties: 'Метательное (20/60), Универсальное (1к8)',
         mastery: 'Ослабление',
         weight: '3 фнт.',
@@ -368,6 +415,8 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'ranged',
         name: 'Короткий лук',
         damage: '1к6 колющий',
+        rangeNormalFt: 80,
+        rangeMaxFt: 320,
         properties: 'Боеприпасы (80/320), Двуручное',
         mastery: 'Досаждение',
         weight: '2 фнт.',
@@ -379,6 +428,8 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'ranged',
         name: 'Лёгкий арбалет',
         damage: '1к8 колющий',
+        rangeNormalFt: 80,
+        rangeMaxFt: 320,
         properties: 'Боеприпасы (80/320), Перезарядка, Двуручное',
         mastery: 'Замедление',
         weight: '5 фнт.',
@@ -390,6 +441,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Длинный меч',
         damage: '1к8 рубящий',
+        reachFt: 5,
         properties: 'Универсальное (1к10)',
         mastery: 'Ослабление',
         weight: '3 фнт.',
@@ -401,6 +453,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Короткий меч',
         damage: '1к6 колющий',
+        reachFt: 5,
         properties: 'Фехтовальное, Лёгкое',
         mastery: 'Досаждение',
         weight: '2 фнт.',
@@ -412,6 +465,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Рапира',
         damage: '1к8 колющий',
+        reachFt: 5,
         properties: 'Фехтовальное',
         mastery: 'Досаждение',
         weight: '2 фнт.',
@@ -423,6 +477,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Боевой топор',
         damage: '1к8 рубящий',
+        reachFt: 5,
         properties: 'Универсальное (1к10)',
         mastery: 'Опрокидывание',
         weight: '4 фнт.',
@@ -434,6 +489,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Двуручный меч',
         damage: '2к6 рубящий',
+        reachFt: 5,
         properties: 'Тяжёлое, Двуручное',
         mastery: 'Скользящий удар',
         weight: '6 фнт.',
@@ -445,6 +501,7 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'melee',
         name: 'Алебарда',
         damage: '1к10 рубящий',
+        reachFt: 10,
         properties: 'Тяжёлое, Досягаемость, Двуручное',
         mastery: 'Рассечение',
         weight: '6 фнт.',
@@ -456,6 +513,8 @@ export function createDefaultCatalogs(): GameCatalogs {
         rangeType: 'ranged',
         name: 'Длинный лук',
         damage: '1к8 колющий',
+        rangeNormalFt: 150,
+        rangeMaxFt: 600,
         properties: 'Боеприпасы (150/600), Тяжёлое, Двуручное',
         mastery: 'Замедление',
         weight: '2 фнт.',
@@ -495,6 +554,7 @@ export function createDefaultCatalogs(): GameCatalogs {
           cha: 4,
         },
         proficientSkillIds: ['perception'],
+        visions: [{ visionId: 'darkvision', rangeFt: 30 }],
         xpReward: 10,
         actions: [
           {
@@ -502,6 +562,8 @@ export function createDefaultCatalogs(): GameCatalogs {
             name: 'Укус',
             description:
               'Бросок рукопашной атаки: +2 к попаданию, досягаемость 5 футов. Попадание: 1 колющий урон.',
+            attackType: 'melee',
+            reachFt: 5,
           },
         ],
       },
@@ -966,3 +1028,305 @@ export function canPlayerEquipItem(
 
   return { allowed: true };
 }
+
+export const FEET_PER_CELL = 5;
+
+export function getMapLightingLabel(lighting?: MapLighting): string {
+  if (lighting === 'dim') return 'Полумрак';
+  if (lighting === 'darkness') return 'Темнота';
+  return 'Яркий свет';
+}
+
+export function getMapLightingFullLabel(lighting?: MapLighting): string {
+  if (lighting === 'dim') return 'Тусклый свет / Полумрак (Dim Light)';
+  if (lighting === 'darkness') return 'Полная темнота (Darkness)';
+  return 'Яркий свет (Bright Light)';
+}
+
+export function getMapLightingDescription(lighting?: MapLighting): string {
+  if (lighting === 'dim') {
+    return 'Зона теней, лунный свет, свет свечи или сумерки. Обычное зрение видит в полумраке (помеха на Восприятие по зрению); Тёмное зрение видит как при ярком свете.';
+  }
+  if (lighting === 'darkness') {
+    return 'Глухая пещера, комната без окон или заклинание Тьма. Обычное зрение ослеплено; Тёмное зрение видит в оттенках серого в пределах своей дальности.';
+  }
+  return 'Обычный дневной свет или прямой свет от факела/костра. В ярком свете существа с обычным зрением видят нормально и без штрафов.';
+}
+
+export function getVisionBehaviorLabel(behavior: VisionBehavior): string {
+  switch (behavior) {
+    case 'truesight':
+      return 'Истинное зрение';
+    case 'blindsight':
+      return 'Слепое зрение';
+    case 'darkvision':
+      return 'Тёмное зрение';
+    case 'tremorsense':
+      return 'Чувство вибрации';
+    default:
+      return 'Обычное зрение';
+  }
+}
+
+export function inferWeaponReachRange(
+  rangeType: WeaponRangeType,
+  properties?: string
+): { reachFt?: number; rangeNormalFt?: number; rangeMaxFt?: number } {
+  const prop = (properties || '').toLowerCase();
+  if (rangeType === 'ranged') {
+    const match = /\(\s*(\d+)\s*\/\s*(\d+)\s*\)/.exec(prop);
+    if (match) {
+      const normal = Math.max(5, Number(match[1]) || 80);
+      const max = Math.max(normal, Number(match[2]) || normal * 4);
+      return { rangeNormalFt: normal, rangeMaxFt: max };
+    }
+    return { rangeNormalFt: 80, rangeMaxFt: 320 };
+  }
+  if (prop.includes('досягаем')) {
+    return { reachFt: 10 };
+  }
+  return { reachFt: 5 };
+}
+
+export function formatWeaponReachRange(
+  rangeType: WeaponRangeType | null | undefined,
+  opts: {
+    reachFt?: number | null;
+    rangeNormalFt?: number | null;
+    rangeMaxFt?: number | null;
+  }
+): string {
+  if (rangeType === 'ranged') {
+    const normal = typeof opts.rangeNormalFt === 'number' && opts.rangeNormalFt > 0 ? opts.rangeNormalFt : null;
+    const max = typeof opts.rangeMaxFt === 'number' && opts.rangeMaxFt > 0 ? opts.rangeMaxFt : null;
+    if (normal && max) return `${normal}/${max} фт.`;
+    if (normal) return `${normal} фт.`;
+    if (max) return `до ${max} фт.`;
+    return '';
+  }
+  if (rangeType === 'melee') {
+    const reach = typeof opts.reachFt === 'number' && opts.reachFt > 0 ? opts.reachFt : null;
+    return reach ? `${reach} фт.` : '';
+  }
+  return '';
+}
+
+export function resolveWeaponReachRange(
+  item: InventoryItem,
+  catalogs: Pick<GameCatalogs, 'weapons'>
+): {
+  rangeType: WeaponRangeType;
+  normalFt: number;
+  maxFt: number;
+} {
+  const catalogWeapon: WeaponRef | undefined =
+    (item.catalogItemId
+      ? catalogs.weapons.find((w) => w.id === item.catalogItemId)
+      : undefined) ??
+    catalogs.weapons.find(
+      (w) => w.name.trim().toLowerCase() === item.name.trim().toLowerCase()
+    );
+  const rangeType: WeaponRangeType =
+    item.weaponRangeType ??
+    catalogWeapon?.rangeType ??
+    inferWeaponRangeType(item.name, item.properties ?? catalogWeapon?.properties);
+
+  const inferred = inferWeaponReachRange(rangeType, item.properties ?? catalogWeapon?.properties);
+
+  if (rangeType === 'ranged') {
+    const normalFt =
+      typeof item.rangeNormalFt === 'number' && item.rangeNormalFt > 0
+        ? item.rangeNormalFt
+        : typeof catalogWeapon?.rangeNormalFt === 'number' && catalogWeapon.rangeNormalFt > 0
+          ? catalogWeapon.rangeNormalFt
+          : inferred.rangeNormalFt ?? 80;
+    const maxFt =
+      typeof item.rangeMaxFt === 'number' && item.rangeMaxFt > 0
+        ? Math.max(normalFt, item.rangeMaxFt)
+        : typeof catalogWeapon?.rangeMaxFt === 'number' && catalogWeapon.rangeMaxFt > 0
+          ? Math.max(normalFt, catalogWeapon.rangeMaxFt)
+          : Math.max(normalFt, inferred.rangeMaxFt ?? normalFt * 4);
+    return { rangeType, normalFt, maxFt };
+  }
+
+  const reachFt =
+    typeof item.reachFt === 'number' && item.reachFt > 0
+      ? item.reachFt
+      : typeof catalogWeapon?.reachFt === 'number' && catalogWeapon.reachFt > 0
+        ? catalogWeapon.reachFt
+        : inferred.reachFt ?? 5;
+  return { rangeType: 'melee', normalFt: reachFt, maxFt: reachFt };
+}
+
+export function resolveMonsterActionRange(action: MonsterActionRef): {
+  rangeType: WeaponRangeType;
+  normalFt: number;
+  maxFt: number;
+} | null {
+  if (action.attackType === 'melee') {
+    const reach =
+      typeof action.reachFt === 'number' && action.reachFt > 0 ? action.reachFt : null;
+    if (!reach) return null;
+    return { rangeType: 'melee', normalFt: reach, maxFt: reach };
+  }
+  if (action.attackType === 'ranged') {
+    const normal =
+      typeof action.rangeNormalFt === 'number' && action.rangeNormalFt > 0
+        ? action.rangeNormalFt
+        : null;
+    const max =
+      typeof action.rangeMaxFt === 'number' && action.rangeMaxFt > 0
+        ? action.rangeMaxFt
+        : normal;
+    if (!normal && !max) return null;
+    const safeNormal = normal ?? max!;
+    const safeMax = Math.max(safeNormal, max ?? safeNormal);
+    return { rangeType: 'ranged', normalFt: safeNormal, maxFt: safeMax };
+  }
+  return null;
+}
+
+export function formatEntityVisions(
+  entries: EntityVisionEntry[] | undefined,
+  catalogVisions: VisionRef[]
+): string[] {
+  if (!Array.isArray(entries) || entries.length === 0) return [];
+  return entries
+    .map((entry) => {
+      const ref = catalogVisions.find((v) => v.id === entry.visionId);
+      if (!ref) return null;
+      if (typeof entry.rangeFt === 'number' && entry.rangeFt > 0) {
+        return `${ref.name} ${entry.rangeFt} фт.`;
+      }
+      return ref.name;
+    })
+    .filter((s): s is string => Boolean(s));
+}
+
+/**
+ * Computes effective tactical sight ranges (in feet) given an entity's vision entries
+ * and the current map lighting condition.
+ * - clearRangeFt: distance within which cells are seen clearly (no shading)
+ * - visibleRangeFt: distance within which cells are at least dimly seen (between clear & visible = twilight dim; beyond visible = dark shroud)
+ */
+export function computeEffectiveVisionRanges(
+  entries: EntityVisionEntry[] | undefined,
+  catalogVisions: VisionRef[],
+  lighting: MapLighting = 'bright'
+): {
+  clearRangeFt: number;
+  visibleRangeFt: number;
+  summary: string;
+} {
+  const effectiveEntries: EntityVisionEntry[] =
+    Array.isArray(entries) && entries.length > 0
+      ? entries
+      : [{ visionId: 'normal', rangeFt: null }];
+
+  let normalRange = 0;
+  let hasNormal = false;
+  let darkvisionRange = 0;
+  let blindsightRange = 0;
+  let truesightRange = 0;
+  let tremorsenseRange = 0;
+
+  for (const entry of effectiveEntries) {
+    const ref = catalogVisions.find((v) => v.id === entry.visionId);
+    const behavior: VisionBehavior = ref?.behavior ?? (entry.visionId as VisionBehavior) ?? 'normal';
+    const r =
+      typeof entry.rangeFt === 'number' && Number.isFinite(entry.rangeFt) && entry.rangeFt > 0
+        ? entry.rangeFt
+        : behavior === 'normal'
+          ? Infinity
+          : 60;
+
+    if (behavior === 'normal') {
+      hasNormal = true;
+      normalRange = Math.max(normalRange, r);
+    } else if (behavior === 'darkvision') {
+      darkvisionRange = Math.max(darkvisionRange, r);
+    } else if (behavior === 'blindsight') {
+      blindsightRange = Math.max(blindsightRange, r);
+    } else if (behavior === 'truesight') {
+      truesightRange = Math.max(truesightRange, r);
+    } else if (behavior === 'tremorsense') {
+      tremorsenseRange = Math.max(tremorsenseRange, r);
+    }
+  }
+
+  // Creatures with darkvision or truesight also see normally in lit areas unless explicitly blind
+  const litSightRange = hasNormal
+    ? normalRange
+    : darkvisionRange > 0 || truesightRange > 0
+      ? Infinity
+      : 0;
+  const specialClearRange = Math.max(blindsightRange, truesightRange, tremorsenseRange);
+
+  if (lighting === 'bright') {
+    const clearRangeFt = Math.max(litSightRange, specialClearRange);
+    const summary =
+      clearRangeFt === Infinity
+        ? 'Яркий свет — видит всю карту'
+        : clearRangeFt > 0
+          ? `Особые чувства: ${clearRangeFt} фт.`
+          : 'Ослеплён (нет зрения)';
+    return { clearRangeFt, visibleRangeFt: clearRangeFt, summary };
+  }
+
+  if (lighting === 'dim') {
+    const clearRangeFt = Math.max(darkvisionRange, specialClearRange);
+    const visibleRangeFt = Math.max(clearRangeFt, litSightRange);
+    let summary = 'Полумрак';
+    if (clearRangeFt === Infinity) {
+      summary = 'Полумрак — видит чётко всю карту';
+    } else if (clearRangeFt > 0 && visibleRangeFt === Infinity) {
+      summary = `Чётко ${clearRangeFt} фт., далее полумрак`;
+    } else if (clearRangeFt > 0) {
+      summary = `Чётко ${clearRangeFt} фт.${visibleRangeFt > clearRangeFt ? `, полумрак до ${visibleRangeFt} фт.` : ''}`;
+    } else if (visibleRangeFt === Infinity) {
+      summary = 'Полумрак по всей карте (обычное зрение)';
+    } else if (visibleRangeFt > 0) {
+      summary = `Полумрак до ${visibleRangeFt} фт.`;
+    } else {
+      summary = 'Ничего не видит';
+    }
+    return { clearRangeFt, visibleRangeFt, summary };
+  }
+
+  // lighting === 'darkness'
+  const clearRangeFt = specialClearRange;
+  const visibleRangeFt = Math.max(specialClearRange, darkvisionRange);
+  let summary = 'Полная темнота — ослеплён (0 фт.)';
+  if (clearRangeFt > 0 && visibleRangeFt > clearRangeFt) {
+    summary = `Чётко ${clearRangeFt} фт., тёмное зрение до ${visibleRangeFt} фт.`;
+  } else if (clearRangeFt > 0) {
+    summary = `Видит в темноте: ${clearRangeFt} фт.`;
+  } else if (darkvisionRange > 0) {
+    summary = `Тёмное зрение в темноте: ${darkvisionRange} фт. (как полумрак)`;
+  }
+  return { clearRangeFt, visibleRangeFt, summary };
+}
+
+/**
+ * Computes D&D 5e grid distance in feet (Chebyshev distance, 5 ft per square)
+ * from a token occupying [tokenX..tokenX+tokenSize-1, tokenY..tokenY+tokenSize-1]
+ * to target cell (cellX, cellY). Returns 0 for cells occupied by the token.
+ */
+export function computeGridDistanceFt(
+  tokenX: number,
+  tokenY: number,
+  tokenSize: number,
+  cellX: number,
+  cellY: number
+): number {
+  const minX = Math.round(tokenX);
+  const minY = Math.round(tokenY);
+  const size = Math.max(1, Math.round(tokenSize || 1));
+  const maxX = minX + size - 1;
+  const maxY = minY + size - 1;
+
+  const dx = cellX < minX ? minX - cellX : cellX > maxX ? cellX - maxX : 0;
+  const dy = cellY < minY ? minY - cellY : cellY > maxY ? cellY - maxY : 0;
+  return Math.max(dx, dy) * FEET_PER_CELL;
+}
+

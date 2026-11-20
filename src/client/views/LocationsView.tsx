@@ -10,18 +10,23 @@ import {
   ImagePlus,
   Map as MapIcon,
   MapPin,
+  Moon,
   Plus,
   SlidersHorizontal,
+  Sun,
+  Sunset,
   Swords,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
+import { getMapLightingDescription } from '../../shared/catalogDefaults';
 import type {
   GameLocation,
   HotspotCategory,
   LocationHotspot,
   LocationKind,
+  MapLighting,
 } from '../../shared/types';
 import {
   getHotspotCategoryLabel,
@@ -904,6 +909,47 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
                   </div>
                   <p className="text-[10px] text-slate-500">
                     Размерность сохраняется отдельно для каждой карты; на пульте мастера доступно только включение/выключение сетки.
+                  </p>
+                </div>
+
+                {/* Map Lighting Selector (all map types) */}
+                <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+                  <span className="text-[11px] text-slate-400">Освещённость карты</span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(
+                      [
+                        { id: 'bright', label: 'Яркий свет', Icon: Sun, activeClass: 'bg-amber-500/20 border-amber-500/60 text-amber-300' },
+                        { id: 'dim', label: 'Полумрак', Icon: Sunset, activeClass: 'bg-sky-500/20 border-sky-500/60 text-sky-300' },
+                        { id: 'darkness', label: 'Темнота', Icon: Moon, activeClass: 'bg-indigo-500/25 border-indigo-400/60 text-indigo-200' },
+                      ] as Array<{ id: MapLighting; label: string; Icon: React.ComponentType<{ className?: string }>; activeClass: string }>
+                    ).map(({ id, label, Icon, activeClass }) => {
+                      const active = (selectedLocation.map.lighting ?? 'bright') === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          title={getMapLightingDescription(id)}
+                          onClick={() =>
+                            send({
+                              type: 'dm:updateMap',
+                              locationId: selectedLocation.id,
+                              patch: { lighting: id },
+                            })
+                          }
+                          className={`py-1.5 px-2 rounded-lg border text-[11px] font-medium flex items-center justify-center gap-1 transition-colors ${
+                            active
+                              ? activeClass
+                              : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <Icon className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-snug">
+                    {getMapLightingDescription(selectedLocation.map.lighting ?? 'bright')}
                   </p>
                 </div>
               </div>

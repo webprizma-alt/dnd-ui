@@ -10,6 +10,7 @@ import {
   Clock,
   Coins,
   Compass,
+  Eye,
   FlaskConical,
   Image as ImageIcon,
   KeyRound,
@@ -28,6 +29,7 @@ import {
 import {
   computeLevelFromXp,
   computePlayerAcDetails,
+  formatEntityVisions,
   formatModifier,
   getAbilityModifier,
   getArmorCategoryLabel,
@@ -35,6 +37,7 @@ import {
   getProficiencyBonus,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
+  resolveWeaponReachRange,
   sortLevels,
 } from '../../shared/catalogDefaults';
 import type { InventoryItem, ItemCategory, UserAccount } from '../../shared/types';
@@ -405,7 +408,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
     const draftDerivedAc = draftDexMod !== null ? 10 + draftDexMod : null;
     const draftDerivedInit = draftDexMod !== null ? 10 + draftDexMod : null;
     const draftSkills = draft
-      ? catalogs.skills.filter((sk) => draft.proficientSkillIds.includes(sk.id))
+      ? catalogs.skills.filter(
+          (sk) =>
+            draft.proficientSkillIds.includes(sk.id) ||
+            (draft.expertiseSkillIds ?? []).includes(sk.id)
+        )
       : [];
     const draftProficiencies = draft
       ? catalogs.proficiencies.filter((pr) => draft.proficiencyIds.includes(pr.id))
@@ -669,24 +676,35 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                     <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 divide-y divide-slate-800/80">
                       {draftSkills.map((sk) => {
                         const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
+                        const isExp = (draft.expertiseSkillIds ?? []).includes(sk.id);
+                        const bonusAdd = isExp ? draftProfBonus * 2 : draftProfBonus;
                         const abVal = draft.abilities[sk.abilityId];
                         const totalMod =
                           typeof abVal === 'number'
-                            ? getAbilityModifier(abVal, catalogs.abilityModifiers) + draftProfBonus
+                            ? getAbilityModifier(abVal, catalogs.abilityModifiers) + bonusAdd
                             : null;
                         return (
                           <div
                             key={sk.id}
                             className="px-3 py-2 flex items-center justify-between gap-2 text-xs"
                           >
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
                               <span className="font-medium text-slate-100">{sk.name}</span>
                               {ab && (
-                                <span className="ml-1.5 text-slate-500">({ab.shortName})</span>
+                                <span className="text-slate-500">({ab.shortName})</span>
+                              )}
+                              {isExp && (
+                                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 border border-sky-400/60 text-[10px] font-mono font-semibold text-sky-300">
+                                  Экспертиза ×2
+                                </span>
                               )}
                             </div>
-                            <span className="font-mono tabular-nums font-semibold text-amber-400 shrink-0">
-                              {totalMod !== null ? formatModifier(totalMod) : `+${draftProfBonus}`}
+                            <span
+                              className={`font-mono tabular-nums font-semibold shrink-0 ${
+                                isExp ? 'text-sky-300' : 'text-amber-400'
+                              }`}
+                            >
+                              {totalMod !== null ? formatModifier(totalMod) : `+${bonusAdd}`}
                             </span>
                           </div>
                         );
@@ -843,7 +861,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
     self.proficiencyIds.includes(pr.id)
   );
   const visibleSkills = onlyProficientSkills
-    ? catalogs.skills.filter((sk) => self.proficientSkillIds.includes(sk.id))
+    ? catalogs.skills.filter(
+        (sk) =>
+          self.proficientSkillIds.includes(sk.id) ||
+          (self.expertiseSkillIds ?? []).includes(sk.id)
+      )
     : catalogs.skills;
 
   const handleToggleEquip = (item: InventoryItem) => {
@@ -1092,17 +1114,32 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                               : getCategoryLabel(item.category)}
                           {item.equipped ? ' · Экипировано' : ''}
                         </div>
-                        {item.category === 'weapon' && (item.damage || item.properties || item.mastery) && (
+                        {item.category === 'weapon' && (
                           <div className="mt-1.5 text-[11px] text-slate-300 space-y-0.5">
-                            {item.damage && (
-                              <div>
-                                <span className="text-slate-500">Урон: </span>
-                                <span className="font-mono text-amber-300">{item.damage}</span>
-                                {item.mastery && item.mastery !== '—' && (
-                                  <span className="text-slate-400"> · Мастерство: {item.mastery}</span>
-                                )}
-                              </div>
-                            )}
+                            <div>
+                              {item.damage && (
+                                <>
+                                  <span className="text-slate-500">Урон: </span>
+                                  <span className="font-mono text-amber-300">{item.damage}</span>
+                                </>
+                              )}
+                              {(() => {
+                                const rr = resolveWeaponReachRange(item, catalogs);
+                                const label =
+                                  rr.rangeType === 'ranged' && rr.maxFt > rr.normalFt
+                                    ? `${rr.normalFt}/${rr.maxFt} фт.`
+                                    : `${rr.normalFt} фт.`;
+                                return (
+                                  <span className="text-rose-300 font-mono">
+                                    {item.damage ? ' · ' : ''}
+                                    {rr.rangeType === 'ranged' ? 'Дист.' : 'Досяг.'} {label}
+                                  </span>
+                                );
+                              })()}
+                              {item.mastery && item.mastery !== '—' && (
+                                <span className="text-slate-400"> · Мастерство: {item.mastery}</span>
+                              )}
+                            </div>
                             {item.properties && item.properties !== '—' && (
                               <div className="text-slate-400">Свойства: {item.properties}</div>
                             )}
@@ -1327,6 +1364,27 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                 </div>
               </div>
 
+              {(() => {
+                const heroVisions = formatEntityVisions(self.visions, catalogs.visions);
+                if (heroVisions.length === 0 && !self.senses) return null;
+                return (
+                  <div className="pt-3 border-t border-slate-800/80 space-y-1">
+                    <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Зрение и чувства</span>
+                    </div>
+                    {heroVisions.length > 0 && (
+                      <p className="text-xs font-medium text-sky-300">
+                        {heroVisions.join(' · ')}
+                      </p>
+                    )}
+                    {self.senses && (
+                      <p className="text-xs text-slate-300">{self.senses}</p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {self.conditions.length > 0 && (
                 <div className="pt-3 border-t border-slate-800/80">
                   <div className="text-xs text-slate-400 mb-1">Активные состояния</div>
@@ -1403,12 +1461,13 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
 
               <div className="rounded-2xl bg-[#131A26] border border-slate-800 divide-y divide-slate-800/80 overflow-hidden">
                 {visibleSkills.map((sk) => {
-                  const isProf = self.proficientSkillIds.includes(sk.id);
+                  const isExp = (self.expertiseSkillIds ?? []).includes(sk.id);
+                  const isProf = isExp || self.proficientSkillIds.includes(sk.id);
                   const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
                   const baseScore = self.abilities[sk.abilityId] ?? 10;
+                  const bonusAdd = isExp ? profBonus * 2 : isProf ? profBonus : 0;
                   const totalMod =
-                    getAbilityModifier(baseScore, catalogs.abilityModifiers) +
-                    (isProf ? profBonus : 0);
+                    getAbilityModifier(baseScore, catalogs.abilityModifiers) + bonusAdd;
                   const isExpanded = expandedSkillId === sk.id;
 
                   return (
@@ -1421,19 +1480,27 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         <div className="flex items-center gap-2.5 min-w-0">
                           <span
                             className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                              isProf
-                                ? 'bg-amber-500 border-amber-500 text-slate-950'
-                                : 'border-slate-700'
+                              isExp
+                                ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                : isProf
+                                  ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                  : 'border-slate-700'
                             }`}
                           >
                             {isProf && <Check className="w-2.5 h-2.5" />}
                           </span>
                           <div className="min-w-0">
-                            <div className="text-sm font-medium text-slate-100 truncate">
-                              {sk.name}
+                            <div className="text-sm font-medium text-slate-100 truncate flex items-center gap-1.5">
+                              <span className="truncate">{sk.name}</span>
+                              {isExp && (
+                                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 border border-sky-400/60 text-[10px] font-mono font-semibold text-sky-300 shrink-0">
+                                  ×2
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-slate-400">
                               {ab ? ab.name : 'Без характеристики'}
+                              {isExp ? ' · Экспертиза' : ''}
                             </div>
                           </div>
                         </div>
@@ -1441,7 +1508,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         <div className="flex items-center gap-2 shrink-0">
                           <span
                             className={`text-sm font-mono tabular-nums font-semibold ${
-                              isProf ? 'text-amber-400' : 'text-slate-300'
+                              isExp
+                                ? 'text-sky-300'
+                                : isProf
+                                  ? 'text-amber-400'
+                                  : 'text-slate-300'
                             }`}
                           >
                             {formatModifier(totalMod)}

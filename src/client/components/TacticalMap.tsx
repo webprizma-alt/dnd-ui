@@ -12,6 +12,7 @@ import {
   Swords,
   User,
 } from 'lucide-react';
+import { computeGridDistanceFt } from '../../shared/catalogDefaults';
 import type {
   HotspotCategory,
   LocationHotspot,
@@ -19,6 +20,14 @@ import type {
   MapConfig,
   MapToken,
 } from '../../shared/types';
+
+export interface DmTacticalOverlay {
+  tokenId: string;
+  clearRangeFt: number;
+  visibleRangeFt: number;
+  attackNormalFt: number;
+  attackMaxFt: number;
+}
 
 interface TacticalMapProps {
   map: MapConfig;
@@ -30,6 +39,7 @@ interface TacticalMapProps {
   hotspotEditMode?: boolean;
   selectedTokenId?: string | null;
   selectedHotspotId?: string | null;
+  dmOverlay?: DmTacticalOverlay | null;
   onSelectToken?: (tokenId: string) => void;
   onMoveToken?: (tokenId: string, x: number, y: number) => void;
   onHotspotClick?: (hotspot: LocationHotspot) => void;
@@ -102,6 +112,7 @@ export function TacticalMap({
   hotspotEditMode = false,
   selectedTokenId,
   selectedHotspotId,
+  dmOverlay = null,
   onSelectToken,
   onMoveToken,
   onHotspotClick,
@@ -377,10 +388,86 @@ export function TacticalMap({
         {/* Subtle Dark Contrast Vignette */}
         <div className="absolute inset-0 bg-slate-950/15 pointer-events-none" />
 
+        {/* DM-Only Tactical Vision & Attack Reach/Range Overlay */}
+        {isTactical && dmOverlay && (() => {
+          const anchorToken = tokens.find((t) => t.id === dmOverlay.tokenId);
+          if (!anchorToken) return null;
+          const isDraggingAnchor = dragState?.tokenId === anchorToken.id;
+          const originX = isDraggingAnchor ? dragState.x : anchorToken.x;
+          const originY = isDraggingAnchor ? dragState.y : anchorToken.y;
+          const originSize = isDraggingAnchor ? dragState.size : anchorToken.size;
+
+          const hasVisionShade =
+            dmOverlay.clearRangeFt !== Infinity || dmOverlay.visibleRangeFt !== Infinity;
+          const hasAttackRange = dmOverlay.attackNormalFt > 0 || dmOverlay.attackMaxFt > 0;
+          if (!hasVisionShade && !hasAttackRange) return null;
+
+          const totalCells = map.cols * map.rows;
+          return (
+            <div
+              className="absolute inset-0 pointer-events-none grid z-[5]"
+              style={{
+                gridTemplateColumns: `repeat(${map.cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${map.rows}, minmax(0, 1fr))`,
+              }}
+            >
+              {Array.from({ length: totalCells }).map((_, idx) => {
+                const cx = idx % map.cols;
+                const cy = Math.floor(idx / map.cols);
+                const distFt = computeGridDistanceFt(originX, originY, originSize, cx, cy);
+
+                const isUnseen = distFt > dmOverlay.visibleRangeFt;
+                const isDimZone = !isUnseen && distFt > dmOverlay.clearRangeFt;
+
+                const inNormalAttack =
+                  distFt > 0 && dmOverlay.attackNormalFt > 0 && distFt <= dmOverlay.attackNormalFt;
+                const inMaxAttack =
+                  !inNormalAttack &&
+                  distFt > 0 &&
+                  dmOverlay.attackMaxFt > dmOverlay.attackNormalFt &&
+                  distFt <= dmOverlay.attackMaxFt;
+
+                const layers: string[] = [];
+                if (inNormalAttack) {
+                  layers.push('linear-gradient(rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.25))');
+                } else if (inMaxAttack) {
+                  layers.push('linear-gradient(rgba(239, 68, 68, 0.11), rgba(239, 68, 68, 0.11))');
+                }
+
+                if (isUnseen) {
+                  layers.push('linear-gradient(rgba(2, 6, 23, 0.72), rgba(2, 6, 23, 0.72))');
+                } else if (isDimZone) {
+                  layers.push('linear-gradient(rgba(15, 23, 42, 0.36), rgba(15, 23, 42, 0.36))');
+                }
+
+                const boxShadow = inNormalAttack
+                  ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.4)'
+                  : inMaxAttack
+                    ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.2)'
+                    : undefined;
+
+                if (layers.length === 0 && !boxShadow) {
+                  return <div key={idx} />;
+                }
+
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      backgroundImage: layers.join(', '),
+                      boxShadow,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* Tactical Grid Overlay */}
         {map.showGrid && (
           <div
-            className="absolute inset-0 pointer-events-none grid"
+            className="absolute inset-0 pointer-events-none grid z-[6]"
             style={{
               gridTemplateColumns: `repeat(${map.cols}, minmax(0, 1fr))`,
               gridTemplateRows: `repeat(${map.rows}, minmax(0, 1fr))`,

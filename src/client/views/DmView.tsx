@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   Compass,
+  Crosshair,
   Eye,
   EyeOff,
   Grid3X3,
@@ -13,6 +14,7 @@ import {
   Map as MapIcon,
   MapPin,
   Minus,
+  Moon,
   Play,
   Plus,
   RotateCcw,
@@ -21,26 +23,35 @@ import {
   Skull,
   SlidersHorizontal,
   Sparkles,
+  Sun,
+  Sunset,
   Trash2,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import {
+  computeEffectiveVisionRanges,
   computePlayerAcDetails,
+  formatEntityVisions,
   formatModifier,
+  formatWeaponReachRange,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getMapLightingDescription,
   getNextLevelThreshold,
   getProficiencyBonus,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
+  resolveMonsterActionRange,
+  resolveWeaponReachRange,
 } from '../../shared/catalogDefaults';
 import type {
   ArmorCategory,
   EventTone,
   ItemCategory,
   LocationHotspot,
+  MapLighting,
   MapToken,
   SceneMode,
   TokenKind,
@@ -48,7 +59,8 @@ import type {
   WeaponRangeType,
 } from '../../shared/types';
 import { CharacterCreationModal } from '../components/CharacterCreationModal';
-import { TacticalMap } from '../components/TacticalMap';
+import { TacticalMap, type DmTacticalOverlay } from '../components/TacticalMap';
+import { VisionSelector } from '../components/VisionSelector';
 import { useGameSocket } from '../useGameSocket';
 
 interface DmViewProps {
@@ -92,10 +104,13 @@ export function DmView({ onNavigate }: DmViewProps) {
   const [itemWeaponRange, setItemWeaponRange] = useState<WeaponRangeType>('melee');
   const [itemArmorCat, setItemArmorCat] = useState<ArmorCategory>('light');
 
-  // Local Drafts for Name, Private Note, Location Note, Campaign Title & Hotspots
+  // Local Drafts for Name, Private Note, Location Note, Senses, Campaign Title & Hotspots
   const [nameDraft, setNameDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [locationNoteDraft, setLocationNoteDraft] = useState('');
+  const [sensesDraft, setSensesDraft] = useState('');
+  const [showDmTacticalOverlay, setShowDmTacticalOverlay] = useState(true);
+  const [selectedAttackOverlayId, setSelectedAttackOverlayId] = useState<string>('all');
   const [activeHotspotPopover, setActiveHotspotPopover] = useState<LocationHotspot | null>(null);
   const [showHiddenHotspots, setShowHiddenHotspots] = useState(false);
   const [movePartyOnTravel, setMovePartyOnTravel] = useState(true);
@@ -149,13 +164,19 @@ export function DmView({ onNavigate }: DmViewProps) {
       setNoteDraft(selectedPlayer.privateNote);
       setNameDraft(selectedPlayer.name);
       setLocationNoteDraft(selectedPlayer.locationNote ?? '');
+      setSensesDraft(selectedPlayer.senses ?? '');
     }
   }, [
     selectedPlayer?.id,
     selectedPlayer?.privateNote,
     selectedPlayer?.name,
     selectedPlayer?.locationNote,
+    selectedPlayer?.senses,
   ]);
+
+  useEffect(() => {
+    setSelectedAttackOverlayId('all');
+  }, [dmState?.scene.activeTurnTokenId, dmState?.activeLocationId]);
 
   useEffect(() => {
     setActiveHotspotPopover(null);
@@ -289,6 +310,9 @@ export function DmView({ onNavigate }: DmViewProps) {
           itemCategory === 'weapon' ? (selectedWeapon?.category ?? itemWeaponCat) : undefined,
         weaponRangeType:
           itemCategory === 'weapon' ? (selectedWeapon?.rangeType ?? itemWeaponRange) : undefined,
+        reachFt: itemCategory === 'weapon' ? selectedWeapon?.reachFt : undefined,
+        rangeNormalFt: itemCategory === 'weapon' ? selectedWeapon?.rangeNormalFt : undefined,
+        rangeMaxFt: itemCategory === 'weapon' ? selectedWeapon?.rangeMaxFt : undefined,
         armorCategory:
           itemCategory === 'armor' ? (selectedArmor?.category ?? itemArmorCat) : undefined,
         damage: selectedWeapon?.damage,
@@ -326,14 +350,40 @@ export function DmView({ onNavigate }: DmViewProps) {
   const handleToggleSkill = (skillId: string) => {
     if (!selectedPlayer) return;
     const exists = selectedPlayer.proficientSkillIds.includes(skillId);
-    const next = exists
+    const currentExp = selectedPlayer.expertiseSkillIds ?? [];
+    const nextProf = exists
       ? selectedPlayer.proficientSkillIds.filter((id) => id !== skillId)
       : [...selectedPlayer.proficientSkillIds, skillId];
+    const nextExp = exists ? currentExp.filter((id) => id !== skillId) : currentExp;
     send({
       type: 'dm:updateStats',
       playerId: selectedPlayer.id,
-      proficientSkillIds: next,
+      proficientSkillIds: nextProf,
+      expertiseSkillIds: nextExp,
     });
+  };
+
+  const handleToggleExpertise = (skillId: string) => {
+    if (!selectedPlayer) return;
+    const currentExp = selectedPlayer.expertiseSkillIds ?? [];
+    const hasExp = currentExp.includes(skillId);
+    if (hasExp) {
+      send({
+        type: 'dm:updateStats',
+        playerId: selectedPlayer.id,
+        expertiseSkillIds: currentExp.filter((id) => id !== skillId),
+      });
+    } else {
+      const nextProf = selectedPlayer.proficientSkillIds.includes(skillId)
+        ? selectedPlayer.proficientSkillIds
+        : [...selectedPlayer.proficientSkillIds, skillId];
+      send({
+        type: 'dm:updateStats',
+        playerId: selectedPlayer.id,
+        proficientSkillIds: nextProf,
+        expertiseSkillIds: [...currentExp, skillId],
+      });
+    }
   };
 
   const handleToggleProficiency = (profId: string) => {
@@ -697,12 +747,62 @@ export function DmView({ onNavigate }: DmViewProps) {
               <span className="text-slate-400">
                 {activeLocation?.kind === 'city'
                   ? 'Свободное перемещение · Нажимайте на точки на карте для перехода'
-                  : 'Привязка к клеткам · Перетаскивайте фишки мышью'}
+                  : 'Привязка к клеткам (1 кл. = 5 фт.) · Перетаскивайте фишки мышью'}
               </span>
               {uploadError && <span className="text-red-400">{uploadError}</span>}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Map Lighting Selector (all map types) */}
+              <div className="inline-flex items-center rounded border border-slate-800 bg-[#131A26] p-0.5">
+                {(
+                  [
+                    { id: 'bright', label: 'Яркий', Icon: Sun, activeClass: 'bg-amber-500/20 text-amber-300' },
+                    { id: 'dim', label: 'Полумрак', Icon: Sunset, activeClass: 'bg-sky-500/20 text-sky-300' },
+                    { id: 'darkness', label: 'Темнота', Icon: Moon, activeClass: 'bg-indigo-500/30 text-indigo-200' },
+                  ] as Array<{ id: MapLighting; label: string; Icon: React.ComponentType<{ className?: string }>; activeClass: string }>
+                ).map(({ id, label, Icon, activeClass }) => {
+                  const isActive = (dmState.map.lighting ?? 'bright') === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      title={getMapLightingDescription(id)}
+                      onClick={() =>
+                        send({
+                          type: 'dm:updateMap',
+                          locationId: dmState.activeLocationId,
+                          patch: { lighting: id },
+                        })
+                      }
+                      className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+                        isActive ? activeClass : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Icon className="w-3 h-3" />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* DM-only Tactical Vision & Reach Overlay Toggle */}
+              {activeLocation?.kind === 'tactical' && (
+                <button
+                  type="button"
+                  onClick={() => setShowDmTacticalOverlay((prev) => !prev)}
+                  title="Отображать на карте мастера зоны зрения и досягаемости активной фишки (на ТВ скрыто)"
+                  className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition-colors ${
+                    showDmTacticalOverlay
+                      ? 'bg-rose-500/15 border-rose-500/50 text-rose-200'
+                      : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                  <span>Зоны ДМ</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() =>
@@ -756,30 +856,226 @@ export function DmView({ onNavigate }: DmViewProps) {
             </div>
           </div>
 
-          {/* Interactive Map Canvas + Hotspot Action Popover */}
-          <div className="relative flex-1 min-h-0 p-4 flex items-center justify-center">
-            <TacticalMap
-              map={dmState.map}
-              tokens={dmState.tokens}
-              locationKind={activeLocation?.kind ?? 'tactical'}
-              hotspots={
-                showHiddenHotspots
-                  ? activeLocation?.hotspots ?? []
-                  : (activeLocation?.hotspots ?? []).filter((h) => h.visibleOnTv)
+          {/* DM-Only Tactical Vision & Attack Range HUD Strip */}
+          {(() => {
+            const isTacticalLoc = activeLocation?.kind === 'tactical';
+            const turnToken =
+              isTacticalLoc && dmState.scene.activeTurnTokenId
+                ? dmState.tokens.find((t) => t.id === dmState.scene.activeTurnTokenId) ?? null
+                : null;
+
+            const turnPlayer = turnToken?.playerId
+              ? dmState.players.find((p) => p.id === turnToken.playerId) ?? null
+              : null;
+            const turnMonster = turnToken?.monsterId
+              ? catalogs.monsters.find((m) => m.id === turnToken.monsterId) ?? null
+              : null;
+
+            const attackOptions: Array<{
+              id: string;
+              label: string;
+              rangeLabel: string;
+              normalFt: number;
+              maxFt: number;
+            }> = [];
+
+            if (turnPlayer) {
+              const equippedWeapons = turnPlayer.inventory.filter(
+                (i) => i.equipped && i.category === 'weapon'
+              );
+              for (const wp of equippedWeapons) {
+                const resolved = resolveWeaponReachRange(wp, catalogs);
+                const rangeLabel =
+                  resolved.rangeType === 'ranged' && resolved.maxFt > resolved.normalFt
+                    ? `${resolved.normalFt}/${resolved.maxFt} фт.`
+                    : `${resolved.normalFt} фт.`;
+                attackOptions.push({
+                  id: wp.id,
+                  label: wp.name,
+                  rangeLabel,
+                  normalFt: resolved.normalFt,
+                  maxFt: resolved.maxFt,
+                });
               }
-              activeTurnTokenId={activeLocation?.kind === 'city' ? null : dmState.scene.activeTurnTokenId}
-              interactive={true}
-              selectedTokenId={selectedTokenId}
-              onSelectToken={(id) => {
-                setSelectedTokenId(id);
-                const tok = dmState.tokens.find((t) => t.id === id);
-                if (tok?.playerId) {
-                  setSelectedPlayerId(tok.playerId);
-                }
-              }}
-              onMoveToken={(tokenId, x, y) => send({ type: 'dm:moveToken', tokenId, x, y })}
-              onHotspotClick={(hs) => setActiveHotspotPopover(hs)}
-            />
+            } else if (turnMonster) {
+              for (const act of turnMonster.actions) {
+                const resolved = resolveMonsterActionRange(act);
+                if (!resolved) continue;
+                const rangeLabel =
+                  resolved.rangeType === 'ranged' && resolved.maxFt > resolved.normalFt
+                    ? `${resolved.normalFt}/${resolved.maxFt} фт.`
+                    : `${resolved.normalFt} фт.`;
+                attackOptions.push({
+                  id: act.id,
+                  label: act.name,
+                  rangeLabel,
+                  normalFt: resolved.normalFt,
+                  maxFt: resolved.maxFt,
+                });
+              }
+            }
+
+            const activeAttacks =
+              selectedAttackOverlayId === 'all'
+                ? attackOptions
+                : attackOptions.filter((a) => a.id === selectedAttackOverlayId);
+            const effectiveAttacks = activeAttacks.length > 0 ? activeAttacks : attackOptions;
+
+            const attackNormalFt = effectiveAttacks.reduce(
+              (acc, item) => Math.max(acc, item.normalFt),
+              0
+            );
+            const attackMaxFt = effectiveAttacks.reduce(
+              (acc, item) => Math.max(acc, item.maxFt),
+              0
+            );
+
+            const visionEntries = turnPlayer
+              ? turnPlayer.visions
+              : turnMonster
+                ? turnMonster.visions
+                : undefined;
+
+            const effectiveVision = turnToken
+              ? computeEffectiveVisionRanges(
+                  visionEntries,
+                  catalogs.visions,
+                  dmState.map.lighting ?? 'bright'
+                )
+              : null;
+
+            const dmOverlay: DmTacticalOverlay | null =
+              isTacticalLoc && showDmTacticalOverlay && turnToken && effectiveVision
+                ? {
+                    tokenId: turnToken.id,
+                    clearRangeFt: effectiveVision.clearRangeFt,
+                    visibleRangeFt: effectiveVision.visibleRangeFt,
+                    attackNormalFt,
+                    attackMaxFt,
+                  }
+                : null;
+
+            return (
+              <>
+                {isTacticalLoc && showDmTacticalOverlay && (
+                  <div className="shrink-0 px-4 py-1.5 border-b border-slate-800/70 bg-[#0F1521]/90 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    {turnToken && effectiveVision ? (
+                      <>
+                        <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                          <span className="inline-flex items-center gap-1.5 font-semibold text-amber-300">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: turnToken.color }}
+                            />
+                            <span>Ход: {turnToken.label}</span>
+                          </span>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-sky-300 flex items-center gap-1">
+                            <Eye className="w-3 h-3 shrink-0" />
+                            <span>{effectiveVision.summary}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {attackOptions.length > 0 ? (
+                            <>
+                              {attackOptions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedAttackOverlayId('all')}
+                                  className={`px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                                    selectedAttackOverlayId === 'all'
+                                      ? 'bg-rose-500/20 border-rose-500/60 text-rose-200 font-medium'
+                                      : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  Все ({attackOptions.length})
+                                </button>
+                              )}
+                              {attackOptions.map((opt) => {
+                                const isSel =
+                                  attackOptions.length === 1 ||
+                                  selectedAttackOverlayId === opt.id;
+                                return (
+                                  <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedAttackOverlayId(
+                                        selectedAttackOverlayId === opt.id ? 'all' : opt.id
+                                      )
+                                    }
+                                    className={`px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                                      isSel
+                                        ? 'bg-rose-500/20 border-rose-500/60 text-rose-200 font-medium'
+                                        : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    {opt.label}{' '}
+                                    <span className="font-mono text-rose-300/90">
+                                      ({opt.rangeLabel})
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </>
+                          ) : (
+                            <span className="text-slate-500">
+                              {turnPlayer
+                                ? 'Нет экипированного оружия'
+                                : 'Нет действий с указанной дистанцией'}
+                            </span>
+                          )}
+
+                          <span className="hidden xl:inline-flex items-center gap-2 ml-2 pl-2 border-l border-slate-800 text-[10px] text-slate-400">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-rose-500/35 border border-rose-400/50" />
+                              норм.
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-rose-500/15 border border-rose-400/25" />
+                              макс.
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-slate-950/85 border border-slate-700" />
+                              вне зрения
+                            </span>
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-slate-400">
+                        Зоны ДМ включены (скрыто на ТВ): нажмите «Ход» у фишки на вкладке «Фишки», чтобы подсветить её зрение и досягаемость атак.
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Interactive Map Canvas + Hotspot Action Popover */}
+                <div className="relative flex-1 min-h-0 p-4 flex items-center justify-center">
+                  <TacticalMap
+                    map={dmState.map}
+                    tokens={dmState.tokens}
+                    locationKind={activeLocation?.kind ?? 'tactical'}
+                    hotspots={
+                      showHiddenHotspots
+                        ? activeLocation?.hotspots ?? []
+                        : (activeLocation?.hotspots ?? []).filter((h) => h.visibleOnTv)
+                    }
+                    activeTurnTokenId={activeLocation?.kind === 'city' ? null : dmState.scene.activeTurnTokenId}
+                    interactive={true}
+                    selectedTokenId={selectedTokenId}
+                    dmOverlay={dmOverlay}
+                    onSelectToken={(id) => {
+                      setSelectedTokenId(id);
+                      const tok = dmState.tokens.find((t) => t.id === id);
+                      if (tok?.playerId) {
+                        setSelectedPlayerId(tok.playerId);
+                      }
+                    }}
+                    onMoveToken={(tokenId, x, y) => send({ type: 'dm:moveToken', tokenId, x, y })}
+                    onHotspotClick={(hs) => setActiveHotspotPopover(hs)}
+                  />
 
             {activeHotspotPopover && (() => {
               const targetLoc = activeHotspotPopover.targetLocationId
@@ -866,6 +1162,9 @@ export function DmView({ onNavigate }: DmViewProps) {
               );
             })()}
           </div>
+              </>
+            );
+          })()}
         </section>
 
         {/* Right Sidebar: Queue / Players / Events / Tokens */}
@@ -1789,7 +2088,14 @@ export function DmView({ onNavigate }: DmViewProps) {
                                     </div>
                                     <div className="text-[11px] text-slate-400 truncate">
                                       {item.weaponCategory
-                                        ? `${getWeaponCategoryLabel(item.weaponCategory)}${item.weaponRangeType ? ` · ${getWeaponRangeLabel(item.weaponRangeType)}` : ''}${item.damage ? ` · ${item.damage}` : ''}`
+                                        ? (() => {
+                                            const rangeInfo = resolveWeaponReachRange(item, catalogs);
+                                            const rangeText =
+                                              rangeInfo.rangeType === 'ranged' && rangeInfo.maxFt > rangeInfo.normalFt
+                                                ? `${rangeInfo.normalFt}/${rangeInfo.maxFt} фт.`
+                                                : `${rangeInfo.normalFt} фт.`;
+                                            return `${getWeaponCategoryLabel(item.weaponCategory)} · ${getWeaponRangeLabel(rangeInfo.rangeType)} (${rangeText})${item.damage ? ` · ${item.damage}` : ''}`;
+                                          })()
                                         : item.armorCategory
                                           ? `${getArmorCategoryLabel(item.armorCategory)}${item.armorClass ? ` · КЗ ${item.armorClass}` : ''}`
                                           : item.description || ''}
@@ -2133,35 +2439,90 @@ export function DmView({ onNavigate }: DmViewProps) {
                           </div>
                         </div>
 
-                        {/* Skills */}
+                        {/* Senses & Vision for Hero */}
+                        <div className="space-y-2.5 pt-2 border-t border-slate-800">
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                            <VisionSelector
+                              catalogVisions={catalogs.visions}
+                              value={selectedPlayer.visions ?? []}
+                              onChange={(nextVisions) =>
+                                send({
+                                  type: 'dm:updateStats',
+                                  playerId: selectedPlayer.id,
+                                  visions: nextVisions,
+                                })
+                              }
+                              compact={true}
+                              title="Зрение героя"
+                            />
+                            <label className="block space-y-1 pt-1 border-t border-slate-800/80">
+                              <span className="text-[11px] text-slate-400">
+                                Чувства (дополнительно)
+                              </span>
+                              <input
+                                type="text"
+                                value={sensesDraft}
+                                onChange={(e) => setSensesDraft(e.target.value)}
+                                onBlur={() => {
+                                  if (sensesDraft !== (selectedPlayer.senses ?? '')) {
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      senses: sensesDraft.trim(),
+                                    });
+                                  }
+                                }}
+                                placeholder="Например: острый слух, пасс. Восприятие 14"
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Skills & Expertise */}
                         <div className="space-y-2 pt-2 border-t border-slate-800">
-                          <h3 className="text-xs font-semibold text-slate-200">
-                            Навыки (отметьте изученные)
-                          </h3>
+                          <div className="flex items-center justify-between gap-2">
+                            <h3 className="text-xs font-semibold text-slate-200">
+                              Навыки (владение и экспертиза ×2)
+                            </h3>
+                            <span className="text-[11px] font-mono text-slate-400">
+                              БМ +{profBonus} · ×2 = +{profBonus * 2}
+                            </span>
+                          </div>
                           <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
                             {catalogs.skills.map((sk) => {
-                              const active = selectedPlayer.proficientSkillIds.includes(sk.id);
+                              const isExp = (selectedPlayer.expertiseSkillIds ?? []).includes(sk.id);
+                              const active =
+                                isExp || selectedPlayer.proficientSkillIds.includes(sk.id);
                               const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
                               const score = selectedPlayer.abilities[sk.abilityId] ?? 10;
+                              const bonusAdd = isExp ? profBonus * 2 : active ? profBonus : 0;
                               const totalMod =
-                                getAbilityModifier(score, catalogs.abilityModifiers) +
-                                (active ? profBonus : 0);
+                                getAbilityModifier(score, catalogs.abilityModifiers) + bonusAdd;
 
                               return (
-                                <button
+                                <div
                                   key={sk.id}
-                                  type="button"
-                                  onClick={() => handleToggleSkill(sk.id)}
-                                  className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 text-xs transition-colors ${
-                                    active ? 'bg-amber-500/10 text-slate-100' : 'text-slate-400 hover:bg-slate-800/40'
+                                  className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
+                                    isExp
+                                      ? 'bg-sky-500/10 text-slate-100'
+                                      : active
+                                        ? 'bg-amber-500/10 text-slate-100'
+                                        : 'text-slate-400 hover:bg-slate-800/40'
                                   }`}
                                 >
-                                  <div className="flex items-center gap-2 min-w-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleSkill(sk.id)}
+                                    className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0"
+                                  >
                                     <span
                                       className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                                        active
-                                          ? 'bg-amber-500 border-amber-500 text-slate-950'
-                                          : 'border-slate-600'
+                                        isExp
+                                          ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                          : active
+                                            ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                            : 'border-slate-600'
                                       }`}
                                     >
                                       {active && <Check className="w-2.5 h-2.5" />}
@@ -2170,15 +2531,34 @@ export function DmView({ onNavigate }: DmViewProps) {
                                     <span className="text-[10px] font-mono text-slate-500 shrink-0">
                                       {ab?.shortName ?? '—'}
                                     </span>
+                                  </button>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleExpertise(sk.id)}
+                                      title="Экспертиза (бонус владения ×2)"
+                                      className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors ${
+                                        isExp
+                                          ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
+                                          : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
+                                      }`}
+                                    >
+                                      ×2
+                                    </button>
+                                    <span
+                                      className={`w-8 text-right font-mono tabular-nums font-semibold ${
+                                        isExp
+                                          ? 'text-sky-300'
+                                          : active
+                                            ? 'text-amber-400'
+                                            : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {formatModifier(totalMod)}
+                                    </span>
                                   </div>
-                                  <span
-                                    className={`font-mono tabular-nums font-semibold shrink-0 ${
-                                      active ? 'text-amber-400' : 'text-slate-400'
-                                    }`}
-                                  >
-                                    {formatModifier(totalMod)}
-                                  </span>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -2532,16 +2912,25 @@ export function DmView({ onNavigate }: DmViewProps) {
                       const isMonsterExpanded = expandedMonsterTokenId === tok.id;
                       const monsterSkillLabels = linkedMonster
                         ? catalogs.skills
-                            .filter((sk) => linkedMonster.proficientSkillIds.includes(sk.id))
+                            .filter(
+                              (sk) =>
+                                linkedMonster.proficientSkillIds.includes(sk.id) ||
+                                (linkedMonster.expertiseSkillIds ?? []).includes(sk.id)
+                            )
                             .map((sk) => {
+                              const isExp = (linkedMonster.expertiseSkillIds ?? []).includes(sk.id);
                               const abMod = getAbilityModifier(
                                 linkedMonster.abilities?.[sk.abilityId] ?? 10,
                                 catalogs.abilityModifiers
                               );
-                              return `${sk.name} ${formatModifier(abMod + 2)}`;
+                              const bonus = abMod + (isExp ? 4 : 2);
+                              return `${sk.name} ${formatModifier(bonus)}${isExp ? ' (×2)' : ''}`;
                             })
                         : [];
                       const monsterTraits = linkedMonster?.traits ?? [];
+                      const monsterVisionLabels = linkedMonster
+                        ? formatEntityVisions(linkedMonster.visions, catalogs.visions)
+                        : [];
 
                       return (
                         <div
@@ -2721,6 +3110,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   {(monsterSkillLabels.length > 0 ||
                                     linkedMonster.resistances ||
                                     linkedMonster.immunities ||
+                                    monsterVisionLabels.length > 0 ||
                                     linkedMonster.senses) && (
                                     <div className="space-y-0.5 pt-1 border-t border-slate-800/80 text-slate-300">
                                       {monsterSkillLabels.length > 0 && (
@@ -2741,6 +3131,14 @@ export function DmView({ onNavigate }: DmViewProps) {
                                         <div>
                                           <span className="text-slate-500">Иммунитеты: </span>
                                           <span>{linkedMonster.immunities}</span>
+                                        </div>
+                                      )}
+                                      {monsterVisionLabels.length > 0 && (
+                                        <div>
+                                          <span className="text-slate-500">Зрение: </span>
+                                          <span className="text-sky-300 font-medium">
+                                            {monsterVisionLabels.join(', ')}
+                                          </span>
                                         </div>
                                       )}
                                       {linkedMonster.senses && (
@@ -2771,14 +3169,22 @@ export function DmView({ onNavigate }: DmViewProps) {
                                       <div className="text-[10px] font-semibold text-slate-500">
                                         Действия
                                       </div>
-                                      {linkedMonster.actions.map((act) => (
-                                        <div key={act.id} className="text-slate-300 leading-snug">
-                                          <span className="font-semibold text-amber-300">
-                                            {act.name}.{' '}
-                                          </span>
-                                          <span>{act.description}</span>
-                                        </div>
-                                      ))}
+                                      {linkedMonster.actions.map((act) => {
+                                        const reachStr = formatWeaponReachRange(act.attackType, act);
+                                        return (
+                                          <div key={act.id} className="text-slate-300 leading-snug">
+                                            <span className="font-semibold text-amber-300">
+                                              {act.name}.{' '}
+                                            </span>
+                                            {reachStr && (
+                                              <span className="inline-block mr-1 px-1 rounded bg-rose-500/15 border border-rose-500/30 text-[10px] font-mono text-rose-300">
+                                                {reachStr}
+                                              </span>
+                                            )}
+                                            <span>{act.description}</span>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>

@@ -19,6 +19,8 @@ export type HotspotCategory =
   | 'portal'
   | 'other';
 export type TvPhase = 'title_splash' | 'traveling' | 'live';
+export type MapLighting = 'bright' | 'dim' | 'darkness';
+export type VisionBehavior = 'normal' | 'darkvision' | 'blindsight' | 'truesight' | 'tremorsense';
 
 export interface UserAccount {
   id: string;
@@ -38,7 +40,10 @@ export interface CharacterDraft {
   gold: number;
   abilities: Record<string, number | null>;
   proficientSkillIds: string[];
+  expertiseSkillIds?: string[];
   proficiencyIds: string[];
+  senses?: string;
+  visions?: EntityVisionEntry[];
   privateNote: string;
 }
 
@@ -103,12 +108,31 @@ export interface ProficiencyRef {
   description: string;
 }
 
+export interface VisionRef {
+  id: string;
+  name: string;
+  behavior: VisionBehavior;
+  description: string;
+}
+
+export interface EntityVisionEntry {
+  visionId: string;
+  /** Distance in feet (5 ft = 1 tactical cell). Null/undefined = unlimited within lit area (e.g. normal vision). */
+  rangeFt: number | null;
+}
+
 export interface WeaponRef {
   id: string;
   category: WeaponCategory;
   rangeType: WeaponRangeType;
   name: string;
   damage: string;
+  /** Melee reach in feet (e.g. 5 or 10) */
+  reachFt?: number;
+  /** Ranged normal distance in feet (e.g. 80 or 150) */
+  rangeNormalFt?: number;
+  /** Ranged maximum distance in feet (e.g. 320 or 600) */
+  rangeMaxFt?: number;
   properties: string;
   mastery: string;
   weight: string;
@@ -135,6 +159,11 @@ export interface MonsterActionRef {
   id: string;
   name: string;
   description: string;
+  /** Optional attack reach/range for tactical map highlighting */
+  attackType?: WeaponRangeType | null;
+  reachFt?: number | null;
+  rangeNormalFt?: number | null;
+  rangeMaxFt?: number | null;
 }
 
 export interface MonsterRef {
@@ -147,9 +176,11 @@ export interface MonsterRef {
   speed: number;
   abilities: Record<string, number>;
   proficientSkillIds: string[];
+  expertiseSkillIds?: string[];
   immunities?: string;
   resistances?: string;
   senses?: string;
+  visions?: EntityVisionEntry[];
   traits?: MonsterActionRef[];
   xpReward: number;
   actions: MonsterActionRef[];
@@ -165,6 +196,7 @@ export interface GameCatalogs {
   levels: LevelThresholdRef[];
   skills: SkillRef[];
   proficiencies: ProficiencyRef[];
+  visions: VisionRef[];
   weapons: WeaponRef[];
   armors: ArmorRef[];
   monsters: MonsterRef[];
@@ -182,6 +214,9 @@ export interface InventoryItem {
   catalogItemId?: string;
   weaponCategory?: WeaponCategory;
   weaponRangeType?: WeaponRangeType;
+  reachFt?: number;
+  rangeNormalFt?: number;
+  rangeMaxFt?: number;
   armorCategory?: ArmorCategory;
   damage?: string;
   properties?: string;
@@ -215,6 +250,7 @@ export interface MapConfig {
   rows: number;
   showGrid: boolean;
   gridOpacity: number;
+  lighting?: MapLighting;
 }
 
 export interface MapToken {
@@ -294,7 +330,10 @@ export interface PublicPlayerInfo {
 export interface PlayerCharacter extends PublicPlayerInfo {
   abilities: Record<string, number>;
   proficientSkillIds: string[];
+  expertiseSkillIds?: string[];
   proficiencyIds: string[];
+  senses?: string;
+  visions?: EntityVisionEntry[];
   inventory: InventoryItem[];
   gold: number;
   privateNote: string;
@@ -455,7 +494,10 @@ export type ClientMessage =
         xp?: number;
         abilities?: Record<string, number>;
         proficientSkillIds?: string[];
+        expertiseSkillIds?: string[];
         proficiencyIds?: string[];
+        senses?: string;
+        visions?: EntityVisionEntry[];
       };
     }
   | { type: 'dm:deletePlayer'; playerId: string }
@@ -481,7 +523,10 @@ export type ClientMessage =
       locationNote?: string;
       abilities?: Record<string, number>;
       proficientSkillIds?: string[];
+      expertiseSkillIds?: string[];
       proficiencyIds?: string[];
+      senses?: string;
+      visions?: EntityVisionEntry[];
     }
   | { type: 'dm:addInventoryItem'; playerId: string; item: Omit<InventoryItem, 'id'> }
   | { type: 'dm:updateInventoryItem'; playerId: string; itemId: string; patch: Partial<InventoryItem> }
@@ -506,6 +551,7 @@ export type ClientMessage =
   | { type: 'dm:upsertCatalogItem'; catalog: 'levels'; item: LevelThresholdRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'skills'; item: SkillRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'proficiencies'; item: ProficiencyRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'visions'; item: VisionRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'weapons'; item: WeaponRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'armors'; item: ArmorRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'monsters'; item: MonsterRef }
