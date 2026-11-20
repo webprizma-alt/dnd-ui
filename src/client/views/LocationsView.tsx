@@ -15,6 +15,7 @@ import {
   Swords,
   Trash2,
   Users,
+  X,
 } from 'lucide-react';
 import type {
   GameLocation,
@@ -57,12 +58,16 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // New location quick creator
+  // New location quick creator modal
   const [showNewLocation, setShowNewLocation] = useState(false);
   const [newLocName, setNewLocName] = useState('');
   const [newLocKind, setNewLocKind] = useState<LocationKind>('city');
   const [newLocParentId, setNewLocParentId] = useState<string>('');
   const [newLocDesc, setNewLocDesc] = useState('');
+  const [newLocCols, setNewLocCols] = useState(16);
+  const [newLocRows, setNewLocRows] = useState(9);
+  const pendingCreatedNameRef = useRef<string | null>(null);
+  const prevLocationIdsRef = useRef<Set<string>>(new Set());
 
   // Selected location form drafts
   const [locNameDraft, setLocNameDraft] = useState('');
@@ -89,10 +94,31 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
 
   useEffect(() => {
     if (!dmState) return;
+    if (pendingCreatedNameRef.current) {
+      const newlyAdded = dmState.locations.find(
+        (l) => !prevLocationIdsRef.current.has(l.id) && l.name === pendingCreatedNameRef.current
+      );
+      if (newlyAdded) {
+        pendingCreatedNameRef.current = null;
+        setSelectedLocationId(newlyAdded.id);
+        setSelectedHotspotId(null);
+      }
+    }
+    prevLocationIdsRef.current = new Set(dmState.locations.map((l) => l.id));
+
     if (!selectedLocationId || !dmState.locations.some((l) => l.id === selectedLocationId)) {
       setSelectedLocationId(dmState.activeLocationId || dmState.locations[0]?.id || '');
     }
   }, [dmState, selectedLocationId]);
+
+  useEffect(() => {
+    if (!showNewLocation) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowNewLocation(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showNewLocation]);
 
   const selectedLocation: GameLocation | null = useMemo(() => {
     if (!dmState) return null;
@@ -274,16 +300,36 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
     }
   };
 
+  const openNewLocationModal = () => {
+    setNewLocParentId(selectedLocation?.id ?? '');
+    setNewLocName('');
+    setNewLocDesc('');
+    setNewLocKind('city');
+    setNewLocCols(16);
+    setNewLocRows(9);
+    setShowNewLocation(true);
+  };
+
   const handleCreateLocation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLocName.trim()) return;
+    const cleanName = newLocName.trim();
+    if (!cleanName) return;
+    pendingCreatedNameRef.current = cleanName;
     send({
       type: 'dm:upsertLocation',
       location: {
-        name: newLocName.trim(),
+        name: cleanName,
         kind: newLocKind,
         description: newLocDesc.trim(),
         parentLocationId: newLocParentId || null,
+        map:
+          newLocKind === 'tactical'
+            ? {
+                cols: Math.max(6, Math.min(32, Math.round(newLocCols) || 16)),
+                rows: Math.max(4, Math.min(24, Math.round(newLocRows) || 9)),
+                showGrid: true,
+              }
+            : { showGrid: false },
       },
     });
     setNewLocName('');
@@ -355,12 +401,12 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#0B0F17] text-slate-100 flex flex-col">
       {/* Unified DM Top Bar */}
-      <header className="h-14 shrink-0 px-4 sm:px-5 border-b border-slate-800 bg-[#0B0F17] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
+      <header className="h-14 shrink-0 px-3 sm:px-5 border-b border-slate-800 bg-[#0B0F17] flex items-center justify-between gap-2 sm:gap-4">
+        <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 overflow-x-auto">
           <button
             type="button"
             onClick={() => onNavigate('/')}
-            className="text-sm font-semibold text-slate-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0"
+            className="hidden sm:block text-sm font-semibold text-slate-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0"
           >
             Tabletop Sync
           </button>
@@ -372,7 +418,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
             <button
               type="button"
               onClick={() => onNavigate('/dm')}
-              className="px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-slate-100 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+              className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-slate-100 flex items-center gap-1.5 transition-colors whitespace-nowrap"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
               <span>Пульт мастера</span>
@@ -380,7 +426,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
             <button
               type="button"
               onClick={() => onNavigate('/locations')}
-              className="px-3 py-1 rounded-md text-xs font-medium bg-slate-800 text-amber-400 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+              className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium bg-slate-800 text-amber-400 flex items-center gap-1.5 transition-colors whitespace-nowrap"
             >
               <MapIcon className="w-3.5 h-3.5" />
               <span>Карта мира</span>
@@ -388,14 +434,14 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
             <button
               type="button"
               onClick={() => onNavigate('/catalogs')}
-              className="px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-slate-100 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+              className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-slate-100 flex items-center gap-1.5 transition-colors whitespace-nowrap"
             >
               <BookOpen className="w-3.5 h-3.5" />
               <span>Справочники</span>
             </button>
           </nav>
 
-          <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap">
+          <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap shrink-0">
             <span
               className={`w-2 h-2 rounded-full ${
                 status === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
@@ -409,11 +455,8 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              setNewLocParentId(selectedLocation.id);
-              setShowNewLocation(true);
-            }}
-            className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
+            onClick={openNewLocationModal}
+            className="px-3 sm:px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
             <span>Новая локация</span>
@@ -423,7 +466,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
             href="/tv"
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden md:flex px-3 py-2 rounded-lg bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors whitespace-nowrap"
+            className="hidden lg:flex px-3 py-2 rounded-lg bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors whitespace-nowrap"
           >
             Открыть ТВ
           </a>
@@ -652,86 +695,32 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
 
         {/* Right Inspector Sidebar */}
         <aside className="w-full lg:w-[420px] xl:w-[450px] shrink-0 border-t lg:border-t-0 lg:border-l border-slate-800 bg-[#131A26] overflow-y-auto p-4 space-y-5">
-          {/* New Location Modal-like Inline Card */}
-          {showNewLocation && (
-            <form
-              onSubmit={handleCreateLocation}
-              className="p-4 rounded-xl bg-[#0B0F17] border border-amber-500/60 space-y-3"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-amber-400">
-                  Добавить новую локацию
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowNewLocation(false)}
-                  className="text-xs text-slate-400 hover:text-slate-200"
-                >
-                  Закрыть
-                </button>
-              </div>
-              <input
-                type="text"
-                value={newLocName}
-                onChange={(e) => setNewLocName(e.target.value)}
-                placeholder="Название (напр. Подвал таверны или Логово гоблинов)"
-                className="w-full px-3 py-2 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100"
-                required
-              />
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <select
-                  value={newLocKind}
-                  onChange={(e) => setNewLocKind(e.target.value as LocationKind)}
-                  className="px-2.5 py-2 rounded-lg bg-[#131A26] border border-slate-700 text-slate-100"
-                >
-                  <option value="city">Город / Социальная (свободно)</option>
-                  <option value="tactical">Тактическая (по клеткам)</option>
-                </select>
-                <select
-                  value={newLocParentId}
-                  onChange={(e) => setNewLocParentId(e.target.value)}
-                  className="px-2.5 py-2 rounded-lg bg-[#131A26] border border-slate-700 text-slate-100"
-                >
-                  <option value="">Без родительской</option>
-                  {dmState.locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      Внутри: {l.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <textarea
-                rows={2}
-                value={newLocDesc}
-                onChange={(e) => setNewLocDesc(e.target.value)}
-                placeholder="Краткое описание для мастера и игроков..."
-                className="w-full px-3 py-2 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100 resize-none"
-              />
-              <button
-                type="submit"
-                className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold"
-              >
-                Создать локацию
-              </button>
-            </form>
-          )}
-
-          {/* Location Selector Strip */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
+          {/* Location Selector Strip + Direct Create Button */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-semibold text-slate-200">
                 Справочник локаций ({dmState.locations.length})
               </span>
-              {selectedLocation.id !== dmState.activeLocationId && (
+              <div className="flex items-center gap-2">
+                {selectedLocation.id !== dmState.activeLocationId && (
+                  <button
+                    type="button"
+                    onClick={() => handleTravelToLocation(selectedLocation.id)}
+                    className="text-slate-300 hover:text-amber-300 font-medium flex items-center gap-1 transition-colors"
+                  >
+                    <span>Перейти</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => handleTravelToLocation(selectedLocation.id)}
-                  className="text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                  onClick={openNewLocationModal}
+                  className="px-2.5 py-1 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 text-[11px] font-semibold flex items-center gap-1 transition-colors whitespace-nowrap"
                 >
-                  <span>Перейти сюда</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Добавить</span>
                 </button>
-              )}
+              </div>
             </div>
             <select
               value={selectedLocation.id}
@@ -1127,6 +1116,161 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
           </div>
         </aside>
       </div>
+
+      {/* Centered Modal Dialog for Creating a New Location */}
+      {showNewLocation && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-location-modal-title"
+          onClick={() => setShowNewLocation(false)}
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <form
+            onSubmit={handleCreateLocation}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-[#131A26] border border-slate-700 shadow-2xl p-5 space-y-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="new-location-modal-title" className="text-base font-semibold text-slate-100">
+                  Новая локация
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Создайте карту города или тактическую арену для боя
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewLocation(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                aria-label="Закрыть окно"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <label className="block space-y-1.5">
+                <span className="text-slate-300 font-medium">Название локации</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={newLocName}
+                  onChange={(e) => setNewLocName(e.target.value)}
+                  placeholder="Напр. Подвал таверны или Логово гоблинов"
+                  className="w-full px-3 py-2.5 rounded-lg bg-[#0B0F17] border border-slate-700 text-sm text-slate-100 focus:outline-none focus:border-amber-500"
+                  required
+                />
+              </label>
+
+              <div className="space-y-1.5">
+                <span className="text-slate-300 font-medium block">Тип карты</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewLocKind('city')}
+                    className={`px-3 py-2.5 rounded-lg border text-left flex items-center gap-2 transition-colors ${
+                      newLocKind === 'city'
+                        ? 'bg-amber-500/15 border-amber-500/70 text-amber-300 font-medium'
+                        : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Compass className="w-4 h-4 shrink-0" />
+                    <div>
+                      <div className="text-xs leading-tight">Город / Сцена</div>
+                      <div className="text-[10px] opacity-75">Свободно + точки</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewLocKind('tactical')}
+                    className={`px-3 py-2.5 rounded-lg border text-left flex items-center gap-2 transition-colors ${
+                      newLocKind === 'tactical'
+                        ? 'bg-red-500/15 border-red-500/70 text-red-300 font-medium'
+                        : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Swords className="w-4 h-4 shrink-0" />
+                    <div>
+                      <div className="text-xs leading-tight">Тактическая</div>
+                      <div className="text-[10px] opacity-75">Бой по сетке</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {newLocKind === 'tactical' && (
+                <div className="p-3 rounded-lg bg-[#0B0F17] border border-slate-800 flex items-center justify-between gap-3">
+                  <span className="text-slate-300">Размер сетки (кл.):</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={6}
+                      max={32}
+                      value={newLocCols}
+                      onChange={(e) => setNewLocCols(Number(e.target.value) || 16)}
+                      className="w-14 px-2 py-1 rounded bg-[#131A26] border border-slate-700 font-mono tabular-nums text-slate-100 text-center"
+                    />
+                    <span className="text-slate-500">×</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={24}
+                      value={newLocRows}
+                      onChange={(e) => setNewLocRows(Number(e.target.value) || 9)}
+                      className="w-14 px-2 py-1 rounded bg-[#131A26] border border-slate-700 font-mono tabular-nums text-slate-100 text-center"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <label className="block space-y-1.5">
+                <span className="text-slate-300 font-medium">Родительская локация (необязательно)</span>
+                <select
+                  value={newLocParentId}
+                  onChange={(e) => setNewLocParentId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-700 text-slate-100"
+                >
+                  <option value="">Корневая локация (без родителя)</option>
+                  {dmState.locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      Внутри: {l.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-slate-300 font-medium">Описание</span>
+                <textarea
+                  rows={2}
+                  value={newLocDesc}
+                  onChange={(e) => setNewLocDesc(e.target.value)}
+                  placeholder="Краткое описание локации для мастера и игроков..."
+                  className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-700 text-slate-100 resize-none"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowNewLocation(false)}
+                className="px-4 py-2 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 transition-colors"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold transition-colors"
+              >
+                Создать локацию
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
