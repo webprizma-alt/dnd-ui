@@ -514,12 +514,19 @@ export function TacticalMap({
                 }}
               >
                 <div
-                  className="w-full h-full rounded-full flex items-center justify-center gap-0.5 font-semibold text-[11px] sm:text-xs tracking-tight"
+                  className="w-full h-full rounded-full overflow-hidden flex items-center justify-center gap-0.5 font-semibold text-[11px] sm:text-xs tracking-tight"
                   style={{
                     background: `radial-gradient(circle at 35% 30%, ${token.color}44, #0B0F17 85%)`,
                   }}
                 >
-                  {token.kind === 'player' ? (
+                  {token.portraitUrl ? (
+                    <img
+                      src={token.portraitUrl}
+                      alt={token.label}
+                      draggable={false}
+                      className="w-full h-full object-cover object-top pointer-events-none"
+                    />
+                  ) : token.kind === 'player' ? (
                     <span className="font-mono font-bold leading-none">{initials}</span>
                   ) : (
                     renderTokenIcon(token)

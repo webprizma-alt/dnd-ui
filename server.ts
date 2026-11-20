@@ -6,6 +6,12 @@ import path from 'path';
 import QRCode from 'qrcode';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameStore } from './src/server/gameStore.ts';
+import {
+  generateHeroPortrait,
+  generateMonsterPortrait,
+  parseImageDataUrl,
+  savePortraitBuffer,
+} from './src/server/portraitGenerator.ts';
 import { renderTvMsxHtml } from './src/server/tvMsxHtml.ts';
 import type { ClientMessage, ClientRole, ServerMessage } from './src/shared/types.ts';
 
@@ -172,6 +178,130 @@ async function startServer() {
     store.setMapImage(publicUrl, typeof locationId === 'string' ? locationId : undefined);
     broadcastState();
     res.json({ imageUrl: publicUrl });
+  });
+
+  app.post('/api/portraits/hero', async (req, res) => {
+    const { playerId, photoDataUrl } = req.body as {
+      playerId?: string;
+      photoDataUrl?: string;
+    };
+
+    if (!playerId || typeof playerId !== 'string') {
+      res.status(400).json({ error: 'Не указан персонаж для генерации портрета' });
+      return;
+    }
+
+    const ctx = store.getPlayerWithContext(playerId);
+    if (!ctx) {
+      res.status(404).json({ error: 'Персонаж не найден. Сначала завершите создание героя у мастера.' });
+      return;
+    }
+
+    try {
+      const faceImage = parseImageDataUrl(photoDataUrl || '');
+      const generated = await generateHeroPortrait({
+        player: ctx.player,
+        classRef: ctx.classRef,
+        speciesRef: ctx.speciesRef,
+        backgroundRef: ctx.backgroundRef,
+        faceImage,
+      });
+
+      const portraitUrl = savePortraitBuffer(
+        UPLOADS_DIR,
+        `hero-${ctx.player.id}`,
+        generated.buffer,
+        generated.mimeType
+      );
+      store.setPlayerPortrait(ctx.player.id, portraitUrl);
+      broadcastState();
+      res.json({ portraitUrl });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Ошибка генерации портрета героя';
+      console.error('Hero portrait generation error:', err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post('/api/portraits/monster/upload', (req, res) => {
+    const { monsterId, dataUrl } = req.body as {
+      monsterId?: string;
+      dataUrl?: string;
+    };
+
+    if (!monsterId || typeof monsterId !== 'string') {
+      res.status(400).json({ error: 'Не указан монстр' });
+      return;
+    }
+
+    const ctx = store.getMonsterWithContext(monsterId);
+    if (!ctx) {
+      res.status(404).json({ error: 'Монстр не найден в справочнике' });
+      return;
+    }
+
+    try {
+      const parsed = parseImageDataUrl(dataUrl || '');
+      const portraitUrl = savePortraitBuffer(
+        UPLOADS_DIR,
+        `monster-${ctx.monster.id}`,
+        parsed.buffer,
+        parsed.mimeType
+      );
+      store.setMonsterPortrait(ctx.monster.id, portraitUrl);
+      broadcastState();
+      res.json({ portraitUrl });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось загрузить изображение монстра';
+      res.status(400).json({ error: message });
+    }
+  });
+
+  app.post('/api/portraits/monster/generate', async (req, res) => {
+    const { monsterId, referenceDataUrl, extraPrompt } = req.body as {
+      monsterId?: string;
+      referenceDataUrl?: string | null;
+      extraPrompt?: string;
+    };
+
+    if (!monsterId || typeof monsterId !== 'string') {
+      res.status(400).json({ error: 'Не указан монстр для генерации' });
+      return;
+    }
+
+    const ctx = store.getMonsterWithContext(monsterId);
+    if (!ctx) {
+      res.status(404).json({ error: 'Монстр не найден в справочнике' });
+      return;
+    }
+
+    try {
+      const referenceImage =
+        referenceDataUrl && typeof referenceDataUrl === 'string' && referenceDataUrl.trim()
+          ? parseImageDataUrl(referenceDataUrl)
+          : null;
+
+      const generated = await generateMonsterPortrait({
+        monster: ctx.monster,
+        abilities: ctx.abilities,
+        referenceImage,
+        extraPrompt: typeof extraPrompt === 'string' ? extraPrompt : undefined,
+      });
+
+      const portraitUrl = savePortraitBuffer(
+        UPLOADS_DIR,
+        `monster-ai-${ctx.monster.id}`,
+        generated.buffer,
+        generated.mimeType
+      );
+      store.setMonsterPortrait(ctx.monster.id, portraitUrl);
+      broadcastState();
+      res.json({ portraitUrl });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Ошибка генерации портрета монстра';
+      console.error('Monster portrait generation error:', err);
+      res.status(500).json({ error: message });
+    }
   });
 
   const server = http.createServer(app);

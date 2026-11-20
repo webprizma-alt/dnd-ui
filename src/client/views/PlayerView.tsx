@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Backpack,
   Bell,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -10,7 +11,9 @@ import {
   Coins,
   Compass,
   FlaskConical,
+  Image as ImageIcon,
   KeyRound,
+  Loader2,
   LogOut,
   MapPin,
   Package,
@@ -35,6 +38,7 @@ import {
   sortLevels,
 } from '../../shared/catalogDefaults';
 import type { InventoryItem, ItemCategory, UserAccount } from '../../shared/types';
+import { compressImageFileToDataUrl } from '../imageUtils';
 import { useGameSocket } from '../useGameSocket';
 
 interface PlayerViewProps {
@@ -95,6 +99,15 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   const [confirmUseId, setConfirmUseId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [onlyProficientSkills, setOnlyProficientSkills] = useState(false);
+
+  // Hero AI portrait generation modal state (used only inside entered hero sheet)
+  const [portraitSheetOpen, setPortraitSheetOpen] = useState(false);
+  const [capturedFaceDataUrl, setCapturedFaceDataUrl] = useState<string | null>(null);
+  const [isGeneratingPortrait, setIsGeneratingPortrait] = useState(false);
+  const [portraitError, setPortraitError] = useState<string | null>(null);
+  const [portraitSuccessNote, setPortraitSuccessNote] = useState<string | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleAccountRegistered = useCallback((account: UserAccount) => {
     window.localStorage.setItem(ACCOUNT_STORAGE_KEY, account.id);
@@ -734,12 +747,21 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                     className="w-full min-h-[72px] px-4 py-3.5 rounded-2xl bg-[#131A26] hover:bg-slate-800/80 active:scale-[0.99] border border-slate-800 flex items-center justify-between gap-4 text-left transition-all"
                   >
                     <div className="flex items-center gap-3.5 min-w-0">
-                      <div
-                        className="w-10 h-10 rounded-full flex items-center justify-center font-mono font-bold text-sm text-slate-950 shrink-0"
-                        style={{ backgroundColor: p.color }}
-                      >
-                        {p.name.slice(0, 2).toUpperCase()}
-                      </div>
+                      {p.portraitUrl ? (
+                        <img
+                          src={p.portraitUrl}
+                          alt={p.name}
+                          className="w-11 h-11 rounded-full object-cover object-top border-2 shrink-0"
+                          style={{ borderColor: p.color }}
+                        />
+                      ) : (
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center font-mono font-bold text-sm text-slate-950 shrink-0"
+                          style={{ backgroundColor: p.color }}
+                        >
+                          {p.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
                       <div className="min-w-0">
                         <div className="text-base font-semibold text-slate-100 truncate">
                           {p.name}
@@ -845,16 +867,76 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
     });
   };
 
+  const handleOpenPortraitSheet = () => {
+    setCapturedFaceDataUrl(null);
+    setPortraitError(null);
+    setPortraitSuccessNote(null);
+    setPortraitSheetOpen(true);
+  };
+
+  const handleFaceFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPortraitError(null);
+    setPortraitSuccessNote(null);
+    try {
+      const compressed = await compressImageFileToDataUrl(file, 1024, 0.86);
+      setCapturedFaceDataUrl(compressed);
+    } catch (err) {
+      setPortraitError(err instanceof Error ? err.message : 'Не удалось обработать фото');
+    }
+  };
+
+  const handleGenerateHeroPortrait = async () => {
+    if (!capturedFaceDataUrl) {
+      setPortraitError('Сделайте фото камерой или выберите снимок из галереи');
+      return;
+    }
+    setIsGeneratingPortrait(true);
+    setPortraitError(null);
+    setPortraitSuccessNote(null);
+    try {
+      const res = await fetch('/api/portraits/hero', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: self.id,
+          photoDataUrl: capturedFaceDataUrl,
+        }),
+      });
+      const data = (await res.json()) as { portraitUrl?: string; error?: string };
+      if (!res.ok || !data.portraitUrl) {
+        throw new Error(data.error || 'Не удалось сгенерировать портрет');
+      }
+      setCapturedFaceDataUrl(null);
+      setPortraitSuccessNote('Портрет сохранён и обновлён на экране ТВ!');
+    } catch (err) {
+      setPortraitError(err instanceof Error ? err.message : 'Ошибка генерации портрета');
+    } finally {
+      setIsGeneratingPortrait(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100 pb-20">
       {/* Compact Sticky Mobile Top Bar (<= 56px) */}
       <header className="sticky top-0 z-30 h-14 px-4 bg-[#0B0F17]/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span
-            className="w-3 h-3 rounded-full shrink-0"
-            style={{ backgroundColor: self.color }}
-            aria-hidden="true"
-          />
+          {self.portraitUrl ? (
+            <img
+              src={self.portraitUrl}
+              alt={self.name}
+              className="w-8 h-8 rounded-full object-cover object-top border-2 shrink-0"
+              style={{ borderColor: self.color }}
+            />
+          ) : (
+            <span
+              className="w-3 h-3 rounded-full shrink-0"
+              style={{ backgroundColor: self.color }}
+              aria-hidden="true"
+            />
+          )}
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-100 truncate leading-tight">
               {self.name}
@@ -1103,22 +1185,70 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
           <section className="space-y-4">
             {/* Core Character Identity, HP & XP */}
             <div className="rounded-2xl bg-[#131A26] border border-slate-800 p-5 space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1 min-w-0">
-                  <h1 className="text-xl font-semibold text-slate-100 truncate">{self.name}</h1>
-                  <p className="text-xs text-slate-400">
-                    {classRef?.name ?? self.role} · {speciesRef?.name ?? '—'} ·{' '}
-                    {backgroundRef?.name ?? '—'}
-                  </p>
-                  {self.locationName && (
-                    <p className="text-xs text-amber-300/90 flex items-center gap-1.5 pt-0.5">
-                      <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span className="truncate">
-                        {self.locationName}
-                        {self.locationNote ? ` — ${self.locationNote}` : ''}
-                      </span>
+              <div className="flex items-start justify-between gap-3.5">
+                <div className="flex items-start gap-3.5 min-w-0">
+                  {/* Hero 3:4 Card Portrait Thumbnail */}
+                  <button
+                    type="button"
+                    onClick={handleOpenPortraitSheet}
+                    className="relative w-20 h-[106px] rounded-xl overflow-hidden border border-slate-700/90 bg-[#0B0F17] shrink-0 group focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    title="Сгенерировать портрет героя"
+                  >
+                    {self.portraitUrl ? (
+                      <img
+                        src={self.portraitUrl}
+                        alt={self.name}
+                        className="w-full h-full object-cover object-top"
+                      />
+                    ) : (
+                      <div
+                        className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-center px-1"
+                        style={{
+                          background: `radial-gradient(circle at 50% 35%, ${self.color}33, #0B0F17 85%)`,
+                        }}
+                      >
+                        <Camera className="w-5 h-5 text-amber-400/90" />
+                        <span className="text-[10px] font-medium text-slate-400 leading-tight">
+                          Портрет
+                        </span>
+                      </div>
+                    )}
+                    <span className="absolute inset-x-0 bottom-0 py-1 bg-gradient-to-t from-black/90 via-black/60 to-transparent text-[9px] font-medium text-amber-300 text-center">
+                      {self.portraitUrl ? 'Обновить' : 'Создать'}
+                    </span>
+                  </button>
+
+                  <div className="space-y-1 min-w-0">
+                    <h1 className="text-xl font-semibold text-slate-100 truncate">{self.name}</h1>
+                    <p className="text-xs text-slate-400">
+                      {classRef?.name ?? self.role} · {speciesRef?.name ?? '—'} ·{' '}
+                      {backgroundRef?.name ?? '—'}
                     </p>
-                  )}
+                    {self.locationName && (
+                      <p className="text-xs text-amber-300/90 flex items-center gap-1.5 pt-0.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">
+                          {self.locationName}
+                          {self.locationNote ? ` — ${self.locationNote}` : ''}
+                        </span>
+                      </p>
+                    )}
+
+                    <div className="pt-1.5">
+                      <button
+                        type="button"
+                        onClick={handleOpenPortraitSheet}
+                        className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 active:scale-[0.99] border border-amber-500/50 text-amber-300 text-xs font-semibold inline-flex items-center gap-2 transition-all"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {self.portraitUrl
+                            ? 'Перегенерировать изображение'
+                            : 'Сгенерировать изображение'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-sm font-mono tabular-nums font-bold text-amber-400">
@@ -1466,6 +1596,181 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
           </span>
         </button>
       </nav>
+      {/* Hero AI Portrait Generation Bottom Sheet */}
+      {portraitSheetOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center"
+          onClick={() => {
+            if (!isGeneratingPortrait) setPortraitSheetOpen(false);
+          }}
+        >
+          <div
+            className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[#131A26] border-t sm:border border-slate-700/90 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drag Handle & Header */}
+            <div className="pt-3 pb-2 px-5 border-b border-slate-800/80 shrink-0">
+              <div className="w-10 h-1.5 bg-slate-700 rounded-full mx-auto mb-3 sm:hidden" />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-100">Портрет героя</h2>
+                  <p className="text-xs text-slate-400">
+                    ИИ превратит ваше фото в карточку тёмного фэнтези
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={isGeneratingPortrait}
+                  onClick={() => setPortraitSheetOpen(false)}
+                  className="min-h-[44px] min-w-[44px] rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800 flex items-center justify-center transition-colors disabled:opacity-40"
+                  aria-label="Закрыть"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Hidden Native Mobile Camera & Gallery Pickers */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="user"
+              onChange={handleFaceFileSelected}
+              className="hidden"
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFaceFileSelected}
+              className="hidden"
+            />
+
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {/* Auto-attached Hero Traits Summary */}
+              <div className="rounded-xl bg-[#0B0F17] border border-slate-800 p-3 space-y-1.5">
+                <div className="text-[11px] font-medium text-slate-400">
+                  Учитывается при генерации:
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <div className="text-[10px] text-slate-500">Вид</div>
+                    <div className="font-medium text-slate-200 truncate">
+                      {speciesRef?.name ?? '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500">Класс</div>
+                    <div className="font-medium text-amber-300 truncate">
+                      {classRef?.name ?? self.role}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500">Предыстория</div>
+                    <div className="font-medium text-slate-200 truncate">
+                      {backgroundRef?.name ?? '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Photo / Result Preview Frame (3:4 Card Ratio) */}
+              <div className="flex justify-center">
+                <div className="relative w-44 aspect-[3/4] rounded-2xl overflow-hidden border border-slate-700 bg-[#0B0F17] flex items-center justify-center shadow-inner">
+                  {capturedFaceDataUrl ? (
+                    <img
+                      src={capturedFaceDataUrl}
+                      alt="Выбранное фото лица"
+                      className="w-full h-full object-cover object-top"
+                    />
+                  ) : self.portraitUrl ? (
+                    <img
+                      src={self.portraitUrl}
+                      alt={self.name}
+                      className="w-full h-full object-cover object-top"
+                    />
+                  ) : (
+                    <div className="p-4 text-center space-y-2">
+                      <Camera className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-xs text-slate-400 leading-snug">
+                        Сделайте селфи или выберите фото лица из галереи
+                      </p>
+                    </div>
+                  )}
+
+                  {isGeneratingPortrait && (
+                    <div className="absolute inset-0 bg-[#0B0F17]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+                      <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                      <p className="text-xs font-medium text-amber-200 leading-snug">
+                        ИИ рисует портрет героя...
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {portraitSuccessNote && (
+                <div className="rounded-xl bg-emerald-950/50 border border-emerald-700/60 px-3.5 py-2.5 text-xs text-emerald-200 flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{portraitSuccessNote}</span>
+                </div>
+              )}
+
+              {portraitError && (
+                <div className="rounded-xl bg-red-950/50 border border-red-700/60 px-3.5 py-2.5 text-xs text-red-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{portraitError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Thumb-Zone Bottom Actions */}
+            <div className="p-4 border-t border-slate-800/80 bg-[#0B0F17]/90 space-y-2.5 shrink-0">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  disabled={isGeneratingPortrait}
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#131A26] hover:bg-slate-800 active:scale-[0.98] border border-slate-700 text-xs font-semibold text-slate-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <Camera className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Камера</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isGeneratingPortrait}
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#131A26] hover:bg-slate-800 active:scale-[0.98] border border-slate-700 text-xs font-semibold text-slate-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span>Из галереи</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={isGeneratingPortrait || !capturedFaceDataUrl}
+                onClick={handleGenerateHeroPortrait}
+                className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.99] disabled:opacity-45 disabled:hover:bg-amber-500 text-slate-950 text-sm font-semibold flex items-center justify-center gap-2 transition-all"
+              >
+                {isGeneratingPortrait ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Генерация портрета...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Создать портрет героя</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Award,
   BookOpen,
   Calculator,
   Check,
   Dna,
+  Image as ImageIcon,
+  Loader2,
   Map as MapIcon,
   Pencil,
   Plus,
@@ -19,6 +22,7 @@ import {
   Sword,
   Swords,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -51,6 +55,7 @@ import type {
   WeaponRangeType,
   WeaponRef,
 } from '../../shared/types';
+import { compressImageFileToDataUrl } from '../imageUtils';
 import { useGameSocket } from '../useGameSocket';
 
 interface CatalogsViewProps {
@@ -201,6 +206,19 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
   const [monsterActionsDraft, setMonsterActionsDraft] = useState<MonsterActionRef[]>([
     { id: 'act-draft-1', name: '', description: '' },
   ]);
+
+  // Monster portrait upload & AI generation modal state
+  const monsterUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const monsterRefInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingMonsterId, setUploadingMonsterId] = useState<string | null>(null);
+  const [uploadTargetMonsterId, setUploadTargetMonsterId] = useState<string | null>(null);
+  const [monsterUploadError, setMonsterUploadError] = useState<string | null>(null);
+  const [genModalMonsterId, setGenModalMonsterId] = useState<string | null>(null);
+  const [genReferenceDataUrl, setGenReferenceDataUrl] = useState<string | null>(null);
+  const [genExtraPrompt, setGenExtraPrompt] = useState('');
+  const [isGeneratingMonster, setIsGeneratingMonster] = useState(false);
+  const [genMonsterError, setGenMonsterError] = useState<string | null>(null);
+  const [genMonsterSuccess, setGenMonsterSuccess] = useState<string | null>(null);
 
   const buildDefaultMonsterAbilities = () => {
     const next: Record<string, number> = {};
@@ -602,6 +620,91 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     monsterAbilitiesDraft.dex ?? 10,
     catalogs.abilityModifiers
   );
+
+  const activeGenMonster = genModalMonsterId
+    ? catalogs.monsters.find((m) => m.id === genModalMonsterId) ?? null
+    : null;
+
+  const handleTriggerMonsterUpload = (monsterId: string) => {
+    setUploadTargetMonsterId(monsterId);
+    setMonsterUploadError(null);
+    monsterUploadInputRef.current?.click();
+  };
+
+  const handleMonsterPhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !uploadTargetMonsterId) return;
+
+    const targetId = uploadTargetMonsterId;
+    setUploadingMonsterId(targetId);
+    setMonsterUploadError(null);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 1024, 0.88);
+      const res = await fetch('/api/portraits/monster/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monsterId: targetId, dataUrl }),
+      });
+      const data = (await res.json()) as { portraitUrl?: string; error?: string };
+      if (!res.ok || !data.portraitUrl) {
+        throw new Error(data.error || 'Не удалось загрузить фото монстра');
+      }
+    } catch (err) {
+      setMonsterUploadError(err instanceof Error ? err.message : 'Ошибка загрузки изображения');
+    } finally {
+      setUploadingMonsterId(null);
+      setUploadTargetMonsterId(null);
+    }
+  };
+
+  const handleOpenMonsterGenModal = (monsterId: string) => {
+    setGenModalMonsterId(monsterId);
+    setGenReferenceDataUrl(null);
+    setGenExtraPrompt('');
+    setGenMonsterError(null);
+    setGenMonsterSuccess(null);
+  };
+
+  const handleMonsterRefFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setGenMonsterError(null);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 1024, 0.86);
+      setGenReferenceDataUrl(dataUrl);
+    } catch (err) {
+      setGenMonsterError(err instanceof Error ? err.message : 'Не удалось прочитать референс');
+    }
+  };
+
+  const handleGenerateMonsterPortrait = async () => {
+    if (!activeGenMonster) return;
+    setIsGeneratingMonster(true);
+    setGenMonsterError(null);
+    setGenMonsterSuccess(null);
+    try {
+      const res = await fetch('/api/portraits/monster/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          monsterId: activeGenMonster.id,
+          referenceDataUrl: genReferenceDataUrl,
+          extraPrompt: genExtraPrompt.trim() || undefined,
+        }),
+      });
+      const data = (await res.json()) as { portraitUrl?: string; error?: string };
+      if (!res.ok || !data.portraitUrl) {
+        throw new Error(data.error || 'Не удалось сгенерировать фото монстра');
+      }
+      setGenMonsterSuccess('Портрет монстра сохранён и синхронизирован с ТВ!');
+    } catch (err) {
+      setGenMonsterError(err instanceof Error ? err.message : 'Ошибка генерации изображения');
+    } finally {
+      setIsGeneratingMonster(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100 flex flex-col">
@@ -2059,6 +2162,30 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
 
               {activeSection === 'monsters' && (
                 <div className="divide-y divide-slate-800/80">
+                  <input
+                    ref={monsterUploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleMonsterPhotoFileChange}
+                    className="hidden"
+                  />
+
+                  {monsterUploadError && (
+                    <div className="px-4 py-3 bg-red-950/40 border-b border-red-800/60 text-xs text-red-200 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>{monsterUploadError}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMonsterUploadError(null)}
+                        className="p-1 text-red-300 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   {catalogs.monsters.length === 0 ? (
                     <div className="p-6 text-center text-xs text-slate-400">
                       В бестиарии пока нет монстров. Добавьте первого с помощью формы выше.
@@ -2079,6 +2206,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         const skillNames = catalogs.skills
                           .filter((sk) => mon.proficientSkillIds.includes(sk.id))
                           .map((sk) => sk.name);
+                        const isUploadingThis = uploadingMonsterId === mon.id;
 
                         return (
                           <div
@@ -2086,31 +2214,72 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                             className="p-4 sm:p-5 space-y-3 hover:bg-slate-800/20 transition-colors"
                           >
                             <div className="flex items-start justify-between gap-4">
-                              <div className="space-y-1 min-w-0">
-                                <div className="flex items-baseline gap-3 flex-wrap">
-                                  <h3 className="text-base font-semibold text-slate-100">
-                                    {mon.name}
-                                  </h3>
-                                  <span className="text-xs font-mono tabular-nums text-amber-400 font-semibold">
-                                    {mon.xpReward} XP
-                                  </span>
+                              <div className="flex items-start gap-4 min-w-0">
+                                {/* Monster 3:4 Portrait Preview */}
+                                <div className="w-16 h-[86px] rounded-xl overflow-hidden border border-slate-700/90 bg-[#0B0F17] shrink-0 flex items-center justify-center relative">
+                                  {mon.portraitUrl ? (
+                                    <img
+                                      src={mon.portraitUrl}
+                                      alt={mon.name}
+                                      className="w-full h-full object-cover object-top"
+                                    />
+                                  ) : (
+                                    <Skull className="w-6 h-6 text-slate-600" />
+                                  )}
+                                  {isUploadingThis && (
+                                    <div className="absolute inset-0 bg-[#0B0F17]/80 flex items-center justify-center">
+                                      <Loader2 className="w-5 h-5 text-amber-400 animate-spin" />
+                                    </div>
+                                  )}
                                 </div>
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300 font-mono tabular-nums">
-                                  <span>
-                                    <span className="text-slate-500">КЗ:</span> {mon.ac}
-                                  </span>
-                                  <span>
-                                    <span className="text-slate-500">Хиты:</span>{' '}
-                                    <span className="text-emerald-400">{mon.maxHp}</span>
-                                    {mon.hpFormula ? ` (${mon.hpFormula})` : ''}
-                                  </span>
-                                  <span>
-                                    <span className="text-slate-500">Инициатива:</span>{' '}
-                                    <span className="text-sky-400">{mon.initiative}</span>
-                                  </span>
-                                  <span>
-                                    <span className="text-slate-500">Скорость:</span> {mon.speed} фт.
-                                  </span>
+
+                                <div className="space-y-1.5 min-w-0">
+                                  <div className="flex items-baseline gap-3 flex-wrap">
+                                    <h3 className="text-base font-semibold text-slate-100">
+                                      {mon.name}
+                                    </h3>
+                                    <span className="text-xs font-mono tabular-nums text-amber-400 font-semibold">
+                                      {mon.xpReward} XP
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300 font-mono tabular-nums">
+                                    <span>
+                                      <span className="text-slate-500">КЗ:</span> {mon.ac}
+                                    </span>
+                                    <span>
+                                      <span className="text-slate-500">Хиты:</span>{' '}
+                                      <span className="text-emerald-400">{mon.maxHp}</span>
+                                      {mon.hpFormula ? ` (${mon.hpFormula})` : ''}
+                                    </span>
+                                    <span>
+                                      <span className="text-slate-500">Инициатива:</span>{' '}
+                                      <span className="text-sky-400">{mon.initiative}</span>
+                                    </span>
+                                    <span>
+                                      <span className="text-slate-500">Скорость:</span> {mon.speed} фт.
+                                    </span>
+                                  </div>
+
+                                  {/* Portrait Upload & AI Generation Controls */}
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <button
+                                      type="button"
+                                      disabled={isUploadingThis}
+                                      onClick={() => handleTriggerMonsterUpload(mon.id)}
+                                      className="px-2.5 py-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-[11px] font-medium text-slate-200 inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                                    >
+                                      <Upload className="w-3.5 h-3.5 text-sky-400" />
+                                      <span>{isUploadingThis ? 'Загрузка...' : 'Загрузить фото'}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenMonsterGenModal(mon.id)}
+                                      className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-[11px] font-semibold text-amber-300 inline-flex items-center gap-1.5 transition-colors"
+                                    >
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                      <span>Сгенерировать фото</span>
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
 
@@ -2192,6 +2361,201 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           </div>
         </main>
       </div>
+      {/* Monster AI Portrait Generation Modal */}
+      {activeGenMonster && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => {
+            if (!isGeneratingMonster) setGenModalMonsterId(null);
+          }}
+        >
+          <div
+            className="w-full max-w-xl rounded-2xl bg-[#131A26] border border-slate-700/90 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-100">
+                  Сгенерировать фото: {activeGenMonster.name}
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Nano Banana 2 Lite · стиль тёмного фэнтези D&D для карточек ТВ
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isGeneratingMonster}
+                onClick={() => setGenModalMonsterId(null)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-40"
+                aria-label="Закрыть"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <input
+              ref={monsterRefInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleMonsterRefFileChange}
+              className="hidden"
+            />
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid sm:grid-cols-2 gap-4">
+                {/* Current / Result Portrait */}
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-300">Текущий портрет</div>
+                  <div className="relative w-full aspect-[3/4] max-h-56 rounded-xl overflow-hidden border border-slate-800 bg-[#0B0F17] flex items-center justify-center">
+                    {activeGenMonster.portraitUrl ? (
+                      <img
+                        src={activeGenMonster.portraitUrl}
+                        alt={activeGenMonster.name}
+                        className="w-full h-full object-cover object-top"
+                      />
+                    ) : (
+                      <div className="text-center p-4 space-y-1.5">
+                        <Skull className="w-8 h-8 text-slate-600 mx-auto" />
+                        <p className="text-[11px] text-slate-500">Портрет ещё не задан</p>
+                      </div>
+                    )}
+                    {isGeneratingMonster && (
+                      <div className="absolute inset-0 bg-[#0B0F17]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 p-3 text-center">
+                        <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+                        <span className="text-xs font-medium text-amber-200">
+                          ИИ рисует монстра...
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Optional Reference Image Upload */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-slate-300">
+                      Референс (необязательно)
+                    </span>
+                    {genReferenceDataUrl && (
+                      <button
+                        type="button"
+                        disabled={isGeneratingMonster}
+                        onClick={() => setGenReferenceDataUrl(null)}
+                        className="text-[11px] text-slate-400 hover:text-red-400"
+                      >
+                        Убрать
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isGeneratingMonster}
+                    onClick={() => monsterRefInputRef.current?.click()}
+                    className="w-full aspect-[3/4] max-h-56 rounded-xl overflow-hidden border border-dashed border-slate-700 hover:border-amber-500/60 bg-[#0B0F17] flex flex-col items-center justify-center gap-2 p-3 text-center transition-colors disabled:opacity-50"
+                  >
+                    {genReferenceDataUrl ? (
+                      <img
+                        src={genReferenceDataUrl}
+                        alt="Референс"
+                        className="w-full h-full object-cover object-center rounded-lg"
+                      />
+                    ) : (
+                      <>
+                        <ImageIcon className="w-7 h-7 text-slate-500" />
+                        <span className="text-xs font-medium text-slate-300">
+                          Загрузить референс
+                        </span>
+                        <span className="text-[11px] text-slate-500 leading-snug">
+                          Набросок, арт или фото-ориентир
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Auto-pulled Monster Card Details */}
+              <div className="rounded-xl bg-[#0B0F17] border border-slate-800 p-3.5 space-y-2 text-xs">
+                <div className="text-[11px] font-semibold text-slate-400">
+                  Данные из карточки монстра (передаются ИИ автоматически):
+                </div>
+                <div className="text-slate-200 font-medium">
+                  {activeGenMonster.name} · КЗ {activeGenMonster.ac} · Хиты{' '}
+                  {activeGenMonster.maxHp}
+                  {activeGenMonster.hpFormula ? ` (${activeGenMonster.hpFormula})` : ''} · Скорость{' '}
+                  {activeGenMonster.speed} фт.
+                </div>
+                {activeGenMonster.actions.length > 0 && (
+                  <div className="text-[11px] text-slate-400 leading-relaxed">
+                    <span className="text-slate-500">Действия: </span>
+                    {activeGenMonster.actions
+                      .map((a) => `${a.name}${a.description ? ` (${a.description})` : ''}`)
+                      .join('; ')}
+                  </div>
+                )}
+              </div>
+
+              {/* Optional DM Visual Hint */}
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-slate-300">
+                  Дополнительные визуальные детали (необязательно)
+                </span>
+                <textarea
+                  rows={2}
+                  disabled={isGeneratingMonster}
+                  value={genExtraPrompt}
+                  onChange={(e) => setGenExtraPrompt(e.target.value)}
+                  placeholder="Например: покрыт мхом и шрамами, светящиеся жёлтые глаза, фон тёмной пещеры..."
+                  className="w-full px-3 py-2 rounded-xl bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-500/70 resize-none"
+                />
+              </label>
+
+              {genMonsterSuccess && (
+                <div className="rounded-xl bg-emerald-950/50 border border-emerald-700/60 px-3.5 py-2.5 text-xs text-emerald-200 flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{genMonsterSuccess}</span>
+                </div>
+              )}
+
+              {genMonsterError && (
+                <div className="rounded-xl bg-red-950/50 border border-red-700/60 px-3.5 py-2.5 text-xs text-red-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{genMonsterError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-800 bg-[#0B0F17]/80 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isGeneratingMonster}
+                onClick={() => setGenModalMonsterId(null)}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
+              >
+                Закрыть
+              </button>
+              <button
+                type="button"
+                disabled={isGeneratingMonster}
+                onClick={handleGenerateMonsterPortrait}
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
+              >
+                {isGeneratingMonster ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Генерация...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Сгенерировать портрет</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

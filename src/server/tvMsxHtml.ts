@@ -19,107 +19,25 @@ export function renderTvMsxHtml(): string {
       color: #F1F5F9;
       font-family: Arial, Helvetica, sans-serif;
     }
-    .shell {
-      display: table;
-      width: 100%;
-      height: 100%;
-      table-layout: fixed;
-    }
-    .row-header {
-      display: table-row;
-      height: 52px;
-    }
-    .row-arena {
-      display: table-row;
-      height: 100%;
-    }
-    .row-footer {
-      display: table-row;
-      height: 58px;
-    }
-    .header-inner {
-      display: table-cell;
-      vertical-align: middle;
-      padding: 0 20px;
-      background-color: #0B0F17;
-      border-bottom: 1px solid #1E293B;
-    }
-    .header-table {
-      display: table;
-      width: 100%;
-    }
-    .header-left {
-      display: table-cell;
-      vertical-align: middle;
-      text-align: left;
-    }
-    .header-right {
-      display: table-cell;
-      vertical-align: middle;
-      text-align: right;
-      white-space: nowrap;
-    }
-    .brand {
-      font-size: 15px;
-      font-weight: bold;
-      color: #F8FAFC;
-    }
-    .sep {
-      color: #475569;
-      margin: 0 8px;
-    }
-    .location {
-      font-size: 16px;
-      font-weight: bold;
-      color: #F1F5F9;
-    }
-    .meta {
-      font-size: 13px;
-      color: #94A3B8;
-      margin-left: 12px;
-    }
-    .meta-highlight {
-      color: #F59E0B;
-      font-weight: bold;
-    }
-    .ws-status {
-      display: inline-block;
-      vertical-align: middle;
-      font-size: 12px;
-      color: #94A3B8;
-      margin-right: 14px;
-    }
-    .ws-dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 4px;
-      background-color: #F59E0B;
-      margin-right: 6px;
-      vertical-align: middle;
-    }
-    .ws-dot-ok {
-      background-color: #10B981;
-    }
-    .qr-btn {
-      display: inline-block;
-      vertical-align: middle;
-      padding: 7px 14px;
-      background-color: #131A26;
-      border: 1px solid #334155;
-      border-radius: 6px;
-      color: #F8FAFC;
-      font-size: 13px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    .arena-cell {
-      display: table-cell;
-      vertical-align: middle;
-      text-align: center;
-      padding: 12px 18px;
-      position: relative;
+    .viewport {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
       overflow: hidden;
+      background-color: #0B0F17;
+    }
+    .arena-wrap {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      right: 8px;
+      bottom: 6px;
+      z-index: 10;
+    }
+    .arena-wrap-combat {
+      bottom: 102px;
     }
     .arena-box {
       width: 100%;
@@ -148,7 +66,7 @@ export function renderTvMsxHtml(): string {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: rgba(2, 6, 23, 0.18);
+      background-color: rgba(2, 6, 23, 0.16);
     }
     .grid-layer {
       position: absolute;
@@ -184,10 +102,18 @@ export function renderTvMsxHtml(): string {
       border: 3px solid #F59E0B;
       position: relative;
       text-align: center;
+      overflow: hidden;
       box-shadow: 0 3px 10px rgba(0, 0, 0, 0.65);
     }
     .token-turn {
       box-shadow: 0 0 0 3px #0B0F17, 0 0 0 6px #F59E0B;
+    }
+    .token-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top center;
+      display: block;
     }
     .token-initials {
       position: absolute;
@@ -220,7 +146,7 @@ export function renderTvMsxHtml(): string {
     }
     .banner {
       position: absolute;
-      top: 18px;
+      top: 16px;
       left: 16%;
       right: 16%;
       z-index: 30;
@@ -280,13 +206,13 @@ export function renderTvMsxHtml(): string {
       white-space: nowrap;
     }
     .stage-overlay {
-      position: absolute;
+      position: fixed;
       top: 0;
       left: 0;
       right: 0;
       bottom: 0;
       z-index: 40;
-      background-color: rgba(11, 15, 23, 0.88);
+      background-color: rgba(11, 15, 23, 0.9);
       display: none;
     }
     .stage-bg {
@@ -295,6 +221,7 @@ export function renderTvMsxHtml(): string {
       left: 0;
       width: 100%;
       height: 100%;
+      object-fit: cover;
       opacity: 0.42;
     }
     .stage-table {
@@ -350,85 +277,129 @@ export function renderTvMsxHtml(): string {
       font-family: monospace;
       margin-top: 10px;
     }
-    .footer-inner {
-      display: table-cell;
-      vertical-align: middle;
-      padding: 8px 18px;
-      background-color: #131A26;
-      border-top: 1px solid #1E293B;
-    }
-    .party-table {
-      display: table;
-      width: 100%;
-    }
-    .turn-tabs-cell {
-      display: table-cell;
-      vertical-align: middle;
-      text-align: left;
+    /* Bottom Half-Playing-Card Turn-Order Deck (Combat Only, Overlaps bottom ~14px of Map) */
+    .turn-deck {
+      position: fixed;
+      left: 12px;
+      right: 204px;
+      bottom: 0;
+      z-index: 25;
+      text-align: center;
       white-space: nowrap;
       overflow: hidden;
+      pointer-events: none;
+      padding-top: 20px;
+      display: none;
     }
-    .turn-hint-cell {
+    .play-card {
+      display: inline-block;
+      vertical-align: bottom;
+      position: relative;
+      width: 102px;
+      height: 116px;
+      margin: 0 5px;
+      border-radius: 12px 12px 0 0;
+      border: 1px solid #475569;
+      border-bottom: none;
+      background-color: #0E1420;
+      overflow: hidden;
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.72);
+      transition: margin-bottom 0.2s ease-out;
+    }
+    .play-card-active {
+      border: 2px solid #F59E0B;
+      border-bottom: none;
+      margin-bottom: 12px;
+      height: 122px;
+      width: 108px;
+      box-shadow: 0 -8px 26px rgba(245, 158, 11, 0.45);
+    }
+    .play-card-art {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      -webkit-filter: grayscale(100%) brightness(75%);
+      filter: grayscale(100%) brightness(75%);
+      opacity: 0.86;
+    }
+    .play-card-active .play-card-art {
+      -webkit-filter: none;
+      filter: none;
+      opacity: 1;
+    }
+    .play-card-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top center;
+      display: block;
+    }
+    .play-card-fallback {
+      width: 100%;
+      height: 100%;
+      display: table;
+      text-align: center;
+    }
+    .play-card-fallback-cell {
       display: table-cell;
       vertical-align: middle;
-      text-align: right;
-      white-space: nowrap;
+      padding-bottom: 18px;
+      font-size: 24px;
+      font-weight: bold;
+      color: #F8FAFC;
+      font-family: Georgia, serif;
+    }
+    .play-card-frame {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      right: 3px;
+      bottom: 0;
+      border-radius: 8px 8px 0 0;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-bottom: none;
+      pointer-events: none;
+    }
+    .play-card-active .play-card-frame {
+      border-color: rgba(252, 211, 77, 0.6);
+    }
+    .play-card-name {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 18px 6px 6px 6px;
+      background: linear-gradient(to top, rgba(5, 8, 15, 0.98) 0%, rgba(5, 8, 15, 0.85) 60%, rgba(5, 8, 15, 0) 100%);
       font-size: 12px;
-      color: #94A3B8;
-      padding-left: 14px;
-    }
-    .turn-tab {
-      display: inline-block;
-      vertical-align: middle;
-      background-color: #0B0F17;
-      border: 1px solid #1E293B;
-      border-radius: 8px;
-      padding: 6px 12px;
-      margin-right: 8px;
-      color: #CBD5E1;
-      font-size: 13px;
-    }
-    .turn-tab-active {
-      background-color: #291D0A;
-      border-color: #F59E0B;
-      color: #FEF3C7;
       font-weight: bold;
+      color: #E2E8F0;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .p-dot {
-      display: inline-block;
-      width: 9px;
-      height: 9px;
-      border-radius: 5px;
-      margin-right: 7px;
-      vertical-align: middle;
+    .play-card-active .play-card-name {
+      color: #FDE68A;
     }
-    .p-name {
-      font-size: 13px;
-      vertical-align: middle;
+    /* Bottom-Right Floating QR Button */
+    .qr-btn {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 60;
+      padding: 9px 14px;
+      background-color: rgba(14, 21, 35, 0.92);
+      border: 1px solid #334155;
+      border-radius: 10px;
+      color: #F8FAFC;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     }
-    .turn-mark {
+    .qr-btn-accent {
       color: #F59E0B;
-      font-size: 11px;
-      font-weight: bold;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-    .elsewhere-tag {
-      color: #7DD3FC;
-      font-size: 11px;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-    .phone-on {
-      color: #10B981;
-      font-weight: bold;
-      margin-left: 7px;
-      font-size: 11px;
-    }
-    .phone-off {
-      color: #475569;
-      margin-left: 7px;
-      font-size: 11px;
+      margin-right: 6px;
     }
     .qr-overlay {
       position: fixed;
@@ -506,64 +477,43 @@ export function renderTvMsxHtml(): string {
   </style>
 </head>
 <body>
-  <div class="shell">
-    <div class="row-header">
-      <div class="header-inner">
-        <div class="header-table">
-          <div class="header-left">
-            <span class="brand">Tabletop Sync</span>
-            <span class="sep">/</span>
-            <span id="locName" class="location">Загрузка...</span>
-            <span id="sceneMeta" class="meta"></span>
-          </div>
-          <div class="header-right">
-            <span class="ws-status">
-              <span id="wsDot" class="ws-dot"></span>
-              <span id="wsText">Подключение...</span>
-            </span>
-            <button type="button" id="qrToggleBtn" class="qr-btn">QR для игроков</button>
+  <div class="viewport">
+    <div id="arenaWrap" class="arena-wrap">
+      <div id="arenaBox" class="arena-box">
+        <div id="board" class="board">
+          <img id="mapImg" class="map-img" alt="Карта" style="display:none;" />
+          <div class="map-scrim"></div>
+          <div id="gridLayer" class="grid-layer"></div>
+          <div id="hotspotsLayer"></div>
+          <div id="tokensLayer"></div>
+        </div>
+        <div id="banner" class="banner" style="display:none;">
+          <div id="bannerTitle" class="banner-title"></div>
+          <div id="bannerDesc" class="banner-desc"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="stageOverlay" class="stage-overlay">
+      <img id="stageBgImg" class="stage-bg" alt="" style="display:none;" />
+      <div class="stage-table">
+        <div class="stage-cell">
+          <div class="stage-card">
+            <img id="stageCrestImg" class="stage-crest" alt="" style="display:none;" />
+            <div id="stageKicker" class="stage-kicker"></div>
+            <div id="stageTitle" class="stage-title"></div>
+            <div id="stageSub" class="stage-sub"></div>
+            <div id="stageRoute" class="stage-route"></div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="row-arena">
-      <div class="arena-cell">
-        <div id="arenaBox" class="arena-box">
-          <div id="board" class="board">
-            <img id="mapImg" class="map-img" alt="Карта" style="display:none;" />
-            <div class="map-scrim"></div>
-            <div id="gridLayer" class="grid-layer"></div>
-            <div id="hotspotsLayer"></div>
-            <div id="tokensLayer"></div>
-          </div>
-          <div id="banner" class="banner" style="display:none;">
-            <div id="bannerTitle" class="banner-title"></div>
-            <div id="bannerDesc" class="banner-desc"></div>
-          </div>
-          <div id="stageOverlay" class="stage-overlay">
-            <img id="stageBgImg" class="stage-bg" alt="" style="display:none;" />
-            <div class="stage-table">
-              <div class="stage-cell">
-                <div class="stage-card">
-                  <img id="stageCrestImg" class="stage-crest" alt="" style="display:none;" />
-                  <div id="stageKicker" class="stage-kicker"></div>
-                  <div id="stageTitle" class="stage-title"></div>
-                  <div id="stageSub" class="stage-sub"></div>
-                  <div id="stageRoute" class="stage-route"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div id="turnDeck" class="turn-deck"></div>
 
-    <div class="row-footer">
-      <div class="footer-inner">
-        <div id="partyTable" class="party-table"></div>
-      </div>
-    </div>
+    <button type="button" id="qrToggleBtn" class="qr-btn">
+      <span class="qr-btn-accent">[QR]</span>Подключить игрока
+    </button>
   </div>
 
   <div id="qrOverlay" class="qr-overlay">
@@ -589,10 +539,7 @@ export function renderTvMsxHtml(): string {
       var ws = null;
       var retryTimer = null;
 
-      var locNameEl = document.getElementById('locName');
-      var sceneMetaEl = document.getElementById('sceneMeta');
-      var wsDotEl = document.getElementById('wsDot');
-      var wsTextEl = document.getElementById('wsText');
+      var arenaWrapEl = document.getElementById('arenaWrap');
       var arenaBoxEl = document.getElementById('arenaBox');
       var boardEl = document.getElementById('board');
       var mapImgEl = document.getElementById('mapImg');
@@ -609,7 +556,7 @@ export function renderTvMsxHtml(): string {
       var bannerEl = document.getElementById('banner');
       var bannerTitleEl = document.getElementById('bannerTitle');
       var bannerDescEl = document.getElementById('bannerDesc');
-      var partyTableEl = document.getElementById('partyTable');
+      var turnDeckEl = document.getElementById('turnDeck');
       var qrOverlayEl = document.getElementById('qrOverlay');
       var qrImgEl = document.getElementById('qrImg');
       var qrUrlTextEl = document.getElementById('qrUrlText');
@@ -687,7 +634,6 @@ export function renderTvMsxHtml(): string {
 
       function renderState(state) {
         latestState = state;
-        fitBoard();
 
         var scene = state.scene || {};
         var map = state.map || { cols: 16, rows: 9, showGrid: true, gridOpacity: 0.25 };
@@ -695,10 +641,12 @@ export function renderTvMsxHtml(): string {
         var hotspots = state.hotspots || [];
         var players = state.players || [];
         var tvDisplay = state.tvDisplay || { phase: 'live', campaignTitle: 'Tabletop Sync' };
+        var isCity = state.locationKind === 'city';
 
         // Title Splash or Travel Transition overlay
         if (tvDisplay.phase === 'title_splash') {
           stageOverlayEl.style.display = 'block';
+          qrToggleBtn.style.display = 'block';
           if (map.imageUrl) {
             stageBgImgEl.src = map.imageUrl;
             stageBgImgEl.style.display = 'block';
@@ -717,6 +665,7 @@ export function renderTvMsxHtml(): string {
           stageRouteEl.textContent = 'Локация: ' + (scene.locationName || '');
         } else if (tvDisplay.phase === 'traveling') {
           stageOverlayEl.style.display = 'block';
+          qrToggleBtn.style.display = 'none';
           if (tvDisplay.travelBackdropUrl) {
             stageBgImgEl.src = tvDisplay.travelBackdropUrl;
             stageBgImgEl.style.display = 'block';
@@ -730,28 +679,60 @@ export function renderTvMsxHtml(): string {
           stageRouteEl.textContent = (tvDisplay.fromLocationName || '') + '  →  ' + (tvDisplay.toLocationName || '');
         } else {
           stageOverlayEl.style.display = 'none';
+          qrToggleBtn.style.display = 'block';
         }
 
-        var isCity = state.locationKind === 'city';
-        locNameEl.textContent = scene.locationName || 'Игровой стол';
-        var modeLabel = scene.mode === 'combat' ? 'Бой' : (scene.mode === 'rest' ? 'Привал' : 'Исследование');
-        var activeToken = null;
-        if (!isCity) {
-          for (var i = 0; i < tokens.length; i++) {
-            if (tokens[i].id === scene.activeTurnTokenId) {
-              activeToken = tokens[i];
-              break;
+        // Build combat turn-order cards (ONLY on tactical maps!)
+        var entries = [];
+        if (tvDisplay.phase === 'live' && !isCity) {
+          var covered = {};
+          for (var ti = 0; ti < tokens.length; ti++) {
+            var tk = tokens[ti];
+            if (tk.kind === 'object') continue;
+            if (tk.kind === 'player' && tk.playerId) {
+              var foundPl = null;
+              for (var pi = 0; pi < players.length; pi++) {
+                if (players[pi].id === tk.playerId) {
+                  foundPl = players[pi];
+                  break;
+                }
+              }
+              covered[tk.playerId] = true;
+              entries.push({
+                label: foundPl ? foundPl.name : tk.label,
+                color: foundPl ? foundPl.color : tk.color,
+                initiative: foundPl && typeof foundPl.initiative === 'number' ? foundPl.initiative : (tk.initiative || 0),
+                isTurn: scene.activeTurnTokenId === tk.id,
+                portraitUrl: (foundPl && foundPl.portraitUrl) || tk.portraitUrl || null
+              });
+            } else {
+              entries.push({
+                label: tk.label,
+                color: tk.color,
+                initiative: typeof tk.initiative === 'number' ? tk.initiative : 0,
+                isTurn: scene.activeTurnTokenId === tk.id,
+                portraitUrl: tk.portraitUrl || null
+              });
             }
           }
+          for (var pj = 0; pj < players.length; pj++) {
+            var pl2 = players[pj];
+            if (pl2.locationId === state.activeLocationId && !covered[pl2.id]) {
+              entries.push({
+                label: pl2.name,
+                color: pl2.color,
+                initiative: typeof pl2.initiative === 'number' ? pl2.initiative : 0,
+                isTurn: false,
+                portraitUrl: pl2.portraitUrl || null
+              });
+            }
+          }
+          entries.sort(function (a, b) { return b.initiative - a.initiative; });
         }
-        var metaHtml = esc(modeLabel);
-        if (!isCity && scene.mode === 'combat') {
-          metaHtml += ' · Раунд ' + esc(scene.round);
-        }
-        if (!isCity && activeToken) {
-          metaHtml += ' · Ход: <span class="meta-highlight">' + esc(activeToken.label) + '</span>';
-        }
-        sceneMetaEl.innerHTML = metaHtml;
+
+        var showDeck = tvDisplay.phase === 'live' && !isCity && entries.length > 0;
+        arenaWrapEl.className = showDeck ? 'arena-wrap arena-wrap-combat' : 'arena-wrap';
+        fitBoard();
 
         if (map.imageUrl) {
           if (mapImgEl.getAttribute('src') !== map.imageUrl) {
@@ -801,13 +782,16 @@ export function renderTvMsxHtml(): string {
           var ty = (tok.y / map.rows) * 100;
           var tw = (tok.size / map.cols) * 100;
           var th = (tok.size / map.rows) * 100;
-          var isTurn = scene.activeTurnTokenId === tok.id;
+          var isTurn = !isCity && scene.activeTurnTokenId === tok.id;
           var initials = (tok.label || '?').slice(0, 2).toUpperCase();
           var circleClass = isTurn ? 'token-circle token-turn' : 'token-circle';
+          var innerTok = tok.portraitUrl
+            ? '<img class="token-img" src="' + esc(tok.portraitUrl) + '" alt="" />'
+            : '<span class="token-initials">' + esc(initials) + '</span>';
           tokensHtml +=
             '<div class="token-wrap" style="left:' + tx + '%;top:' + ty + '%;width:' + tw + '%;height:' + th + '%;">' +
               '<div class="' + circleClass + '" style="border-color:' + esc(tok.color || '#F59E0B') + ';">' +
-                '<span class="token-initials">' + esc(initials) + '</span>' +
+                innerTok +
               '</div>' +
               '<div class="token-label"><span>' + esc(tok.label) + '</span></div>' +
             '</div>';
@@ -828,102 +812,31 @@ export function renderTvMsxHtml(): string {
           bannerEl.style.display = 'none';
         }
 
-        // Render Compact Turn-Order Tabs (ZERO HP, ZERO levels, ZERO AC)
-        var partyHtml = '';
-        if (isCity) {
-          if (players.length === 0) {
-            partyHtml =
-              '<div class="turn-tabs-cell" style="text-align:center;color:#94A3B8;font-size:13px;">' +
-                'В партии пока нет персонажей · Подключите смартфоны через QR-код' +
+        // Render Half-Playing-Card Turn-Order Deck (Combat Only; Hidden on City Maps)
+        if (showDeck) {
+          var cardsHtml = '';
+          for (var ei = 0; ei < entries.length; ei++) {
+            var en = entries[ei];
+            var cardCls = en.isTurn ? 'play-card play-card-active' : 'play-card';
+            var artInner = en.portraitUrl
+              ? '<img class="play-card-img" src="' + esc(en.portraitUrl) + '" alt="" />'
+              : '<div class="play-card-fallback" style="background:radial-gradient(circle at 50% 35%, ' +
+                  esc(en.color || '#F59E0B') + '55 0%, #111827 78%, #070B12 100%);">' +
+                  '<div class="play-card-fallback-cell">' + esc((en.label || '?').slice(0, 2).toUpperCase()) + '</div>' +
+                '</div>';
+            cardsHtml +=
+              '<div class="' + cardCls + '">' +
+                '<div class="play-card-art">' + artInner + '</div>' +
+                '<div class="play-card-frame"></div>' +
+                '<div class="play-card-name">' + esc(en.label) + '</div>' +
               '</div>';
-          } else {
-            var tabsHtml = '';
-            for (var p = 0; p < players.length; p++) {
-              var pl = players[p];
-              var phoneMark = pl.isConnected
-                ? '<span class="phone-on">●</span>'
-                : '<span class="phone-off">○</span>';
-              var elsewhereHtml = pl.locationId && pl.locationId !== state.activeLocationId && pl.locationName
-                ? '<span class="elsewhere-tag">· ' + esc(pl.locationName) + '</span>'
-                : '';
-              tabsHtml +=
-                '<span class="turn-tab">' +
-                  '<span class="p-dot" style="background-color:' + esc(pl.color) + ';"></span>' +
-                  '<span class="p-name">' + esc(pl.name) + '</span>' +
-                  elsewhereHtml +
-                  phoneMark +
-                '</span>';
-            }
-            partyHtml =
-              '<div class="turn-tabs-cell">' + tabsHtml + '</div>' +
-              '<div class="turn-hint-cell">Свободный ход · все ходят одновременно</div>';
           }
+          turnDeckEl.innerHTML = cardsHtml;
+          turnDeckEl.style.display = 'block';
         } else {
-          var entries = [];
-          var covered = {};
-          for (var ti = 0; ti < tokens.length; ti++) {
-            var tk = tokens[ti];
-            if (tk.kind === 'object') continue;
-            if (tk.kind === 'player' && tk.playerId) {
-              var foundPl = null;
-              for (var pi = 0; pi < players.length; pi++) {
-                if (players[pi].id === tk.playerId) {
-                  foundPl = players[pi];
-                  break;
-                }
-              }
-              covered[tk.playerId] = true;
-              entries.push({
-                label: foundPl ? foundPl.name : tk.label,
-                color: foundPl ? foundPl.color : tk.color,
-                initiative: foundPl && typeof foundPl.initiative === 'number' ? foundPl.initiative : (tk.initiative || 0),
-                isTurn: scene.activeTurnTokenId === tk.id
-              });
-            } else {
-              entries.push({
-                label: tk.label,
-                color: tk.color,
-                initiative: typeof tk.initiative === 'number' ? tk.initiative : 0,
-                isTurn: scene.activeTurnTokenId === tk.id
-              });
-            }
-          }
-          for (var pj = 0; pj < players.length; pj++) {
-            var pl2 = players[pj];
-            if (pl2.locationId === state.activeLocationId && !covered[pl2.id]) {
-              entries.push({
-                label: pl2.name,
-                color: pl2.color,
-                initiative: typeof pl2.initiative === 'number' ? pl2.initiative : 0,
-                isTurn: false
-              });
-            }
-          }
-          entries.sort(function (a, b) { return b.initiative - a.initiative; });
-
-          if (entries.length === 0) {
-            partyHtml =
-              '<div class="turn-tabs-cell" style="text-align:center;color:#94A3B8;font-size:13px;">' +
-                'На тактической карте пока нет участников' +
-              '</div>';
-          } else {
-            var tHtml = '';
-            for (var ei = 0; ei < entries.length; ei++) {
-              var en = entries[ei];
-              var cls = en.isTurn ? 'turn-tab turn-tab-active' : 'turn-tab';
-              tHtml +=
-                '<span class="' + cls + '">' +
-                  '<span class="p-dot" style="background-color:' + esc(en.color || '#F59E0B') + ';"></span>' +
-                  '<span class="p-name">' + esc(en.label) + '</span>' +
-                  (en.isTurn ? '<span class="turn-mark">· ХОД</span>' : '') +
-                '</span>';
-            }
-            partyHtml =
-              '<div class="turn-tabs-cell">' + tHtml + '</div>' +
-              '<div class="turn-hint-cell">Порядок ходов</div>';
-          }
+          turnDeckEl.innerHTML = '';
+          turnDeckEl.style.display = 'none';
         }
-        partyTableEl.innerHTML = partyHtml;
       }
 
       function connectWs() {
@@ -932,8 +845,6 @@ export function renderTvMsxHtml(): string {
         ws = new WebSocket(wsUrl);
 
         ws.onopen = function () {
-          wsDotEl.className = 'ws-dot ws-dot-ok';
-          wsTextEl.textContent = 'Синхронизировано';
           ws.send(JSON.stringify({ type: 'join', role: 'tv' }));
         };
 
@@ -947,8 +858,6 @@ export function renderTvMsxHtml(): string {
         };
 
         ws.onclose = function () {
-          wsDotEl.className = 'ws-dot';
-          wsTextEl.textContent = 'Переподключение...';
           if (retryTimer) clearTimeout(retryTimer);
           retryTimer = setTimeout(connectWs, 2000);
         };

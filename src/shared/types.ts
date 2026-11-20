@@ -149,6 +149,7 @@ export interface MonsterRef {
   proficientSkillIds: string[];
   xpReward: number;
   actions: MonsterActionRef[];
+  portraitUrl?: string | null;
 }
 
 export interface GameCatalogs {
@@ -227,6 +228,7 @@ export interface MapToken {
   hp?: number;
   maxHp?: number;
   ac?: number;
+  portraitUrl?: string | null;
 }
 
 export interface GameLocation {
@@ -282,6 +284,7 @@ export interface PublicPlayerInfo {
   locationNote: string;
   posX: number;
   posY: number;
+  portraitUrl?: string | null;
 }
 
 export interface PlayerCharacter extends PublicPlayerInfo {

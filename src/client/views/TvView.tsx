@@ -8,9 +8,7 @@ import {
   QrCode,
   Shield,
   Skull,
-  Smartphone,
   Swords,
-  Tent,
   X,
 } from 'lucide-react';
 import { TacticalMap } from '../components/TacticalMap';
@@ -28,8 +26,8 @@ const TRAVEL_EMBERS = [
   { left: '82%', bottom: '16%', delay: '1.9s', duration: '5.9s' },
 ];
 
-export function TvView({ onNavigate }: TvViewProps) {
-  const { status, tvState } = useGameSocket({ role: 'tv' });
+export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
+  const { tvState } = useGameSocket({ role: 'tv' });
   const [showQr, setShowQr] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -66,16 +64,8 @@ export function TvView({ onNavigate }: TvViewProps) {
 
   const { scene, map, tokens, hotspots, players, tvDisplay, locationKind, activeLocationId } = tvState;
   const isCityMap = locationKind === 'city';
-  const activeTurnToken = !isCityMap
-    ? tokens.find((t) => t.id === scene.activeTurnTokenId) ?? null
-    : null;
 
-  const modeLabel =
-    scene.mode === 'combat' ? 'Бой' : scene.mode === 'rest' ? 'Привал' : 'Исследование';
-
-  const ModeIcon = scene.mode === 'combat' ? Swords : scene.mode === 'rest' ? Tent : Compass;
-
-  // Build tactical turn-order tabs: heroes on this map + monsters/NPCs sorted by initiative desc
+  // Build tactical turn-order playing cards: heroes on this map + monsters/NPCs sorted by initiative desc
   const tacticalTurnEntries = !isCityMap
     ? (() => {
         const entries: Array<{
@@ -86,6 +76,7 @@ export function TvView({ onNavigate }: TvViewProps) {
           kind: 'player' | 'enemy' | 'npc';
           initiative: number;
           isTurn: boolean;
+          portraitUrl: string | null;
         }> = [];
         const coveredPlayerIds = new Set<string>();
 
@@ -102,6 +93,7 @@ export function TvView({ onNavigate }: TvViewProps) {
               kind: 'player',
               initiative: pl?.initiative ?? tok.initiative ?? 0,
               isTurn: scene.activeTurnTokenId === tok.id,
+              portraitUrl: pl?.portraitUrl ?? tok.portraitUrl ?? null,
             });
           } else {
             entries.push({
@@ -112,6 +104,7 @@ export function TvView({ onNavigate }: TvViewProps) {
               kind: tok.kind === 'enemy' ? 'enemy' : 'npc',
               initiative: tok.initiative ?? 0,
               isTurn: scene.activeTurnTokenId === tok.id,
+              portraitUrl: tok.portraitUrl ?? null,
             });
           }
         }
@@ -127,6 +120,7 @@ export function TvView({ onNavigate }: TvViewProps) {
               kind: 'player',
               initiative: pl.initiative ?? 0,
               isTurn: false,
+              portraitUrl: pl.portraitUrl ?? null,
             });
           }
         }
@@ -135,74 +129,16 @@ export function TvView({ onNavigate }: TvViewProps) {
       })()
     : [];
 
+  const showCombatDeck =
+    tvDisplay.phase === 'live' && !isCityMap && tacticalTurnEntries.length > 0;
+
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#0B0F17] text-slate-100 flex flex-col relative">
-      {/* Compact Top Bar */}
-      <header className="h-14 shrink-0 px-5 border-b border-slate-800/90 bg-[#0B0F17] flex items-center justify-between gap-6 z-30">
-        <div className="flex items-center gap-4 min-w-0">
-          <button
-            type="button"
-            onClick={() => onNavigate('/')}
-            className="text-sm font-semibold tracking-tight text-slate-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0"
-          >
-            {tvDisplay.campaignTitle}
-          </button>
-          <span className="text-slate-700" aria-hidden="true">/</span>
-          <h1 className="text-base font-semibold text-slate-100 truncate">
-            {tvDisplay.phase === 'traveling'
-              ? `В пути → ${tvDisplay.toLocationName || scene.locationName}`
-              : scene.locationName}
-          </h1>
-          {tvDisplay.phase === 'live' && (
-            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap shrink-0">
-              <ModeIcon className="w-3.5 h-3.5 text-amber-400" />
-              <span>{modeLabel}</span>
-              {!isCityMap && scene.mode === 'combat' && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="font-mono tabular-nums text-slate-200">Раунд {scene.round}</span>
-                </>
-              )}
-              {!isCityMap && activeTurnToken && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    Ход: <strong className="text-amber-400 font-semibold">{activeTurnToken.label}</strong>
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4 shrink-0">
-          <div className="flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                status === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
-              }`}
-              aria-hidden="true"
-            />
-            <span>{status === 'connected' ? 'Синхронизировано' : 'Переподключение...'}</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowQr((prev) => !prev)}
-            className="px-3.5 py-2 rounded-lg bg-[#131A26] hover:bg-slate-800 border border-slate-700/80 text-xs font-medium text-slate-100 flex items-center gap-2 transition-colors whitespace-nowrap shrink-0"
-          >
-            <QrCode className="w-4 h-4 text-amber-400" />
-            <span>Подключить телефон</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main Viewport: Title Splash / Animated Travel Screen / Live Map */}
-      <main className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+    <div className="h-screen w-screen overflow-hidden bg-[#0B0F17] text-slate-100 relative">
+      {/* Main Full-Viewport Canvas: Title Splash / Animated Travel Screen / Live Map */}
+      <main className="relative w-full h-full flex items-center justify-center overflow-hidden">
         {/* PHASE 1: GAME TITLE SPLASH OVER CITY MAP */}
         {tvDisplay.phase === 'title_splash' && (
           <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-            {/* Softly blurred starting/saved city map behind the title screen */}
             {map.imageUrl && (
               <img
                 src={map.imageUrl}
@@ -213,7 +149,6 @@ export function TvView({ onNavigate }: TvViewProps) {
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F17] via-[#0B0F17]/75 to-[#0B0F17]/85 pointer-events-none" />
 
-            {/* Centered Game Logo & Title */}
             <div className="relative z-10 max-w-2xl mx-auto px-8 py-10 text-center flex flex-col items-center space-y-5">
               <div className="w-36 h-36 sm:w-44 sm:h-44 rounded-full overflow-hidden border border-amber-500/40 shadow-2xl shadow-black/70 bg-[#0B0F17] flex items-center justify-center">
                 <img
@@ -225,9 +160,9 @@ export function TvView({ onNavigate }: TvViewProps) {
               </div>
 
               <div className="space-y-2.5">
-                <h2 className="font-display text-3xl sm:text-5xl font-bold tracking-wider text-amber-100 text-balance drop-shadow-lg">
+                <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-wider text-amber-100 text-balance drop-shadow-lg">
                   {tvDisplay.campaignTitle}
-                </h2>
+                </h1>
                 {tvDisplay.campaignSubtitle && (
                   <p className="text-sm sm:text-base text-slate-300 tracking-wide">
                     {tvDisplay.campaignSubtitle}
@@ -262,7 +197,6 @@ export function TvView({ onNavigate }: TvViewProps) {
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F17] via-[#0B0F17]/55 to-[#0B0F17]/70 pointer-events-none" />
 
-            {/* Subtle Floating Lantern Embers */}
             {TRAVEL_EMBERS.map((ember, idx) => (
               <span
                 key={idx}
@@ -277,7 +211,6 @@ export function TvView({ onNavigate }: TvViewProps) {
               />
             ))}
 
-            {/* Centered Journey Card */}
             <div className="relative z-10 w-full max-w-2xl mx-4 rounded-2xl bg-[#0B0F17]/82 backdrop-blur-md border border-amber-500/35 px-7 py-8 shadow-2xl space-y-6 text-center">
               <div className="space-y-2">
                 <div className="text-xs font-medium tracking-widest text-amber-400">
@@ -293,12 +226,13 @@ export function TvView({ onNavigate }: TvViewProps) {
                 )}
               </div>
 
-              {/* Animated Route Track: From -> Marching Party -> Destination */}
               <div className="pt-2 space-y-3">
                 <div className="flex items-center justify-between text-xs text-slate-300 px-1 gap-4">
                   <span className="flex items-center gap-1.5 truncate">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{tvDisplay.fromLocationName || 'Предыдущая локация'}</span>
+                    <span className="truncate">
+                      {tvDisplay.fromLocationName || 'Предыдущая локация'}
+                    </span>
                   </span>
                   <span className="flex items-center gap-1.5 text-amber-300 font-medium truncate">
                     {tvDisplay.toLocationKind === 'tactical' ? (
@@ -310,7 +244,6 @@ export function TvView({ onNavigate }: TvViewProps) {
                   </span>
                 </div>
 
-                {/* Animated Road Bar with Marching Footsteps / Party Silhouettes */}
                 <div className="relative h-11 rounded-xl bg-[#131A26]/90 border border-slate-800 overflow-hidden flex items-center px-4">
                   <div className="w-full border-t-2 border-dashed border-amber-500/35" />
                   <div className="absolute inset-y-0 left-3 right-16 flex items-center pointer-events-none">
@@ -337,9 +270,13 @@ export function TvView({ onNavigate }: TvViewProps) {
           </div>
         )}
 
-        {/* PHASE 3: LIVE LOCATION MAP (CITY OR TACTICAL) */}
+        {/* PHASE 3: LIVE LOCATION MAP (CITY OR TACTICAL) — MAXIMIZED VERTICALLY */}
         {tvDisplay.phase === 'live' && (
-          <div className="relative w-full h-full p-3 sm:p-5 flex items-center justify-center">
+          <div
+            className={`relative z-10 w-full h-full pt-1.5 px-2 flex items-center justify-center ${
+              showCombatDeck ? 'pb-[102px] sm:pb-[112px]' : 'pb-1.5'
+            }`}
+          >
             <TacticalMap
               map={map}
               tokens={tokens}
@@ -351,7 +288,7 @@ export function TvView({ onNavigate }: TvViewProps) {
 
             {/* Public Event Banner Overlay */}
             {scene.activeEvent && (
-              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-2xl px-4 pointer-events-none">
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-2xl px-4 pointer-events-none">
                 <div
                   className={`rounded-xl px-5 py-3.5 border backdrop-blur-md shadow-2xl ${
                     scene.activeEvent.tone === 'danger'
@@ -365,7 +302,9 @@ export function TvView({ onNavigate }: TvViewProps) {
                     <h2 className="text-base sm:text-lg font-semibold tracking-tight">
                       {scene.activeEvent.title}
                     </h2>
-                    <span className="text-xs text-slate-300/80 whitespace-nowrap">Событие сцены</span>
+                    <span className="text-xs text-slate-300/80 whitespace-nowrap">
+                      Событие сцены
+                    </span>
                   </div>
                   {scene.activeEvent.description && (
                     <p className="mt-1 text-sm text-slate-200/90 leading-snug">
@@ -379,109 +318,101 @@ export function TvView({ onNavigate }: TvViewProps) {
         )}
       </main>
 
-      {/* Bottom Compact Turn-Order Tabs (NO HP, NO levels, NO AC — shown only on player phones) */}
-      <footer className="shrink-0 border-t border-slate-800/90 bg-[#131A26] px-5 py-2.5 z-20">
-        {isCityMap ? (
-          players.length === 0 ? (
-            <div className="py-1.5 text-center text-xs text-slate-400">
-              В партии пока нет персонажей · Подключите смартфоны через QR-код
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-4 overflow-x-auto">
-              <div className="flex items-center gap-2 flex-nowrap">
-                {players.map((player) => {
-                  const isElsewhere = player.locationId !== activeLocationId;
-                  return (
-                    <div
-                      key={player.id}
-                      className={`px-3 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 flex items-center gap-2 shrink-0 ${
-                        isElsewhere ? 'opacity-65' : ''
-                      }`}
-                    >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: player.color }}
-                        aria-hidden="true"
-                      />
-                      <span className="text-xs font-semibold text-slate-100 whitespace-nowrap">
-                        {player.name}
-                      </span>
-                      {isElsewhere && (
-                        <span className="text-[11px] text-sky-300 whitespace-nowrap">
-                          · {player.locationName}
-                        </span>
-                      )}
-                      <Smartphone
-                        className={`w-3 h-3 shrink-0 ${
-                          player.isConnected ? 'text-emerald-400' : 'text-slate-600'
-                        }`}
-                        aria-label={player.isConnected ? 'Телефон подключен' : 'Телефон не подключен'}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-400 whitespace-nowrap shrink-0">
-                <Compass className="w-3.5 h-3.5 text-amber-400" />
-                <span>Свободный ход · все ходят одновременно</span>
-              </div>
-            </div>
-          )
-        ) : tacticalTurnEntries.length === 0 ? (
-          <div className="py-1.5 text-center text-xs text-slate-400">
-            На тактической карте пока нет участников · Расставьте героев и врагов в пульте мастера
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-4 overflow-x-auto">
-            <div className="flex items-center gap-2 flex-nowrap">
-              {tacticalTurnEntries.map((entry) => (
+      {/* COMBAT ONLY: Bottom Half-Playing-Card Turn-Order Deck (overlaps bottom ~14px of the map!) */}
+      {showCombatDeck && (
+        <div
+          aria-label="Порядок ходов"
+          className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none pl-4 pr-48 sm:pr-52 pt-5 flex items-end justify-center"
+        >
+          <div className="flex items-end justify-center gap-2 sm:gap-2.5 max-w-full overflow-x-auto no-scrollbar pt-5 px-2">
+            {tacticalTurnEntries.map((entry) => {
+              const initials = entry.label.trim().slice(0, 2).toUpperCase();
+              return (
                 <div
                   key={entry.key}
-                  className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 shrink-0 transition-colors ${
+                  className={`relative w-[92px] sm:w-[106px] lg:w-[114px] h-[116px] sm:h-[126px] rounded-t-xl border-x border-t overflow-hidden shrink-0 transition-all duration-200 will-change-transform bg-[#0E1420] ${
                     entry.isTurn
-                      ? 'bg-amber-500/15 border-amber-400 text-amber-200 shadow-md shadow-amber-500/10'
-                      : 'bg-[#0B0F17] border-slate-800 text-slate-300'
+                      ? 'border-2 border-b-0 border-amber-400 -translate-y-3 scale-[1.05] z-20 shadow-[0_-8px_28px_rgba(245,158,11,0.42)]'
+                      : 'border-b-0 border-slate-600/80 translate-y-0 z-10 shadow-[0_-4px_16px_rgba(0,0,0,0.65)]'
                   }`}
                 >
-                  {entry.kind === 'enemy' ? (
-                    <Skull
-                      className="w-3.5 h-3.5 shrink-0"
-                      style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
-                    />
-                  ) : entry.kind === 'npc' ? (
-                    <Shield
-                      className="w-3.5 h-3.5 shrink-0"
-                      style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
-                    />
-                  ) : (
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: entry.color }}
-                      aria-hidden="true"
-                    />
-                  )}
-                  <span
-                    className={`text-xs whitespace-nowrap ${
-                      entry.isTurn ? 'font-bold text-amber-100' : 'font-medium text-slate-200'
+                  {/* Portrait Layer (Full Color when Active Turn, Grayscale when Waiting) */}
+                  <div
+                    className={`w-full h-full transition-all duration-200 ${
+                      entry.isTurn
+                        ? 'grayscale-0 brightness-105 contrast-105'
+                        : 'grayscale brightness-75 contrast-95 opacity-85'
                     }`}
                   >
-                    {entry.label}
-                  </span>
-                  {entry.isTurn && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400 whitespace-nowrap">
-                      · Ход
-                    </span>
-                  )}
+                    {entry.portraitUrl ? (
+                      <img
+                        src={entry.portraitUrl}
+                        alt={entry.label}
+                        className="w-full h-full object-cover object-top"
+                      />
+                    ) : (
+                      <div
+                        className="w-full h-full flex flex-col items-center justify-center pb-5"
+                        style={{
+                          background: `radial-gradient(circle at 50% 35%, ${entry.color}55 0%, #111827 78%, #070B12 100%)`,
+                        }}
+                      >
+                        {entry.kind === 'enemy' ? (
+                          <Skull
+                            className="w-9 h-9 opacity-90"
+                            style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
+                          />
+                        ) : entry.kind === 'npc' ? (
+                          <Shield
+                            className="w-9 h-9 opacity-90"
+                            style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
+                          />
+                        ) : (
+                          <span className="font-display text-2xl font-bold tracking-wider text-slate-100 drop-shadow">
+                            {initials}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Subtle Inner Playing-Card Ornamental Frame */}
+                  <div
+                    className={`absolute inset-[3px] bottom-0 rounded-t-lg pointer-events-none border-x border-t ${
+                      entry.isTurn ? 'border-amber-300/60' : 'border-slate-400/20'
+                    }`}
+                  />
+
+                  {/* Bottom Name Scrim (ONLY name — zero HP, levels, or AC) */}
+                  <div className="absolute inset-x-0 bottom-0 pt-7 pb-1.5 px-2 bg-gradient-to-t from-[#05080F] via-[#05080F]/90 to-transparent text-center">
+                    <div
+                      className={`text-xs sm:text-[13px] leading-tight truncate drop-shadow ${
+                        entry.isTurn
+                          ? 'font-bold text-amber-200'
+                          : 'font-semibold text-slate-200/95'
+                      }`}
+                    >
+                      {entry.label}
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-            <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-400 whitespace-nowrap shrink-0">
-              <Swords className="w-3.5 h-3.5 text-amber-400" />
-              <span>Порядок ходов</span>
-            </div>
+              );
+            })}
           </div>
-        )}
-      </footer>
+        </div>
+      )}
+
+      {/* Bottom-Right Compact QR Button (replaces old "Порядок ходов" and stays available on City & Title screens) */}
+      {tvDisplay.phase !== 'traveling' && (
+        <button
+          type="button"
+          onClick={() => setShowQr((prev) => !prev)}
+          className="fixed bottom-3 right-3 z-30 px-3.5 py-2 rounded-xl bg-[#0E1523]/90 hover:bg-slate-800/95 backdrop-blur-md border border-slate-700/85 hover:border-amber-500/60 text-xs font-medium text-slate-100 shadow-xl shadow-black/50 flex items-center gap-2 transition-colors whitespace-nowrap"
+        >
+          <QrCode className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>Подключить игрока</span>
+        </button>
+      )}
 
       {/* QR Join Overlay */}
       {showQr && (

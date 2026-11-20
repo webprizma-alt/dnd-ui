@@ -465,8 +465,19 @@ export class GameStore {
         size: 1,
         visibleOnTv: true,
         initiative: p.initiative,
+        portraitUrl: p.portraitUrl ?? null,
       }));
-    const npcTokens = (loc.tokens || []).filter((t) => t.kind !== 'player');
+    const npcTokens: MapToken[] = (loc.tokens || [])
+      .filter((t) => t.kind !== 'player')
+      .map((t) => {
+        const linkedMonster = t.monsterId
+          ? this.state.catalogs.monsters.find((m) => m.id === t.monsterId)
+          : undefined;
+        return {
+          ...t,
+          portraitUrl: linkedMonster?.portraitUrl ?? t.portraitUrl ?? null,
+        };
+      });
     return [...playerTokens, ...npcTokens];
   }
 
@@ -705,6 +716,7 @@ export class GameStore {
         locationNote: typeof p.locationNote === 'string' ? p.locationNote : '',
         posX,
         posY,
+        portraitUrl: typeof p.portraitUrl === 'string' ? p.portraitUrl : null,
         gold: typeof p.gold === 'number' ? Math.max(0, p.gold) : 0,
         abilities: builtAbilities,
         proficientSkillIds: Array.isArray(p.proficientSkillIds) ? p.proficientSkillIds : [],
@@ -873,6 +885,7 @@ export class GameStore {
       locationNote: resolved.locationNote,
       posX: resolved.posX,
       posY: resolved.posY,
+      portraitUrl: resolved.portraitUrl ?? null,
     };
   }
 
@@ -982,6 +995,52 @@ export class GameStore {
       ...targetLoc.map,
       imageUrl,
     };
+    this.syncActiveLocationView();
+    this.bumpVersion();
+    this.scheduleSave();
+    return true;
+  }
+
+  public getPlayerWithContext(playerId: string) {
+    const player = this.state.players.find((p) => p.id === playerId);
+    if (!player) return null;
+    const classRef = this.state.catalogs.classes.find((c) => c.id === player.classId);
+    const speciesRef = this.state.catalogs.species.find((s) => s.id === player.speciesId);
+    const backgroundRef = this.state.catalogs.backgrounds.find((b) => b.id === player.backgroundId);
+    return { player, classRef, speciesRef, backgroundRef };
+  }
+
+  public setPlayerPortrait(playerId: string, portraitUrl: string | null): boolean {
+    const player = this.state.players.find((p) => p.id === playerId);
+    if (!player) return false;
+    player.portraitUrl = portraitUrl;
+    this.syncActiveLocationView();
+    this.bumpVersion();
+    this.scheduleSave();
+    return true;
+  }
+
+  public getMonsterWithContext(monsterId: string) {
+    const monster = this.state.catalogs.monsters.find((m) => m.id === monsterId);
+    if (!monster) return null;
+    return {
+      monster,
+      abilities: this.state.catalogs.abilities,
+      skills: this.state.catalogs.skills,
+    };
+  }
+
+  public setMonsterPortrait(monsterId: string, portraitUrl: string | null): boolean {
+    const monster = this.state.catalogs.monsters.find((m) => m.id === monsterId);
+    if (!monster) return false;
+    monster.portraitUrl = portraitUrl;
+    for (const loc of this.state.locations) {
+      for (const tok of loc.tokens) {
+        if (tok.monsterId === monsterId) {
+          tok.portraitUrl = portraitUrl;
+        }
+      }
+    }
     this.syncActiveLocationView();
     this.bumpVersion();
     this.scheduleSave();
@@ -2245,6 +2304,12 @@ export class GameStore {
                   description: (act.description || '').trim(),
                 }))
             : [];
+          const list = this.state.catalogs.monsters;
+          const existingMonster = msg.item.id ? list.find((x) => x.id === msg.item.id) : undefined;
+          const portraitUrl =
+            msg.item.portraitUrl !== undefined
+              ? msg.item.portraitUrl
+              : existingMonster?.portraitUrl ?? null;
           const normalized = {
             id: msg.item.id || makeId('mon'),
             name: cleanName,
@@ -2267,8 +2332,8 @@ export class GameStore {
               : [],
             xpReward: Math.max(0, Math.floor(Number(msg.item.xpReward) || 0)),
             actions: normalizedActions,
+            portraitUrl,
           };
-          const list = this.state.catalogs.monsters;
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
