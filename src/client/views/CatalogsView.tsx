@@ -2604,7 +2604,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                   Сгенерировать фото: {activeGenMonster.name}
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Nano Banana 2 Lite · стиль тёмного фэнтези D&D для карточек ТВ
+                  ИИ-генерация · стиль тёмного фэнтези D&D для карточек ТВ
                 </p>
               </div>
               <button
