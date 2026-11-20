@@ -25,8 +25,9 @@ export interface DmTacticalOverlay {
   tokenId: string;
   clearRangeFt: number;
   visibleRangeFt: number;
-  attackNormalFt: number;
-  attackMaxFt: number;
+  attackNormalFt: number | null;
+  attackMaxFt: number | null;
+  attackIncludesSelf?: boolean;
 }
 
 interface TacticalMapProps {
@@ -399,7 +400,9 @@ export function TacticalMap({
 
           const hasVisionShade =
             dmOverlay.clearRangeFt !== Infinity || dmOverlay.visibleRangeFt !== Infinity;
-          const hasAttackRange = dmOverlay.attackNormalFt > 0 || dmOverlay.attackMaxFt > 0;
+          const hasAttackRange =
+            (dmOverlay.attackNormalFt !== null && dmOverlay.attackNormalFt >= 0) ||
+            (dmOverlay.attackMaxFt !== null && dmOverlay.attackMaxFt >= 0);
           if (!hasVisionShade && !hasAttackRange) return null;
 
           const totalCells = map.cols * map.rows;
@@ -419,16 +422,27 @@ export function TacticalMap({
                 const isUnseen = distFt > dmOverlay.visibleRangeFt;
                 const isDimZone = !isUnseen && distFt > dmOverlay.clearRangeFt;
 
+                const inSelfAttack =
+                  distFt === 0 &&
+                  (dmOverlay.attackIncludesSelf === true || dmOverlay.attackNormalFt === 0);
                 const inNormalAttack =
-                  distFt > 0 && dmOverlay.attackNormalFt > 0 && distFt <= dmOverlay.attackNormalFt;
+                  inSelfAttack ||
+                  (distFt > 0 &&
+                    dmOverlay.attackNormalFt !== null &&
+                    dmOverlay.attackNormalFt > 0 &&
+                    distFt <= dmOverlay.attackNormalFt);
                 const inMaxAttack =
                   !inNormalAttack &&
                   distFt > 0 &&
+                  dmOverlay.attackMaxFt !== null &&
+                  dmOverlay.attackNormalFt !== null &&
                   dmOverlay.attackMaxFt > dmOverlay.attackNormalFt &&
                   distFt <= dmOverlay.attackMaxFt;
 
                 const layers: string[] = [];
-                if (inNormalAttack) {
+                if (inSelfAttack) {
+                  layers.push('linear-gradient(rgba(239, 68, 68, 0.36), rgba(239, 68, 68, 0.36))');
+                } else if (inNormalAttack) {
                   layers.push('linear-gradient(rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.25))');
                 } else if (inMaxAttack) {
                   layers.push('linear-gradient(rgba(239, 68, 68, 0.11), rgba(239, 68, 68, 0.11))');
@@ -440,11 +454,13 @@ export function TacticalMap({
                   layers.push('linear-gradient(rgba(15, 23, 42, 0.36), rgba(15, 23, 42, 0.36))');
                 }
 
-                const boxShadow = inNormalAttack
-                  ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.4)'
-                  : inMaxAttack
-                    ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.2)'
-                    : undefined;
+                const boxShadow = inSelfAttack
+                  ? 'inset 0 0 0 2px rgba(248, 113, 113, 0.8)'
+                  : inNormalAttack
+                    ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.4)'
+                    : inMaxAttack
+                      ? 'inset 0 0 0 1px rgba(248, 113, 113, 0.2)'
+                      : undefined;
 
                 if (layers.length === 0 && !boxShadow) {
                   return <div key={idx} />;

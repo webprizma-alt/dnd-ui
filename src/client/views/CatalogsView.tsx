@@ -620,9 +620,15 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       });
     } else if (activeSection === 'weapons') {
       if (!nameDraft.trim()) return;
-      const safeReach = Math.max(5, Math.round(weaponReachDraft || 5));
-      const safeNormal = Math.max(5, Math.round(weaponRangeNormalDraft || 80));
-      const safeMax = Math.max(safeNormal, Math.round(weaponRangeMaxDraft || safeNormal * 4));
+      const safeReach = Math.max(0, Math.round(Number.isFinite(weaponReachDraft) ? weaponReachDraft : 5));
+      const safeNormal = Math.max(
+        0,
+        Math.round(Number.isFinite(weaponRangeNormalDraft) ? weaponRangeNormalDraft : 80)
+      );
+      const safeMax = Math.max(
+        safeNormal,
+        Math.round(Number.isFinite(weaponRangeMaxDraft) ? weaponRangeMaxDraft : safeNormal * 4)
+      );
       send({
         type: 'dm:upsertCatalogItem',
         catalog: 'weapons',
@@ -691,14 +697,21 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           name: a.name.trim(),
           description: a.description.trim(),
           attackType: a.attackType ?? null,
-          reachFt: a.attackType === 'melee' && a.reachFt ? Math.max(5, Math.round(a.reachFt)) : null,
+          reachFt:
+            a.attackType === 'melee' && typeof a.reachFt === 'number' && Number.isFinite(a.reachFt)
+              ? Math.max(0, Math.round(a.reachFt))
+              : null,
           rangeNormalFt:
-            a.attackType === 'ranged' && a.rangeNormalFt
-              ? Math.max(5, Math.round(a.rangeNormalFt))
+            a.attackType === 'ranged' &&
+            typeof a.rangeNormalFt === 'number' &&
+            Number.isFinite(a.rangeNormalFt)
+              ? Math.max(0, Math.round(a.rangeNormalFt))
               : null,
           rangeMaxFt:
-            a.attackType === 'ranged' && a.rangeMaxFt
-              ? Math.max(5, Math.round(a.rangeMaxFt))
+            a.attackType === 'ranged' &&
+            typeof a.rangeMaxFt === 'number' &&
+            Number.isFinite(a.rangeMaxFt)
+              ? Math.max(0, Math.round(a.rangeMaxFt))
               : null,
         }));
       send({
@@ -1360,11 +1373,14 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         <span className="text-xs text-slate-400">Досягаемость:</span>
                         <input
                           type="number"
-                          min={5}
+                          min={0}
                           max={100}
                           step={5}
                           value={weaponReachDraft}
-                          onChange={(e) => setWeaponReachDraft(Number(e.target.value) || 5)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setWeaponReachDraft(raw === '' ? 0 : Math.max(0, Number(raw)));
+                          }}
                           className="w-20 px-2.5 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
                         />
                         <span className="text-xs text-slate-400">фт.</span>
@@ -1374,21 +1390,27 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         <span className="text-xs text-slate-400">Дистанция (норм./макс.):</span>
                         <input
                           type="number"
-                          min={5}
+                          min={0}
                           max={2000}
                           step={5}
                           value={weaponRangeNormalDraft}
-                          onChange={(e) => setWeaponRangeNormalDraft(Number(e.target.value) || 80)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setWeaponRangeNormalDraft(raw === '' ? 0 : Math.max(0, Number(raw)));
+                          }}
                           className="w-20 px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
                         />
                         <span className="text-xs text-slate-500">/</span>
                         <input
                           type="number"
-                          min={5}
+                          min={0}
                           max={4000}
                           step={5}
                           value={weaponRangeMaxDraft}
-                          onChange={(e) => setWeaponRangeMaxDraft(Number(e.target.value) || 320)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setWeaponRangeMaxDraft(raw === '' ? 0 : Math.max(0, Number(raw)));
+                          }}
                           className="w-20 px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100 text-center"
                         />
                         <span className="text-xs text-slate-400">фт.</span>
@@ -2109,7 +2131,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                               <div className="flex items-center gap-1">
                                 <input
                                   type="number"
-                                  min={5}
+                                  min={0}
                                   max={200}
                                   step={5}
                                   value={act.reachFt ?? ''}
@@ -2119,15 +2141,16 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                         i === idx
                                           ? {
                                               ...row,
-                                              reachFt: e.target.value
-                                                ? Math.max(5, Number(e.target.value))
-                                                : null,
+                                              reachFt:
+                                                e.target.value !== ''
+                                                  ? Math.max(0, Number(e.target.value))
+                                                  : null,
                                             }
                                           : row
                                       )
                                     )
                                   }
-                                  placeholder="5"
+                                  placeholder="0"
                                   className="w-16 px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
                                 />
                                 <span>фт.</span>
@@ -2138,7 +2161,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                               <div className="flex items-center gap-1">
                                 <input
                                   type="number"
-                                  min={5}
+                                  min={0}
                                   max={2000}
                                   step={5}
                                   value={act.rangeNormalFt ?? ''}
@@ -2148,9 +2171,10 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                         i === idx
                                           ? {
                                               ...row,
-                                              rangeNormalFt: e.target.value
-                                                ? Math.max(5, Number(e.target.value))
-                                                : null,
+                                              rangeNormalFt:
+                                                e.target.value !== ''
+                                                  ? Math.max(0, Number(e.target.value))
+                                                  : null,
                                             }
                                           : row
                                       )
@@ -2162,7 +2186,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                 <span>/</span>
                                 <input
                                   type="number"
-                                  min={5}
+                                  min={0}
                                   max={4000}
                                   step={5}
                                   value={act.rangeMaxFt ?? ''}
@@ -2172,9 +2196,10 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                         i === idx
                                           ? {
                                               ...row,
-                                              rangeMaxFt: e.target.value
-                                                ? Math.max(5, Number(e.target.value))
-                                                : null,
+                                              rangeMaxFt:
+                                                e.target.value !== ''
+                                                  ? Math.max(0, Number(e.target.value))
+                                                  : null,
                                             }
                                           : row
                                       )

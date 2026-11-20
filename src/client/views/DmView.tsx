@@ -921,14 +921,14 @@ export function DmView({ onNavigate }: DmViewProps) {
                 : attackOptions.filter((a) => a.id === selectedAttackOverlayId);
             const effectiveAttacks = activeAttacks.length > 0 ? activeAttacks : attackOptions;
 
-            const attackNormalFt = effectiveAttacks.reduce(
-              (acc, item) => Math.max(acc, item.normalFt),
-              0
-            );
-            const attackMaxFt = effectiveAttacks.reduce(
-              (acc, item) => Math.max(acc, item.maxFt),
-              0
-            );
+            const hasEffectiveAttacks = effectiveAttacks.length > 0;
+            const attackNormalFt = hasEffectiveAttacks
+              ? effectiveAttacks.reduce((acc, item) => Math.max(acc, item.normalFt), 0)
+              : null;
+            const attackMaxFt = hasEffectiveAttacks
+              ? effectiveAttacks.reduce((acc, item) => Math.max(acc, item.maxFt), 0)
+              : null;
+            const attackIncludesSelf = effectiveAttacks.some((item) => item.normalFt === 0);
 
             const visionEntries = turnPlayer
               ? turnPlayer.visions
@@ -952,6 +952,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                     visibleRangeFt: effectiveVision.visibleRangeFt,
                     attackNormalFt,
                     attackMaxFt,
+                    attackIncludesSelf,
                   }
                 : null;
 

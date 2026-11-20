@@ -1097,16 +1097,27 @@ export function formatWeaponReachRange(
   }
 ): string {
   if (rangeType === 'ranged') {
-    const normal = typeof opts.rangeNormalFt === 'number' && opts.rangeNormalFt > 0 ? opts.rangeNormalFt : null;
-    const max = typeof opts.rangeMaxFt === 'number' && opts.rangeMaxFt > 0 ? opts.rangeMaxFt : null;
-    if (normal && max) return `${normal}/${max} фт.`;
-    if (normal) return `${normal} фт.`;
-    if (max) return `до ${max} фт.`;
+    const normal =
+      typeof opts.rangeNormalFt === 'number' && Number.isFinite(opts.rangeNormalFt) && opts.rangeNormalFt >= 0
+        ? opts.rangeNormalFt
+        : null;
+    const max =
+      typeof opts.rangeMaxFt === 'number' && Number.isFinite(opts.rangeMaxFt) && opts.rangeMaxFt >= 0
+        ? opts.rangeMaxFt
+        : null;
+    if (normal !== null && max !== null) {
+      return max > normal ? `${normal}/${max} фт.` : `${normal} фт.`;
+    }
+    if (normal !== null) return `${normal} фт.`;
+    if (max !== null) return `до ${max} фт.`;
     return '';
   }
   if (rangeType === 'melee') {
-    const reach = typeof opts.reachFt === 'number' && opts.reachFt > 0 ? opts.reachFt : null;
-    return reach ? `${reach} фт.` : '';
+    const reach =
+      typeof opts.reachFt === 'number' && Number.isFinite(opts.reachFt) && opts.reachFt >= 0
+        ? opts.reachFt
+        : null;
+    return reach !== null ? `${reach} фт.` : '';
   }
   return '';
 }
@@ -1135,24 +1146,30 @@ export function resolveWeaponReachRange(
 
   if (rangeType === 'ranged') {
     const normalFt =
-      typeof item.rangeNormalFt === 'number' && item.rangeNormalFt > 0
+      typeof item.rangeNormalFt === 'number' && Number.isFinite(item.rangeNormalFt) && item.rangeNormalFt >= 0
         ? item.rangeNormalFt
-        : typeof catalogWeapon?.rangeNormalFt === 'number' && catalogWeapon.rangeNormalFt > 0
+        : typeof catalogWeapon?.rangeNormalFt === 'number' &&
+            Number.isFinite(catalogWeapon.rangeNormalFt) &&
+            catalogWeapon.rangeNormalFt >= 0
           ? catalogWeapon.rangeNormalFt
           : inferred.rangeNormalFt ?? 80;
     const maxFt =
-      typeof item.rangeMaxFt === 'number' && item.rangeMaxFt > 0
+      typeof item.rangeMaxFt === 'number' && Number.isFinite(item.rangeMaxFt) && item.rangeMaxFt >= 0
         ? Math.max(normalFt, item.rangeMaxFt)
-        : typeof catalogWeapon?.rangeMaxFt === 'number' && catalogWeapon.rangeMaxFt > 0
+        : typeof catalogWeapon?.rangeMaxFt === 'number' &&
+            Number.isFinite(catalogWeapon.rangeMaxFt) &&
+            catalogWeapon.rangeMaxFt >= 0
           ? Math.max(normalFt, catalogWeapon.rangeMaxFt)
           : Math.max(normalFt, inferred.rangeMaxFt ?? normalFt * 4);
     return { rangeType, normalFt, maxFt };
   }
 
   const reachFt =
-    typeof item.reachFt === 'number' && item.reachFt > 0
+    typeof item.reachFt === 'number' && Number.isFinite(item.reachFt) && item.reachFt >= 0
       ? item.reachFt
-      : typeof catalogWeapon?.reachFt === 'number' && catalogWeapon.reachFt > 0
+      : typeof catalogWeapon?.reachFt === 'number' &&
+          Number.isFinite(catalogWeapon.reachFt) &&
+          catalogWeapon.reachFt >= 0
         ? catalogWeapon.reachFt
         : inferred.reachFt ?? 5;
   return { rangeType: 'melee', normalFt: reachFt, maxFt: reachFt };
@@ -1165,20 +1182,26 @@ export function resolveMonsterActionRange(action: MonsterActionRef): {
 } | null {
   if (action.attackType === 'melee') {
     const reach =
-      typeof action.reachFt === 'number' && action.reachFt > 0 ? action.reachFt : null;
-    if (!reach) return null;
+      typeof action.reachFt === 'number' && Number.isFinite(action.reachFt) && action.reachFt >= 0
+        ? action.reachFt
+        : null;
+    if (reach === null) return null;
     return { rangeType: 'melee', normalFt: reach, maxFt: reach };
   }
   if (action.attackType === 'ranged') {
     const normal =
-      typeof action.rangeNormalFt === 'number' && action.rangeNormalFt > 0
+      typeof action.rangeNormalFt === 'number' &&
+      Number.isFinite(action.rangeNormalFt) &&
+      action.rangeNormalFt >= 0
         ? action.rangeNormalFt
         : null;
     const max =
-      typeof action.rangeMaxFt === 'number' && action.rangeMaxFt > 0
+      typeof action.rangeMaxFt === 'number' &&
+      Number.isFinite(action.rangeMaxFt) &&
+      action.rangeMaxFt >= 0
         ? action.rangeMaxFt
         : normal;
-    if (!normal && !max) return null;
+    if (normal === null && max === null) return null;
     const safeNormal = normal ?? max!;
     const safeMax = Math.max(safeNormal, max ?? safeNormal);
     return { rangeType: 'ranged', normalFt: safeNormal, maxFt: safeMax };

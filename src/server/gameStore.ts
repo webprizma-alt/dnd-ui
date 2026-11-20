@@ -577,11 +577,11 @@ export class GameStore {
             const inferred = inferWeaponReachRange(rangeType, w.properties);
             if (rangeType === 'ranged') {
               const normal =
-                typeof w.rangeNormalFt === 'number' && Number.isFinite(w.rangeNormalFt) && w.rangeNormalFt > 0
+                typeof w.rangeNormalFt === 'number' && Number.isFinite(w.rangeNormalFt) && w.rangeNormalFt >= 0
                   ? Math.round(w.rangeNormalFt)
                   : inferred.rangeNormalFt ?? 80;
               const max =
-                typeof w.rangeMaxFt === 'number' && Number.isFinite(w.rangeMaxFt) && w.rangeMaxFt > 0
+                typeof w.rangeMaxFt === 'number' && Number.isFinite(w.rangeMaxFt) && w.rangeMaxFt >= 0
                   ? Math.max(normal, Math.round(w.rangeMaxFt))
                   : Math.max(normal, inferred.rangeMaxFt ?? normal * 4);
               return {
@@ -594,7 +594,7 @@ export class GameStore {
               };
             }
             const reach =
-              typeof w.reachFt === 'number' && Number.isFinite(w.reachFt) && w.reachFt > 0
+              typeof w.reachFt === 'number' && Number.isFinite(w.reachFt) && w.reachFt >= 0
                 ? Math.round(w.reachFt)
                 : inferred.reachFt ?? 5;
             return {
@@ -2430,11 +2430,11 @@ export class GameStore {
             rangeType === 'melee'
               ? clamp(
                   Math.round(
-                    typeof msg.item.reachFt === 'number' && Number.isFinite(msg.item.reachFt) && msg.item.reachFt > 0
+                    typeof msg.item.reachFt === 'number' && Number.isFinite(msg.item.reachFt) && msg.item.reachFt >= 0
                       ? msg.item.reachFt
                       : inferred.reachFt ?? 5
                   ),
-                  5,
+                  0,
                   100
                 )
               : undefined;
@@ -2444,11 +2444,11 @@ export class GameStore {
                   Math.round(
                     typeof msg.item.rangeNormalFt === 'number' &&
                       Number.isFinite(msg.item.rangeNormalFt) &&
-                      msg.item.rangeNormalFt > 0
+                      msg.item.rangeNormalFt >= 0
                       ? msg.item.rangeNormalFt
                       : inferred.rangeNormalFt ?? 80
                   ),
-                  5,
+                  0,
                   2000
                 )
               : undefined;
@@ -2456,16 +2456,16 @@ export class GameStore {
             rangeType === 'ranged'
               ? clamp(
                   Math.max(
-                    rangeNormalFt ?? 80,
+                    rangeNormalFt ?? 0,
                     Math.round(
                       typeof msg.item.rangeMaxFt === 'number' &&
                         Number.isFinite(msg.item.rangeMaxFt) &&
-                        msg.item.rangeMaxFt > 0
+                        msg.item.rangeMaxFt >= 0
                         ? msg.item.rangeMaxFt
                         : inferred.rangeMaxFt ?? (rangeNormalFt ?? 80) * 4
                     )
                   ),
-                  5,
+                  0,
                   4000
                 )
               : undefined;
@@ -2550,22 +2550,22 @@ export class GameStore {
                     attackType === 'melee' &&
                     typeof act.reachFt === 'number' &&
                     Number.isFinite(act.reachFt) &&
-                    act.reachFt > 0
-                      ? clamp(Math.round(act.reachFt), 5, 200)
+                    act.reachFt >= 0
+                      ? clamp(Math.round(act.reachFt), 0, 200)
                       : null;
                   const rangeNormalFt =
                     attackType === 'ranged' &&
                     typeof act.rangeNormalFt === 'number' &&
                     Number.isFinite(act.rangeNormalFt) &&
-                    act.rangeNormalFt > 0
-                      ? clamp(Math.round(act.rangeNormalFt), 5, 2000)
+                    act.rangeNormalFt >= 0
+                      ? clamp(Math.round(act.rangeNormalFt), 0, 2000)
                       : null;
                   const rangeMaxFt =
                     attackType === 'ranged' &&
                     typeof act.rangeMaxFt === 'number' &&
                     Number.isFinite(act.rangeMaxFt) &&
-                    act.rangeMaxFt > 0
-                      ? clamp(Math.max(rangeNormalFt ?? 5, Math.round(act.rangeMaxFt)), 5, 4000)
+                    act.rangeMaxFt >= 0
+                      ? clamp(Math.max(rangeNormalFt ?? 0, Math.round(act.rangeMaxFt)), 0, 4000)
                       : null;
                   return {
                     id: act.id || makeId('act'),
