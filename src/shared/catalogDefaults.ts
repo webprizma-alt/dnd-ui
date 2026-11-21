@@ -1,9 +1,17 @@
+import {
+  DEFAULT_CLASS_FEATURES,
+  DEFAULT_CLASS_PROGRESSION_META,
+  DEFAULT_SUBCLASS_FEATURES,
+  DEFAULT_SUBCLASSES,
+} from './classProgressionData';
 import type {
   AbilityModifierRef,
   AbilityRef,
   ArmorCategory,
   ArmorRef,
   CharacterDraft,
+  ClassFeatureRef,
+  ClassRef,
   EntityVisionEntry,
   FeatRef,
   GameCatalogs,
@@ -12,6 +20,7 @@ import type {
   MapLighting,
   MonsterActionRef,
   PlayerCharacter,
+  SubclassFeatureRef,
   VisionBehavior,
   VisionRef,
   WeaponCategory,
@@ -100,10 +109,19 @@ export function createDefaultCatalogs(): GameCatalogs {
     price,
   });
 
-  return {
-    abilities,
-    abilityModifiers,
-    classes: [
+  const withProgressionMeta = (cls: ClassRef): ClassRef => {
+    const meta = DEFAULT_CLASS_PROGRESSION_META[cls.id];
+    if (!meta) return cls;
+    return {
+      ...cls,
+      hitDie: meta.hitDie,
+      hpPerLevelHint: meta.hpPerLevelHint,
+      proficiencyBonusByLevel: [...meta.proficiencyBonusByLevel],
+      classResources: meta.classResources.map((r) => ({ ...r, values: [...r.values] })),
+    };
+  };
+
+  const baseClasses: ClassRef[] = [
       {
         id: 'artificer',
         name: 'Артефактор',
@@ -288,7 +306,15 @@ export function createDefaultCatalogs(): GameCatalogs {
         weaponProficiencyIds: ['weapon_simple', 'weapon_melee', 'weapon_ranged'],
         armorProficiencyIds: [],
       },
-    ],
+  ];
+
+  return {
+    abilities,
+    abilityModifiers,
+    classes: baseClasses.map(withProgressionMeta),
+    subclasses: DEFAULT_SUBCLASSES.map((s) => ({ ...s })),
+    classFeatures: DEFAULT_CLASS_FEATURES.map((f) => ({ ...f })),
+    subclassFeatures: DEFAULT_SUBCLASS_FEATURES.map((f) => ({ ...f })),
     backgrounds: [
       {
         id: 'entertainer',
@@ -1876,5 +1902,291 @@ export function getHeroFeats(
   }
   return out;
 }
+
+// ============================================================================
+// Class Progression, Proficiency Bonus by Class, Subclasses & Hero Actions
+// ============================================================================
+
+export const DEFAULT_PROFICIENCY_BONUS_BY_LEVEL: number[] = [
+  2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6,
+];
+
+export function getClassProficiencyBonus(
+  level: number,
+  classRef?: Pick<ClassRef, 'proficiencyBonusByLevel'> | null
+): number {
+  const safeLvl = Math.max(1, Math.min(20, Math.floor(Number(level) || 1)));
+  if (
+    classRef &&
+    Array.isArray(classRef.proficiencyBonusByLevel) &&
+    classRef.proficiencyBonusByLevel.length > 0
+  ) {
+    const idx = Math.min(safeLvl - 1, classRef.proficiencyBonusByLevel.length - 1);
+    const val = classRef.proficiencyBonusByLevel[idx];
+    if (typeof val === 'number' && Number.isFinite(val) && val > 0) {
+      return Math.round(val);
+    }
+  }
+  return getProficiencyBonus(safeLvl);
+}
+
+export function getClassHitDieInfo(
+  classRef?: Pick<ClassRef, 'hitDie' | 'hpPerLevelHint'> | null
+): { hitDie: number; average: number; hint: string } {
+  const hitDie =
+    typeof classRef?.hitDie === 'number' && Number.isFinite(classRef.hitDie) && classRef.hitDie >= 4
+      ? Math.round(classRef.hitDie)
+      : 8;
+  const average = Math.floor(hitDie / 2) + 1;
+  const hint =
+    classRef?.hpPerLevelHint?.trim() ||
+    `1к${hitDie} (или ${average}) + ваш модификатор Телосложения (суммарно минимум 1)`;
+  return { hitDie, average, hint };
+}
+
+export function getClassResourcesAtLevel(
+  classRef: Pick<ClassRef, 'classResources'> | undefined | null,
+  level: number
+): Array<{ id: string; name: string; value: string }> {
+  if (!classRef || !Array.isArray(classRef.classResources)) return [];
+  const safeLvl = Math.max(1, Math.min(20, Math.floor(Number(level) || 1)));
+  const out: Array<{ id: string; name: string; value: string }> = [];
+  for (const res of classRef.classResources) {
+    if (!res || !Array.isArray(res.values) || res.values.length === 0) continue;
+    const idx = Math.min(safeLvl - 1, res.values.length - 1);
+    const val = String(res.values[idx] ?? '—').trim();
+    if (!val || val === '—' || val === '-') continue;
+    out.push({ id: res.id, name: res.name, value: val });
+  }
+  return out;
+}
+
+export function getHeroClassFeatures(
+  classId: string | undefined,
+  level: number,
+  catalogs: Pick<GameCatalogs, 'classFeatures'>
+): ClassFeatureRef[] {
+  if (!classId) return [];
+  const safeLvl = Math.max(1, Math.floor(Number(level) || 1));
+  return (catalogs.classFeatures ?? [])
+    .filter((f) => f.classId === classId && f.level <= safeLvl)
+    .sort((a, b) => a.level - b.level);
+}
+
+export function getHeroSubclassFeatures(
+  classId: string | undefined,
+  subclassId: string | undefined,
+  level: number,
+  catalogs: Pick<GameCatalogs, 'subclassFeatures'>
+): SubclassFeatureRef[] {
+  if (!classId || !subclassId) return [];
+  const safeLvl = Math.max(1, Math.floor(Number(level) || 1));
+  if (safeLvl < 3) return [];
+  return (catalogs.subclassFeatures ?? [])
+    .filter((f) => f.classId === classId && f.subclassId === subclassId && f.level <= safeLvl)
+    .sort((a, b) => a.level - b.level);
+}
+
+export interface HeroLevelUpChecklist {
+  hasPendingLevelUp: boolean;
+  needsSubclassChoice: boolean;
+  fromLevel: number;
+  toLevel: number;
+  levelsGained: number;
+  hitDie: number;
+  averageRoll: number;
+  conMod: number;
+  averageHpPerLevel: number;
+  hpHint: string;
+  profBonusChange: { from: number; to: number } | null;
+  resourceChanges: Array<{ name: string; from: string; to: string }>;
+  unlockedClassFeatures: ClassFeatureRef[];
+  unlockedSubclassFeatures: SubclassFeatureRef[];
+}
+
+export function getHeroLevelUpChecklist(
+  player: Pick<PlayerCharacter, 'classId' | 'subclassId' | 'level' | 'acknowledgedLevel' | 'abilities'>,
+  catalogs: Pick<
+    GameCatalogs,
+    'classes' | 'subclasses' | 'classFeatures' | 'subclassFeatures' | 'abilityModifiers'
+  >
+): HeroLevelUpChecklist {
+  const toLevel = Math.max(1, Math.floor(Number(player.level) || 1));
+  const fromLevel =
+    typeof player.acknowledgedLevel === 'number' && Number.isFinite(player.acknowledgedLevel)
+      ? Math.max(1, Math.floor(player.acknowledgedLevel))
+      : toLevel;
+  const hasPendingLevelUp = toLevel > fromLevel;
+  const levelsGained = Math.max(0, toLevel - fromLevel);
+
+  const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
+  const classSubclasses = catalogs.subclasses.filter((s) => s.classId === player.classId);
+  const hasValidSubclass = Boolean(
+    player.subclassId && classSubclasses.some((s) => s.id === player.subclassId)
+  );
+  const needsSubclassChoice = toLevel >= 3 && classSubclasses.length > 0 && !hasValidSubclass;
+
+  const { hitDie, average: averageRoll, hint: hpHint } = getClassHitDieInfo(classRef);
+  const conScore = player.abilities?.con ?? 10;
+  const conMod = getAbilityModifier(conScore, catalogs.abilityModifiers);
+  const averageHpPerLevel = Math.max(1, averageRoll + conMod);
+
+  const prevPb = getClassProficiencyBonus(fromLevel, classRef);
+  const nextPb = getClassProficiencyBonus(toLevel, classRef);
+  const profBonusChange = hasPendingLevelUp && nextPb !== prevPb ? { from: prevPb, to: nextPb } : null;
+
+  const resourceChanges: Array<{ name: string; from: string; to: string }> = [];
+  if (hasPendingLevelUp && classRef?.classResources) {
+    for (const res of classRef.classResources) {
+      const fromVal = String(res.values[Math.min(fromLevel - 1, res.values.length - 1)] ?? '—');
+      const toVal = String(res.values[Math.min(toLevel - 1, res.values.length - 1)] ?? '—');
+      if (fromVal !== toVal && toVal !== '—' && toVal !== '-') {
+        resourceChanges.push({ name: res.name, from: fromVal, to: toVal });
+      }
+    }
+  }
+
+  const unlockedClassFeatures = hasPendingLevelUp
+    ? (catalogs.classFeatures ?? [])
+        .filter((f) => f.classId === player.classId && f.level > fromLevel && f.level <= toLevel)
+        .sort((a, b) => a.level - b.level)
+    : [];
+
+  const unlockedSubclassFeatures =
+    hasPendingLevelUp && hasValidSubclass && player.subclassId
+      ? (catalogs.subclassFeatures ?? [])
+          .filter(
+            (f) =>
+              f.subclassId === player.subclassId && f.level > fromLevel && f.level <= toLevel
+          )
+          .sort((a, b) => a.level - b.level)
+      : [];
+
+  return {
+    hasPendingLevelUp,
+    needsSubclassChoice,
+    fromLevel,
+    toLevel,
+    levelsGained,
+    hitDie,
+    averageRoll,
+    conMod,
+    averageHpPerLevel,
+    hpHint,
+    profBonusChange,
+    resourceChanges,
+    unlockedClassFeatures,
+    unlockedSubclassFeatures,
+  };
+}
+
+export interface HeroActionItem {
+  id: string;
+  kind: 'unarmed' | 'melee' | 'ranged';
+  name: string;
+  subtitle: string;
+  equipped: boolean;
+  inventoryItemId?: string;
+  hitBonus: number;
+  hitFormula: string;
+  hitBreakdown: string;
+  damageFormula: string;
+  damageBreakdown: string;
+  rangeLabel: string;
+  properties?: string;
+  mastery?: string;
+}
+
+function formatDamageWithAbilityMod(baseDamage: string, mod: number): string {
+  const clean = baseDamage.trim();
+  if (!clean) {
+    return mod === 0 ? '1' : `1 ${mod > 0 ? '+' : '−'} ${Math.abs(mod)}`;
+  }
+  const match = /^(\S+)(\s+.*)?$/.exec(clean);
+  if (!match) {
+    return mod === 0 ? clean : `${clean} ${mod > 0 ? '+' : '−'} ${Math.abs(mod)}`;
+  }
+  const dicePart = match[1];
+  const restPart = match[2] || '';
+  if (mod === 0) return `${dicePart}${restPart}`;
+  const sign = mod > 0 ? '+' : '−';
+  return `${dicePart} ${sign} ${Math.abs(mod)}${restPart}`;
+}
+
+export function computeHeroActions(
+  player: Pick<PlayerCharacter, 'abilities' | 'level' | 'classId' | 'inventory'>,
+  catalogs: Pick<GameCatalogs, 'classes' | 'weapons' | 'abilityModifiers'>
+): HeroActionItem[] {
+  const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
+  const profBonus = getClassProficiencyBonus(player.level, classRef);
+  const strScore = player.abilities?.str ?? 10;
+  const dexScore = player.abilities?.dex ?? 10;
+  const strMod = getAbilityModifier(strScore, catalogs.abilityModifiers);
+  const dexMod = getAbilityModifier(dexScore, catalogs.abilityModifiers);
+
+  const actions: HeroActionItem[] = [];
+
+  // 1. Unarmed Strike (always available)
+  const unarmedHitBonus = profBonus + strMod;
+  const unarmedDamageTotal = Math.max(1, 1 + strMod);
+  actions.push({
+    id: 'action-unarmed',
+    kind: 'unarmed',
+    name: 'Безоружный удар',
+    subtitle: 'Всегда доступно',
+    equipped: true,
+    hitBonus: unarmedHitBonus,
+    hitFormula: `1к20 ${formatModifier(unarmedHitBonus)}`,
+    hitBreakdown: `БМ +${profBonus} + СИЛ ${formatModifier(strMod)}`,
+    damageFormula: `${unarmedDamageTotal} дробящий`,
+    damageBreakdown: `1 + мод. СИЛ (${formatModifier(strMod)})`,
+    rangeLabel: '5 фт.',
+  });
+
+  // 2 & 3. Melee & Ranged Weapon Attacks from inventory
+  const weaponsInInventory = (player.inventory ?? []).filter((item) => item.category === 'weapon');
+  // Sort equipped weapons first
+  const sortedWeapons = [...weaponsInInventory].sort((a, b) => Number(b.equipped) - Number(a.equipped));
+
+  for (const item of sortedWeapons) {
+    const catalogWeapon =
+      (item.catalogItemId
+        ? catalogs.weapons.find((w) => w.id === item.catalogItemId)
+        : undefined) ??
+      catalogs.weapons.find((w) => w.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+
+    const resolvedRange = resolveWeaponReachRange(item, catalogs);
+    const isRanged = resolvedRange.rangeType === 'ranged';
+    const rangeLabel =
+      isRanged && resolvedRange.maxFt > resolvedRange.normalFt
+        ? `${resolvedRange.normalFt}/${resolvedRange.maxFt} фт.`
+        : `${resolvedRange.normalFt} фт.`;
+
+    const baseDamage = item.damage || catalogWeapon?.damage || '1к4';
+    const abilityMod = isRanged ? dexMod : strMod;
+    const abilityShort = isRanged ? 'ЛОВ' : 'СИЛ';
+    const hitBonus = profBonus + abilityMod;
+
+    actions.push({
+      id: `action-wpn-${item.id}`,
+      kind: isRanged ? 'ranged' : 'melee',
+      name: item.name,
+      subtitle: isRanged ? 'Дальнобойная атака оружием' : 'Рукопашная атака оружием',
+      equipped: item.equipped,
+      inventoryItemId: item.id,
+      hitBonus,
+      hitFormula: `1к20 ${formatModifier(hitBonus)}`,
+      hitBreakdown: `БМ +${profBonus} + ${abilityShort} ${formatModifier(abilityMod)}`,
+      damageFormula: formatDamageWithAbilityMod(baseDamage, abilityMod),
+      damageBreakdown: `${baseDamage} + мод. ${abilityShort} (${formatModifier(abilityMod)})`,
+      rangeLabel,
+      properties: item.properties || catalogWeapon?.properties,
+      mastery: item.mastery || catalogWeapon?.mastery,
+    });
+  }
+
+  return actions;
+}
+
 
 

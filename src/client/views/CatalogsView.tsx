@@ -5,9 +5,13 @@ import {
   BookOpen,
   Calculator,
   Check,
+  ChevronDown,
+  ChevronUp,
   Dna,
   Eye,
+  GitBranch,
   Image as ImageIcon,
+  Layers,
   Loader2,
   Map as MapIcon,
   Pencil,
@@ -20,6 +24,7 @@ import {
   Skull,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Sword,
   Swords,
   Trash2,
@@ -27,6 +32,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  DEFAULT_PROFICIENCY_BONUS_BY_LEVEL,
   formatAbilityRange,
   formatArmorClassFormula,
   formatEntityVisions,
@@ -34,6 +40,7 @@ import {
   formatWeaponReachRange,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getClassHitDieInfo,
   getVisionBehaviorLabel,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
@@ -47,7 +54,9 @@ import type {
   ArmorRef,
   BackgroundRef,
   CatalogKey,
+  ClassFeatureRef,
   ClassRef,
+  ClassResourceScaling,
   EntityVisionEntry,
   FeatRef,
   LevelThresholdRef,
@@ -57,6 +66,8 @@ import type {
   ProficiencyRef,
   SkillRef,
   SpeciesRef,
+  SubclassFeatureRef,
+  SubclassRef,
   VisionBehavior,
   VisionRef,
   WeaponCategory,
@@ -94,8 +105,26 @@ const SECTIONS: CatalogSectionMeta[] = [
   {
     key: 'classes',
     label: 'Классы',
-    subtitle: 'Спасброски (только для ДМ), доступные навыки, владение оружием и тренированность с доспехами (PHB 2024).',
+    subtitle: 'Хиты за уровень, таблица бонуса мастерства, параметры класса, спасброски (ДМ), навыки и владения (PHB 2024).',
     icon: Swords,
+  },
+  {
+    key: 'subclasses',
+    label: 'Подклассы',
+    subtitle: 'Специализации классов (PHB 2024 / Eberron), открываются героям с 3 уровня.',
+    icon: GitBranch,
+  },
+  {
+    key: 'classFeatures',
+    label: 'Классовые умения',
+    subtitle: 'Умения базовых классов по уровням (1–20), автоматически открываются героям по мере роста уровня.',
+    icon: Layers,
+  },
+  {
+    key: 'subclassFeatures',
+    label: 'Умения подклассов',
+    subtitle: 'Уникальные умения подклассов (с 3 уровня и выше), привязанные к выбранному подклассу.',
+    icon: Star,
   },
   {
     key: 'backgrounds',
@@ -190,6 +219,13 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
   const [visionBehaviorDraft, setVisionBehaviorDraft] = useState<VisionBehavior>('normal');
 
   // Class form drafts
+  const [classHitDieDraft, setClassHitDieDraft] = useState<number>(8);
+  const [classHpHintDraft, setClassHpHintDraft] = useState<string>('');
+  const [classProfByLevelDraft, setClassProfByLevelDraft] = useState<number[]>([
+    ...DEFAULT_PROFICIENCY_BONUS_BY_LEVEL,
+  ]);
+  const [classResourcesDraft, setClassResourcesDraft] = useState<ClassResourceScaling[]>([]);
+  const [showClassProgressionEditor, setShowClassProgressionEditor] = useState(false);
   const [classSavingThrowsDraft, setClassSavingThrowsDraft] = useState<string[]>([]);
   const [classSkillCountDraft, setClassSkillCountDraft] = useState<number>(2);
   const [classAnySkillDraft, setClassAnySkillDraft] = useState<boolean>(false);
@@ -201,6 +237,18 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
   ]);
   const [classWeaponNoteDraft, setClassWeaponNoteDraft] = useState<string>('');
   const [classArmorProfsDraft, setClassArmorProfsDraft] = useState<string[]>([]);
+
+  // Subclass / Class Feature / Subclass Feature drafts & filters
+  const [subclassClassIdDraft, setSubclassClassIdDraft] = useState<string>('fighter');
+  const [subclassFilterClassId, setSubclassFilterClassId] = useState<string>('all');
+  const [featureClassIdDraft, setFeatureClassIdDraft] = useState<string>('fighter');
+  const [featureLevelDraft, setFeatureLevelDraft] = useState<number>(1);
+  const [classFeatureFilterClassId, setClassFeatureFilterClassId] = useState<string>('fighter');
+  const [subFeatureClassIdDraft, setSubFeatureClassIdDraft] = useState<string>('fighter');
+  const [subFeatureSubclassIdDraft, setSubFeatureSubclassIdDraft] = useState<string>('');
+  const [subFeatureLevelDraft, setSubFeatureLevelDraft] = useState<number>(3);
+  const [subFeatureFilterClassId, setSubFeatureFilterClassId] = useState<string>('fighter');
+  const [subFeatureFilterSubclassId, setSubFeatureFilterSubclassId] = useState<string>('all');
 
   // Background form drafts
   const [bgAbilityIdsDraft, setBgAbilityIdsDraft] = useState<string[]>([]);
@@ -305,6 +353,11 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setModMaxScoreDraft(11);
     setModValueDraft(0);
     setVisionBehaviorDraft('normal');
+    setClassHitDieDraft(8);
+    setClassHpHintDraft('');
+    setClassProfByLevelDraft([...DEFAULT_PROFICIENCY_BONUS_BY_LEVEL]);
+    setClassResourcesDraft([]);
+    setShowClassProgressionEditor(false);
     setClassSavingThrowsDraft([]);
     setClassSkillCountDraft(2);
     setClassAnySkillDraft(false);
@@ -312,6 +365,8 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setClassWeaponProfsDraft(['weapon_simple', 'weapon_melee', 'weapon_ranged']);
     setClassWeaponNoteDraft('');
     setClassArmorProfsDraft([]);
+    setFeatureLevelDraft(1);
+    setSubFeatureLevelDraft(3);
     setBgAbilityIdsDraft([]);
     setBgFeatIdDraft('');
     setBgSkillIdsDraft([]);
@@ -440,6 +495,19 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setEditingId(cls.id);
       setNameDraft(cls.name);
       setDescDraft(cls.description);
+      const hitInfo = getClassHitDieInfo(cls);
+      setClassHitDieDraft(hitInfo.hitDie);
+      setClassHpHintDraft(cls.hpPerLevelHint ?? hitInfo.hint);
+      setClassProfByLevelDraft(
+        Array.isArray(cls.proficiencyBonusByLevel) && cls.proficiencyBonusByLevel.length === 20
+          ? [...cls.proficiencyBonusByLevel]
+          : [...DEFAULT_PROFICIENCY_BONUS_BY_LEVEL]
+      );
+      setClassResourcesDraft(
+        Array.isArray(cls.classResources)
+          ? cls.classResources.map((r) => ({ ...r, values: [...r.values] }))
+          : []
+      );
       setClassSavingThrowsDraft([...(cls.savingThrowAbilityIds ?? [])]);
       setClassSkillCountDraft(cls.skillChoiceCount ?? 2);
       setClassAnySkillDraft(Boolean(cls.anySkillAllowed));
@@ -447,6 +515,27 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setClassWeaponProfsDraft([...(cls.weaponProficiencyIds ?? [])]);
       setClassWeaponNoteDraft(cls.weaponProficiencyNote ?? '');
       setClassArmorProfsDraft([...(cls.armorProficiencyIds ?? [])]);
+    } else if (activeSection === 'subclasses') {
+      const sc = item as SubclassRef;
+      setEditingId(sc.id);
+      setSubclassClassIdDraft(sc.classId || catalogs.classes[0]?.id || 'fighter');
+      setNameDraft(sc.name);
+      setDescDraft(sc.description);
+    } else if (activeSection === 'classFeatures') {
+      const cf = item as ClassFeatureRef;
+      setEditingId(cf.id);
+      setFeatureClassIdDraft(cf.classId || catalogs.classes[0]?.id || 'fighter');
+      setFeatureLevelDraft(cf.level || 1);
+      setNameDraft(cf.name);
+      setDescDraft(cf.description);
+    } else if (activeSection === 'subclassFeatures') {
+      const sf = item as SubclassFeatureRef;
+      setEditingId(sf.id);
+      setSubFeatureClassIdDraft(sf.classId || catalogs.classes[0]?.id || 'fighter');
+      setSubFeatureSubclassIdDraft(sf.subclassId || '');
+      setSubFeatureLevelDraft(sf.level || 3);
+      setNameDraft(sf.name);
+      setDescDraft(sf.description);
     } else if (activeSection === 'backgrounds') {
       const bg = item as BackgroundRef;
       setEditingId(bg.id);
@@ -597,6 +686,18 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       });
     } else if (activeSection === 'classes') {
       if (!nameDraft.trim()) return;
+      const safeHitDie = Math.max(4, Math.min(20, Math.round(classHitDieDraft || 8)));
+      const avg = Math.floor(safeHitDie / 2) + 1;
+      const safeHpHint =
+        classHpHintDraft.trim() ||
+        `1к${safeHitDie} (или ${avg}) + ваш модификатор Телосложения (суммарно минимум 1)`;
+      const cleanResources = classResourcesDraft
+        .filter((r) => r.name.trim().length > 0)
+        .map((r) => ({
+          id: r.id || `res-${Date.now().toString(36)}`,
+          name: r.name.trim(),
+          values: Array.from({ length: 20 }, (_, i) => String(r.values[i] ?? '—').trim() || '—'),
+        }));
       send({
         type: 'dm:upsertCatalogItem',
         catalog: 'classes',
@@ -604,6 +705,12 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           id: editingId ?? '',
           name: nameDraft.trim(),
           description: descDraft.trim(),
+          hitDie: safeHitDie,
+          hpPerLevelHint: safeHpHint,
+          proficiencyBonusByLevel: Array.from({ length: 20 }, (_, i) =>
+            Math.max(1, Math.min(12, Math.round(classProfByLevelDraft[i] ?? DEFAULT_PROFICIENCY_BONUS_BY_LEVEL[i])))
+          ),
+          classResources: cleanResources,
           savingThrowAbilityIds: classSavingThrowsDraft,
           skillChoiceCount: Math.max(0, Math.min(18, Math.round(classSkillCountDraft || 0))),
           anySkillAllowed: classAnySkillDraft,
@@ -611,6 +718,51 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           weaponProficiencyIds: classWeaponProfsDraft,
           weaponProficiencyNote: classWeaponNoteDraft.trim() || undefined,
           armorProficiencyIds: classArmorProfsDraft,
+        },
+      });
+    } else if (activeSection === 'subclasses') {
+      if (!nameDraft.trim()) return;
+      const clsId = subclassClassIdDraft || catalogs.classes[0]?.id || 'fighter';
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'subclasses',
+        item: {
+          id: editingId ?? '',
+          classId: clsId,
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+        },
+      });
+    } else if (activeSection === 'classFeatures') {
+      if (!nameDraft.trim()) return;
+      const clsId = featureClassIdDraft || catalogs.classes[0]?.id || 'fighter';
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'classFeatures',
+        item: {
+          id: editingId ?? '',
+          classId: clsId,
+          level: Math.max(1, Math.min(20, Math.round(featureLevelDraft || 1))),
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+        },
+      });
+    } else if (activeSection === 'subclassFeatures') {
+      if (!nameDraft.trim()) return;
+      const clsId = subFeatureClassIdDraft || catalogs.classes[0]?.id || 'fighter';
+      const fallbackSub = catalogs.subclasses.find((s) => s.classId === clsId)?.id ?? '';
+      const scId = subFeatureSubclassIdDraft || fallbackSub;
+      if (!scId) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'subclassFeatures',
+        item: {
+          id: editingId ?? '',
+          classId: clsId,
+          subclassId: scId,
+          level: Math.max(1, Math.min(20, Math.round(subFeatureLevelDraft || 3))),
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
         },
       });
     } else if (activeSection === 'backgrounds') {
@@ -1048,7 +1200,7 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
             ) : (
               <div className="p-3 rounded-xl bg-red-950/30 border border-red-900/60 space-y-2">
                 <p className="text-[11px] text-red-200 leading-snug">
-                  Восстановить исходные записи во всех 11 справочниках?
+                  Восстановить исходные записи во всех справочниках ({SECTIONS.length})?
                 </p>
                 <div className="flex gap-1.5">
                   <button
@@ -1407,6 +1559,359 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       </div>
                     </div>
                   </div>
+
+                  {/* Hit Die & HP per level hint */}
+                  <div className="grid sm:grid-cols-12 gap-3 p-3 rounded-xl bg-[#0B0F17] border border-slate-800">
+                    <label className="sm:col-span-3 space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-300">Кость хитов</span>
+                      <select
+                        value={classHitDieDraft}
+                        onChange={(e) => {
+                          const die = Number(e.target.value) || 8;
+                          setClassHitDieDraft(die);
+                          const avg = Math.floor(die / 2) + 1;
+                          setClassHpHintDraft(
+                            `1к${die} (или ${avg}) + ваш модификатор Телосложения (суммарно минимум 1)`
+                          );
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-700 text-xs font-mono text-amber-300"
+                      >
+                        <option value={6}>1к6 (ср. 4)</option>
+                        <option value={8}>1к8 (ср. 5)</option>
+                        <option value={10}>1к10 (ср. 6)</option>
+                        <option value={12}>1к12 (ср. 7)</option>
+                      </select>
+                    </label>
+                    <label className="sm:col-span-9 space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        Подсказка «Хиты за уровень» (для ДМ при создании и повышении уровня)
+                      </span>
+                      <input
+                        type="text"
+                        value={classHpHintDraft}
+                        onChange={(e) => setClassHpHintDraft(e.target.value)}
+                        placeholder={`1к${classHitDieDraft} (или ${Math.floor(classHitDieDraft / 2) + 1}) + ваш модификатор Телосложения (суммарно минимум 1)`}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Collapsible Level 1-20 Progression Table Editor (Proficiency Bonus + Class Resources) */}
+                  <div className="rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowClassProgressionEditor((v) => !v)}
+                      className="w-full px-3 py-2.5 flex items-center justify-between gap-2 text-xs font-semibold text-slate-200 hover:bg-slate-800/40 transition-colors"
+                    >
+                      <span>
+                        Таблица прогрессии (Ур. 1–20): Бонус владения и параметры класса (
+                        {classResourcesDraft.length})
+                      </span>
+                      {showClassProgressionEditor ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </button>
+
+                    {showClassProgressionEditor && (
+                      <div className="p-3 border-t border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-slate-400">
+                            Бонус владения (+2..+6) и колонки ресурсов (например, Второе дыхание, Ярость, Коварная атака)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setClassResourcesDraft((prev) => [
+                                ...prev,
+                                {
+                                  id: `res-${Date.now().toString(36)}-${prev.length}`,
+                                  name: 'Новый параметр',
+                                  values: Array.from({ length: 20 }, () => '1'),
+                                },
+                              ])
+                            }
+                            className="px-2.5 py-1 rounded-md bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-[11px] text-amber-400 flex items-center gap-1 shrink-0"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Добавить параметр</span>
+                          </button>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-[11px]">
+                            <thead>
+                              <tr className="border-b border-slate-800 text-slate-400">
+                                <th className="py-1.5 pr-2 font-medium min-w-[140px]">Параметр</th>
+                                {Array.from({ length: 20 }, (_, i) => (
+                                  <th
+                                    key={i}
+                                    className="py-1.5 px-1 font-mono text-center text-slate-500 min-w-[38px]"
+                                  >
+                                    {i + 1}
+                                  </th>
+                                ))}
+                                <th className="py-1.5 pl-1 w-7" />
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/70">
+                              <tr>
+                                <td className="py-1.5 pr-2 font-semibold text-amber-300">
+                                  Бонус владения
+                                </td>
+                                {Array.from({ length: 20 }, (_, idx) => (
+                                  <td key={idx} className="py-1 px-0.5">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={12}
+                                      value={classProfByLevelDraft[idx] ?? DEFAULT_PROFICIENCY_BONUS_BY_LEVEL[idx]}
+                                      onChange={(e) => {
+                                        const val = Math.max(1, Math.min(12, Number(e.target.value) || 2));
+                                        setClassProfByLevelDraft((prev) =>
+                                          Array.from({ length: 20 }, (_, i) =>
+                                            i === idx ? val : (prev[i] ?? DEFAULT_PROFICIENCY_BONUS_BY_LEVEL[i])
+                                          )
+                                        );
+                                      }}
+                                      className="w-9 px-1 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-center text-amber-300"
+                                    />
+                                  </td>
+                                ))}
+                                <td />
+                              </tr>
+                              {classResourcesDraft.map((res, rIdx) => (
+                                <tr key={res.id}>
+                                  <td className="py-1.5 pr-2">
+                                    <input
+                                      type="text"
+                                      value={res.name}
+                                      onChange={(e) =>
+                                        setClassResourcesDraft((prev) =>
+                                          prev.map((row, i) =>
+                                            i === rIdx ? { ...row, name: e.target.value } : row
+                                          )
+                                        )
+                                      }
+                                      className="w-full px-2 py-1 rounded bg-[#131A26] border border-slate-800 text-slate-100"
+                                    />
+                                  </td>
+                                  {Array.from({ length: 20 }, (_, idx) => (
+                                    <td key={idx} className="py-1 px-0.5">
+                                      <input
+                                        type="text"
+                                        value={res.values[idx] ?? '—'}
+                                        onChange={(e) =>
+                                          setClassResourcesDraft((prev) =>
+                                            prev.map((row, i) =>
+                                              i === rIdx
+                                                ? {
+                                                    ...row,
+                                                    values: Array.from({ length: 20 }, (_, j) =>
+                                                      j === idx ? e.target.value : (row.values[j] ?? '—')
+                                                    ),
+                                                  }
+                                                : row
+                                            )
+                                          )
+                                        }
+                                        className="w-11 px-1 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-center text-slate-200"
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className="py-1 pl-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setClassResourcesDraft((prev) =>
+                                          prev.filter((_, i) => i !== rIdx)
+                                        )
+                                      }
+                                      className="p-1 text-slate-500 hover:text-red-400"
+                                      aria-label="Удалить параметр"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'subclasses' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <select
+                      value={subclassClassIdDraft}
+                      onChange={(e) => setSubclassClassIdDraft(e.target.value)}
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    >
+                      {catalogs.classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          Класс: {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название подкласса (напр. Мастер боя)"
+                      className="sm:col-span-5 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-3 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить подкласс'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Описание подкласса..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
+              {activeSection === 'classFeatures' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <select
+                      value={featureClassIdDraft}
+                      onChange={(e) => setFeatureClassIdDraft(e.target.value)}
+                      className="sm:col-span-3 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    >
+                      {catalogs.classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="sm:col-span-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800">
+                      <span className="text-[11px] text-slate-400">Ур.</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={featureLevelDraft}
+                        onChange={(e) =>
+                          setFeatureLevelDraft(Math.max(1, Math.min(20, Number(e.target.value) || 1)))
+                        }
+                        className="w-full bg-transparent font-mono text-xs text-amber-300 font-semibold focus:outline-none"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название умения (напр. Второе дыхание)"
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-3 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить умение'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Полное описание классового умения..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
+              {activeSection === 'subclassFeatures' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <select
+                      value={subFeatureClassIdDraft}
+                      onChange={(e) => {
+                        const nextClassId = e.target.value;
+                        setSubFeatureClassIdDraft(nextClassId);
+                        const firstSub = catalogs.subclasses.find((s) => s.classId === nextClassId);
+                        setSubFeatureSubclassIdDraft(firstSub?.id ?? '');
+                      }}
+                      className="sm:col-span-3 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    >
+                      {catalogs.classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={
+                        subFeatureSubclassIdDraft ||
+                        catalogs.subclasses.find((s) => s.classId === subFeatureClassIdDraft)?.id ||
+                        ''
+                      }
+                      onChange={(e) => setSubFeatureSubclassIdDraft(e.target.value)}
+                      className="sm:col-span-3 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                    >
+                      {catalogs.subclasses
+                        .filter((s) => s.classId === subFeatureClassIdDraft)
+                        .map((sc) => (
+                          <option key={sc.id} value={sc.id}>
+                            {sc.name}
+                          </option>
+                        ))}
+                    </select>
+                    <div className="sm:col-span-1 flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800">
+                      <span className="text-[10px] text-slate-400">Ур</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={subFeatureLevelDraft}
+                        onChange={(e) =>
+                          setSubFeatureLevelDraft(
+                            Math.max(1, Math.min(20, Number(e.target.value) || 3))
+                          )
+                        }
+                        className="w-full bg-transparent font-mono text-xs text-amber-300 font-semibold focus:outline-none"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название умения подкласса"
+                      className="sm:col-span-3 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Полное описание умения подкласса..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
                 </div>
               )}
 
@@ -2797,17 +3302,37 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         .filter(Boolean)
                         .join(', ');
 
+                      const hitInfo = getClassHitDieInfo(cls);
+                      const subclassCount = catalogs.subclasses.filter((s) => s.classId === cls.id).length;
+                      const featureCount = catalogs.classFeatures.filter((f) => f.classId === cls.id).length;
+                      const resourceNames = (cls.classResources ?? []).map((r) => r.name).join(', ');
+
                       return (
                         <div
                           key={cls.id}
                           className="px-4 py-3.5 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
                         >
                           <div className="min-w-0 space-y-1.5">
-                            <div className="text-sm font-semibold text-slate-100">{cls.name}</div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-slate-100">{cls.name}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[10px] font-semibold text-amber-300">
+                                1к{hitInfo.hitDie}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-slate-300">
+                                Подклассов: {subclassCount}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-slate-300">
+                                Умений: {featureCount}
+                              </span>
+                            </div>
                             {cls.description && (
                               <p className="text-xs text-slate-400">{cls.description}</p>
                             )}
                             <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1 pt-1 text-[11px]">
+                              <div className="sm:col-span-2">
+                                <span className="text-slate-500">Хиты за уровень: </span>
+                                <span className="text-slate-200">{hitInfo.hint}</span>
+                              </div>
                               <div>
                                 <span className="text-slate-500">Спасброски (ДМ): </span>
                                 <span className="text-sky-300 font-medium">{saves || '—'}</span>
@@ -2829,6 +3354,12 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                 <span className="text-slate-500">Доспехи: </span>
                                 <span className="text-emerald-300">{armorNames || 'Нет'}</span>
                               </div>
+                              {resourceNames && (
+                                <div className="sm:col-span-2">
+                                  <span className="text-slate-500">Параметры таблицы: </span>
+                                  <span className="text-violet-300">{resourceNames}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -2852,6 +3383,299 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         </div>
                       );
                     })}
+                </div>
+              )}
+
+              {activeSection === 'subclasses' && (
+                <div>
+                  <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/50 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Фильтр по классу:</span>
+                    <select
+                      value={subclassFilterClassId}
+                      onChange={(e) => setSubclassFilterClassId(e.target.value)}
+                      className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100"
+                    >
+                      <option value="all">Все классы ({catalogs.subclasses.length})</option>
+                      {catalogs.classes.map((c) => {
+                        const cnt = catalogs.subclasses.filter((s) => s.classId === c.id).length;
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({cnt})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div className="divide-y divide-slate-800/80">
+                    {catalogs.subclasses
+                      .filter(
+                        (sc) =>
+                          (subclassFilterClassId === 'all' || sc.classId === subclassFilterClassId) &&
+                          (!q ||
+                            sc.name.toLowerCase().includes(q) ||
+                            sc.description.toLowerCase().includes(q))
+                      )
+                      .map((sc) => {
+                        const cls = catalogs.classes.find((c) => c.id === sc.classId);
+                        const featCount = catalogs.subclassFeatures.filter(
+                          (f) => f.subclassId === sc.id
+                        ).length;
+                        return (
+                          <div
+                            key={sc.id}
+                            className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-slate-100">{sc.name}</span>
+                                <span className="px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/40 text-[10px] font-medium text-violet-300">
+                                  {cls?.name ?? sc.classId}
+                                </span>
+                                <span className="text-[11px] text-slate-400">
+                                  Умений подкласса: {featCount}
+                                </span>
+                              </div>
+                              {sc.description && (
+                                <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-line line-clamp-3">
+                                  {sc.description}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(sc)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                                aria-label="Редактировать"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(sc.id)}
+                                className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                                aria-label="Удалить"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'classFeatures' && (
+                <div>
+                  <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/50 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Класс:</span>
+                    <select
+                      value={classFeatureFilterClassId}
+                      onChange={(e) => {
+                        setClassFeatureFilterClassId(e.target.value);
+                        if (e.target.value !== 'all') {
+                          setFeatureClassIdDraft(e.target.value);
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100"
+                    >
+                      <option value="all">Все классы ({catalogs.classFeatures.length})</option>
+                      {catalogs.classes.map((c) => {
+                        const cnt = catalogs.classFeatures.filter((f) => f.classId === c.id).length;
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({cnt})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div className="divide-y divide-slate-800/80">
+                    {catalogs.classFeatures
+                      .filter(
+                        (cf) =>
+                          (classFeatureFilterClassId === 'all' ||
+                            cf.classId === classFeatureFilterClassId) &&
+                          (!q ||
+                            cf.name.toLowerCase().includes(q) ||
+                            cf.description.toLowerCase().includes(q))
+                      )
+                      .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name, 'ru'))
+                      .map((cf) => {
+                        const cls = catalogs.classes.find((c) => c.id === cf.classId);
+                        return (
+                          <div
+                            key={cf.id}
+                            className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[10px] font-semibold text-amber-300">
+                                  Ур. {cf.level}
+                                </span>
+                                <span className="text-sm font-semibold text-slate-100">{cf.name}</span>
+                                {classFeatureFilterClassId === 'all' && (
+                                  <span className="text-[11px] text-slate-400">
+                                    · {cls?.name ?? cf.classId}
+                                  </span>
+                                )}
+                              </div>
+                              {cf.description && (
+                                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line line-clamp-4">
+                                  {cf.description}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(cf)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                                aria-label="Редактировать"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(cf.id)}
+                                className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                                aria-label="Удалить"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'subclassFeatures' && (
+                <div>
+                  <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/50 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Класс:</span>
+                    <select
+                      value={subFeatureFilterClassId}
+                      onChange={(e) => {
+                        const nextClassId = e.target.value;
+                        setSubFeatureFilterClassId(nextClassId);
+                        setSubFeatureFilterSubclassId('all');
+                        if (nextClassId !== 'all') {
+                          setSubFeatureClassIdDraft(nextClassId);
+                          const firstSub = catalogs.subclasses.find((s) => s.classId === nextClassId);
+                          setSubFeatureSubclassIdDraft(firstSub?.id ?? '');
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100"
+                    >
+                      <option value="all">Все классы ({catalogs.subclassFeatures.length})</option>
+                      {catalogs.classes.map((c) => {
+                        const cnt = catalogs.subclassFeatures.filter((f) => f.classId === c.id).length;
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({cnt})
+                          </option>
+                        );
+                      })}
+                    </select>
+
+                    {subFeatureFilterClassId !== 'all' && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSubFeatureFilterSubclassId('all')}
+                          className={`px-2 py-1 rounded-md border text-[11px] transition-colors ${
+                            subFeatureFilterSubclassId === 'all'
+                              ? 'bg-violet-500/20 border-violet-400/70 text-violet-200 font-medium'
+                              : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Все подклассы
+                        </button>
+                        {catalogs.subclasses
+                          .filter((s) => s.classId === subFeatureFilterClassId)
+                          .map((sc) => (
+                            <button
+                              key={sc.id}
+                              type="button"
+                              onClick={() => {
+                                setSubFeatureFilterSubclassId(sc.id);
+                                setSubFeatureSubclassIdDraft(sc.id);
+                              }}
+                              className={`px-2 py-1 rounded-md border text-[11px] transition-colors ${
+                                subFeatureFilterSubclassId === sc.id
+                                  ? 'bg-violet-500/20 border-violet-400/70 text-violet-200 font-medium'
+                                  : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {sc.name}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="divide-y divide-slate-800/80">
+                    {catalogs.subclassFeatures
+                      .filter(
+                        (sf) =>
+                          (subFeatureFilterClassId === 'all' ||
+                            sf.classId === subFeatureFilterClassId) &&
+                          (subFeatureFilterSubclassId === 'all' ||
+                            sf.subclassId === subFeatureFilterSubclassId) &&
+                          (!q ||
+                            sf.name.toLowerCase().includes(q) ||
+                            sf.description.toLowerCase().includes(q))
+                      )
+                      .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name, 'ru'))
+                      .map((sf) => {
+                        const cls = catalogs.classes.find((c) => c.id === sf.classId);
+                        const sc = catalogs.subclasses.find((s) => s.id === sf.subclassId);
+                        return (
+                          <div
+                            key={sf.id}
+                            className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-400/50 font-mono text-[10px] font-semibold text-violet-200">
+                                  Ур. {sf.level}
+                                </span>
+                                <span className="text-sm font-semibold text-slate-100">{sf.name}</span>
+                                <span className="text-[11px] text-slate-400">
+                                  · {sc?.name ?? sf.subclassId}
+                                  {subFeatureFilterClassId === 'all' && cls ? ` (${cls.name})` : ''}
+                                </span>
+                              </div>
+                              {sf.description && (
+                                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line line-clamp-4">
+                                  {sf.description}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(sf)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                                aria-label="Редактировать"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(sf.id)}
+                                className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                                aria-label="Удалить"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
                 </div>
               )}
 

@@ -1,14 +1,33 @@
-import React from 'react';
-import { Award, Check, Lock, Minus, Plus, Shield, Trash2, UserPlus, X } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  Award,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Dices,
+  GitBranch,
+  Layers,
+  Lock,
+  Minus,
+  Plus,
+  Shield,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import {
   computeLevelFromXp,
   formatModifier,
   getAbilityModifier,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
+  getClassHitDieInfo,
+  getClassProficiencyBonus,
+  getClassResourcesAtLevel,
   getClassSelectableSkillIds,
   getEffectiveDraftAbilities,
-  getProficiencyBonus,
+  getHeroClassFeatures,
+  getHeroSubclassFeatures,
   sanitizeBackgroundAbilityBonuses,
 } from '../../shared/catalogDefaults';
 import type {
@@ -37,11 +56,17 @@ export function CharacterCreationModal({
   onReject,
   onMinimize,
 }: CharacterCreationModalProps) {
+  const [showFeaturesPreview, setShowFeaturesPreview] = useState(false);
+
   const { draft } = request;
   const derivedLevel = computeLevelFromXp(draft.xp, catalogs.levels);
-  const profBonus = getProficiencyBonus(derivedLevel);
 
   const selectedClass = catalogs.classes.find((c) => c.id === draft.classId) ?? null;
+  const profBonus = getClassProficiencyBonus(derivedLevel, selectedClass);
+  const classSubclasses = selectedClass
+    ? catalogs.subclasses.filter((s) => s.classId === selectedClass.id)
+    : [];
+  const subclassUnlocked = derivedLevel >= 3;
   const selectedBg = catalogs.backgrounds.find((b) => b.id === draft.backgroundId) ?? null;
   const bgFeat = selectedBg?.featId
     ? catalogs.feats.find((f) => f.id === selectedBg.featId) ?? null
@@ -59,6 +84,22 @@ export function CharacterCreationModal({
   const dexRaw = effectiveAbilities.dex;
   const dexScore = typeof dexRaw === 'number' ? dexRaw : 10;
   const dexMod = getAbilityModifier(dexScore, catalogs.abilityModifiers);
+  const conRaw = effectiveAbilities.con;
+  const conScore = typeof conRaw === 'number' ? conRaw : 10;
+  const conMod = getAbilityModifier(conScore, catalogs.abilityModifiers);
+  const hitDieInfo = getClassHitDieInfo(selectedClass);
+  const averageHpPerLevel = Math.max(1, hitDieInfo.average + conMod);
+  const suggestedTotalAvgHp = averageHpPerLevel * derivedLevel;
+
+  const classResourcesAtLevel = getClassResourcesAtLevel(selectedClass, derivedLevel);
+  const previewClassFeatures = getHeroClassFeatures(draft.classId, derivedLevel, catalogs);
+  const previewSubclassFeatures = getHeroSubclassFeatures(
+    draft.classId,
+    draft.subclassId,
+    derivedLevel,
+    catalogs
+  );
+
   const derivedAc = 10 + dexMod;
   const derivedInit = 10 + dexMod;
   const canFinalize = draft.name.trim().length > 0;
@@ -231,11 +272,11 @@ export function CharacterCreationModal({
               </div>
             </div>
 
-            <label className="md:col-span-4 space-y-1.5">
+            <label className="md:col-span-3 space-y-1.5">
               <span className="text-xs font-medium text-slate-300">Класс</span>
               <select
                 value={draft.classId}
-                onChange={(e) => onUpdateDraft({ classId: e.target.value })}
+                onChange={(e) => onUpdateDraft({ classId: e.target.value, subclassId: '' })}
                 className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
               >
                 <option value="">— Не выбран —</option>
@@ -247,7 +288,44 @@ export function CharacterCreationModal({
               </select>
             </label>
 
-            <label className="md:col-span-4 space-y-1.5">
+            <label className="md:col-span-3 space-y-1.5">
+              <span className="text-xs font-medium text-slate-300 flex items-center justify-between gap-1">
+                <span>Подкласс</span>
+                {!subclassUnlocked && (
+                  <span className="text-[10px] text-slate-500 flex items-center gap-0.5">
+                    <Lock className="w-2.5 h-2.5" />
+                    <span>с 3 ур.</span>
+                  </span>
+                )}
+              </span>
+              <select
+                value={subclassUnlocked ? (draft.subclassId ?? '') : ''}
+                disabled={!subclassUnlocked || !selectedClass || classSubclasses.length === 0}
+                onChange={(e) => onUpdateDraft({ subclassId: e.target.value })}
+                title={
+                  !subclassUnlocked
+                    ? 'Выбор подкласса открывается с 3 уровня'
+                    : undefined
+                }
+                className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                <option value="">
+                  {!subclassUnlocked
+                    ? 'Доступно с 3 уровня'
+                    : !selectedClass
+                      ? 'Сначала выберите класс'
+                      : '— Не выбран —'}
+                </option>
+                {subclassUnlocked &&
+                  classSubclasses.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label className="md:col-span-3 space-y-1.5">
               <span className="text-xs font-medium text-slate-300">Предыстория</span>
               <select
                 value={draft.backgroundId}
@@ -263,7 +341,7 @@ export function CharacterCreationModal({
               </select>
             </label>
 
-            <label className="md:col-span-4 space-y-1.5">
+            <label className="md:col-span-3 space-y-1.5">
               <span className="text-xs font-medium text-slate-300">Вид</span>
               <select
                 value={draft.speciesId}
@@ -417,6 +495,36 @@ export function CharacterCreationModal({
               />
             </label>
           </div>
+
+          {/* Live Hit Die / HP per level helper for DM dice rolls */}
+          {selectedClass && (
+            <div className="p-3 rounded-xl bg-amber-500/8 border border-amber-500/35 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5 min-w-0">
+                <div className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                  <Dices className="w-3.5 h-3.5 shrink-0" />
+                  <span>Хиты за уровень ({selectedClass.name}): {hitDieInfo.hint}</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Бросьте{' '}
+                  <span className="font-mono font-semibold text-amber-300">
+                    {derivedLevel}×1к{hitDieInfo.hitDie}
+                  </span>{' '}
+                  и прибавьте мод. ТЕЛ ({formatModifier(conMod)}) за каждый уровень. Среднее значение:{' '}
+                  <span className="font-mono font-semibold text-slate-100">
+                    {averageHpPerLevel} HP/ур.
+                    {derivedLevel > 1 ? ` (итого ${suggestedTotalAvgHp} HP)` : ''}
+                  </span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onUpdateDraft({ maxHp: suggestedTotalAvgHp })}
+                className="px-2.5 py-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-amber-500/50 text-[11px] font-medium text-amber-300 transition-colors shrink-0"
+              >
+                Подставить среднее ({suggestedTotalAvgHp})
+              </button>
+            </div>
+          )}
 
           {/* Section 3: Abilities + Background +3 Points Distribution */}
           <div className="space-y-2.5 pt-4 border-t border-slate-800">
@@ -736,6 +844,92 @@ export function CharacterCreationModal({
               )}
             </div>
           </div>
+
+          {/* Section 4.2: Unlocked Class Parameters & Features Preview */}
+          {selectedClass &&
+            (classResourcesAtLevel.length > 0 ||
+              previewClassFeatures.length > 0 ||
+              previewSubclassFeatures.length > 0) && (
+              <div className="pt-4 border-t border-slate-800 space-y-2.5">
+                <div className="rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowFeaturesPreview((v) => !v)}
+                    className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-800/40 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="text-xs font-semibold text-slate-200">
+                        Умения и параметры класса на {derivedLevel} уровне
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 font-mono text-[10px] text-amber-300">
+                        БМ +{profBonus}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        ({previewClassFeatures.length + previewSubclassFeatures.length} умений)
+                      </span>
+                    </div>
+                    {showFeaturesPreview ? (
+                      <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                    )}
+                  </button>
+
+                  {classResourcesAtLevel.length > 0 && (
+                    <div className="px-3.5 pb-2.5 flex flex-wrap gap-1.5">
+                      {classResourcesAtLevel.map((res) => (
+                        <span
+                          key={res.id}
+                          className="px-2 py-0.5 rounded-md bg-[#131A26] border border-slate-700 text-[11px] text-slate-300"
+                        >
+                          {res.name}:{' '}
+                          <span className="font-mono font-semibold text-amber-300">
+                            {res.value}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {showFeaturesPreview && (
+                    <div className="px-3.5 pb-3 pt-2 border-t border-slate-800/80 space-y-2 max-h-60 overflow-y-auto">
+                      {previewClassFeatures.map((feat) => (
+                        <div key={feat.id} className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-100">
+                            <span className="font-mono text-[10px] text-amber-400">
+                              Ур. {feat.level}
+                            </span>
+                            <span>{feat.name}</span>
+                          </div>
+                          {feat.description && (
+                            <p className="text-[11px] text-slate-400 leading-relaxed whitespace-pre-line line-clamp-3">
+                              {feat.description}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                      {previewSubclassFeatures.map((feat) => (
+                        <div key={feat.id} className="space-y-0.5 pt-1 border-t border-slate-800/60">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-200">
+                            <GitBranch className="w-3 h-3 text-violet-400 shrink-0" />
+                            <span className="font-mono text-[10px] text-violet-300">
+                              Ур. {feat.level}
+                            </span>
+                            <span>{feat.name}</span>
+                          </div>
+                          {feat.description && (
+                            <p className="text-[11px] text-slate-400 leading-relaxed whitespace-pre-line line-clamp-3">
+                              {feat.description}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Section 4.5: Vision & Senses */}
           <div className="pt-4 border-t border-slate-800 space-y-2.5">

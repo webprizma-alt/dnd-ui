@@ -1,17 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowUpCircle,
   Award,
   Bell,
   BookOpen,
   Check,
+  ChevronDown,
   ChevronRight,
   Compass,
   Crosshair,
+  Dices,
   Eye,
   EyeOff,
+  GitBranch,
   Grid3X3,
   ImagePlus,
+  Layers,
   Lock,
   Map as MapIcon,
   MapPin,
@@ -27,6 +32,7 @@ import {
   Sparkles,
   Sun,
   Sunset,
+  Swords,
   Trash2,
   UserPlus,
   Users,
@@ -34,6 +40,7 @@ import {
 } from 'lucide-react';
 import {
   computeEffectiveVisionRanges,
+  computeHeroActions,
   computePlayerAcDetails,
   formatEntityVisions,
   formatModifier,
@@ -42,11 +49,16 @@ import {
   getArmorCategoryLabel,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
+  getClassHitDieInfo,
+  getClassProficiencyBonus,
+  getClassResourcesAtLevel,
   getHeroAllowedSkillIds,
+  getHeroClassFeatures,
   getHeroFeats,
+  getHeroLevelUpChecklist,
+  getHeroSubclassFeatures,
   getMapLightingDescription,
   getNextLevelThreshold,
-  getProficiencyBonus,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
   resolveMonsterActionRange,
@@ -115,6 +127,8 @@ export function DmView({ onNavigate }: DmViewProps) {
   const [noteDraft, setNoteDraft] = useState('');
   const [locationNoteDraft, setLocationNoteDraft] = useState('');
   const [sensesDraft, setSensesDraft] = useState('');
+  const [levelUpHpDeltaDraft, setLevelUpHpDeltaDraft] = useState('');
+  const [expandedDmFeatureId, setExpandedDmFeatureId] = useState<string | null>(null);
   const [showDmTacticalOverlay, setShowDmTacticalOverlay] = useState(true);
   const [selectedAttackOverlayId, setSelectedAttackOverlayId] = useState<string>('all');
   const [activeHotspotPopover, setActiveHotspotPopover] = useState<LocationHotspot | null>(null);
@@ -171,9 +185,11 @@ export function DmView({ onNavigate }: DmViewProps) {
       setNameDraft(selectedPlayer.name);
       setLocationNoteDraft(selectedPlayer.locationNote ?? '');
       setSensesDraft(selectedPlayer.senses ?? '');
+      setLevelUpHpDeltaDraft('');
     }
   }, [
     selectedPlayer?.id,
+    selectedPlayer?.level,
     selectedPlayer?.privateNote,
     selectedPlayer?.name,
     selectedPlayer?.locationNote,
@@ -467,7 +483,20 @@ export function DmView({ onNavigate }: DmViewProps) {
   const nextLevelRef = selectedPlayer
     ? getNextLevelThreshold(selectedPlayer.xp, catalogs.levels)
     : null;
-  const profBonus = selectedPlayer ? getProficiencyBonus(selectedPlayer.level) : 2;
+  const selectedClassRef = selectedPlayer
+    ? catalogs.classes.find((c) => c.id === selectedPlayer.classId) ?? null
+    : null;
+  const selectedSubclassRef =
+    selectedPlayer?.subclassId && selectedPlayer.level >= 3
+      ? catalogs.subclasses.find((s) => s.id === selectedPlayer.subclassId) ?? null
+      : null;
+  const profBonus = selectedPlayer
+    ? getClassProficiencyBonus(selectedPlayer.level, selectedClassRef)
+    : 2;
+  const levelUpChecklist = selectedPlayer
+    ? getHeroLevelUpChecklist(selectedPlayer, catalogs)
+    : null;
+  const heroActions = selectedPlayer ? computeHeroActions(selectedPlayer, catalogs) : [];
   const activeCreationRequest = activeCreationRequestId
     ? dmState.creationRequests.find((r) => r.id === activeCreationRequestId) ?? null
     : null;
@@ -1394,6 +1423,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                     {dmState.players.map((p) => {
                       const inOtherLocation = p.locationId !== dmState.activeLocationId;
+                      const pCheck = getHeroLevelUpChecklist(p, catalogs);
                       return (
                         <button
                           key={p.id}
@@ -1413,6 +1443,22 @@ export function DmView({ onNavigate }: DmViewProps) {
                           />
                           <span>{p.name}</span>
                           <span className="text-[10px] font-mono text-slate-400">Ур.{p.level}</span>
+                          {pCheck.hasPendingLevelUp && (
+                            <span
+                              className="px-1 py-0.5 rounded bg-amber-500/20 border border-amber-400/60 text-[9px] font-mono font-bold text-amber-300"
+                              title="Повышение уровня — проверьте памятку"
+                            >
+                              LVL↑
+                            </span>
+                          )}
+                          {!pCheck.hasPendingLevelUp && pCheck.needsSubclassChoice && (
+                            <span
+                              className="px-1 py-0.5 rounded bg-violet-500/20 border border-violet-400/60 text-[9px] font-semibold text-violet-200"
+                              title="Требуется выбрать подкласс (3 ур.)"
+                            >
+                              Подкл.
+                            </span>
+                          )}
                           {inOtherLocation && (
                             <MapPin className="w-3 h-3 text-amber-400 shrink-0" aria-label="В другой локации" />
                           )}
@@ -1533,6 +1579,17 @@ export function DmView({ onNavigate }: DmViewProps) {
                         КЗ и Инициатива: <span className="font-mono text-slate-200">10 + мод. ЛОВ</span>
                       </div>
                     </div>
+                    {(() => {
+                      const cls = catalogs.classes.find((c) => c.id === newPlayerClassId);
+                      if (!cls) return null;
+                      const hitInfo = getClassHitDieInfo(cls);
+                      return (
+                        <div className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200/95 flex items-center gap-1.5">
+                          <Dices className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span>Хиты за ур.: {hitInfo.hint}</span>
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
                         {PRESET_COLORS.map((c) => (
@@ -1578,7 +1635,9 @@ export function DmView({ onNavigate }: DmViewProps) {
                           {selectedPlayer.name}
                         </div>
                         <div className="text-xs text-slate-400 truncate">
-                          {selectedPlayer.role} · Ур. {selectedPlayer.level} ({selectedPlayer.xp} XP)
+                          {selectedPlayer.role}
+                          {selectedSubclassRef ? ` (${selectedSubclassRef.name})` : ''} · Ур.{' '}
+                          {selectedPlayer.level} · БМ +{profBonus} ({selectedPlayer.xp} XP)
                           {getAccountName(selectedPlayer.ownerAccountId)
                             ? ` · ${getAccountName(selectedPlayer.ownerAccountId)}`
                             : ''}
@@ -1597,6 +1656,201 @@ export function DmView({ onNavigate }: DmViewProps) {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
+
+                    {/* DM Level-Up & Subclass Reminder Banner */}
+                    {levelUpChecklist &&
+                      (levelUpChecklist.hasPendingLevelUp || levelUpChecklist.needsSubclassChoice) && (
+                        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/45 space-y-2.5 text-xs">
+                          {levelUpChecklist.hasPendingLevelUp && (
+                            <>
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+                                  <ArrowUpCircle className="w-4 h-4 shrink-0" />
+                                  <span>
+                                    Повышение уровня: Ур. {levelUpChecklist.fromLevel} → Ур.{' '}
+                                    {levelUpChecklist.toLevel}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      acknowledgedLevel: selectedPlayer.level,
+                                    })
+                                  }
+                                  className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Готово</span>
+                                </button>
+                              </div>
+
+                              {/* 1. Hit Die roll & quick +HP action */}
+                              <div className="p-2.5 rounded-lg bg-[#0B0F17]/90 border border-slate-800 space-y-1.5">
+                                <div className="text-[11px] font-medium text-slate-200 flex items-center gap-1.5">
+                                  <Dices className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span>
+                                    Бросьте{' '}
+                                    <span className="font-mono text-amber-300 font-semibold">
+                                      {levelUpChecklist.levelsGained}×1к{levelUpChecklist.hitDie}
+                                    </span>{' '}
+                                    + мод. ТЕЛ ({formatModifier(levelUpChecklist.conMod)}) за уровень
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  {levelUpChecklist.hpHint} · Среднее: +
+                                  {levelUpChecklist.averageHpPerLevel * levelUpChecklist.levelsGained}{' '}
+                                  HP
+                                </div>
+                                <div className="flex items-center gap-1.5 pt-0.5">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={levelUpHpDeltaDraft}
+                                    onChange={(e) => setLevelUpHpDeltaDraft(e.target.value)}
+                                    placeholder={String(
+                                      levelUpChecklist.averageHpPerLevel *
+                                        levelUpChecklist.levelsGained
+                                    )}
+                                    className="w-20 px-2 py-1 rounded bg-[#131A26] border border-slate-700 font-mono text-xs text-emerald-300 text-center"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const fallbackAvg =
+                                        levelUpChecklist.averageHpPerLevel *
+                                        levelUpChecklist.levelsGained;
+                                      const delta = Math.max(
+                                        1,
+                                        Math.round(
+                                          levelUpHpDeltaDraft.trim() !== ''
+                                            ? Number(levelUpHpDeltaDraft) || fallbackAvg
+                                            : fallbackAvg
+                                        )
+                                      );
+                                      send({
+                                        type: 'dm:updateStats',
+                                        playerId: selectedPlayer.id,
+                                        maxHp: selectedPlayer.maxHp + delta,
+                                        hp: selectedPlayer.hp + delta,
+                                      });
+                                      setLevelUpHpDeltaDraft('');
+                                    }}
+                                    className="px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors"
+                                  >
+                                    +HP к Макс. ({selectedPlayer.maxHp} →{' '}
+                                    {selectedPlayer.maxHp +
+                                      Math.max(
+                                        1,
+                                        Math.round(
+                                          levelUpHpDeltaDraft.trim() !== ''
+                                            ? Number(levelUpHpDeltaDraft) ||
+                                                levelUpChecklist.averageHpPerLevel *
+                                                  levelUpChecklist.levelsGained
+                                            : levelUpChecklist.averageHpPerLevel *
+                                                levelUpChecklist.levelsGained
+                                        )
+                                      )}
+                                    )
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* 2. Proficiency Bonus Increase */}
+                              {levelUpChecklist.profBonusChange && (
+                                <div className="text-[11px] text-emerald-300">
+                                  • Бонус мастерства вырос:{' '}
+                                  <span className="font-mono font-bold">
+                                    +{levelUpChecklist.profBonusChange.from} → +
+                                    {levelUpChecklist.profBonusChange.to}
+                                  </span>{' '}
+                                  (навыки, спасброски и атаки пересчитаны)
+                                </div>
+                              )}
+
+                              {/* 3. Class Resource Scaling Changes */}
+                              {levelUpChecklist.resourceChanges.length > 0 && (
+                                <div className="text-[11px] text-slate-200 space-y-0.5">
+                                  <div className="text-slate-400">• Обновились параметры класса:</div>
+                                  <div className="flex flex-wrap gap-1.5 pl-2">
+                                    {levelUpChecklist.resourceChanges.map((rc) => (
+                                      <span
+                                        key={rc.name}
+                                        className="px-1.5 py-0.5 rounded bg-[#0B0F17] border border-slate-700 text-[10px]"
+                                      >
+                                        {rc.name}:{' '}
+                                        <span className="font-mono text-amber-300 font-semibold">
+                                          {rc.from} → {rc.to}
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* 4. Newly Unlocked Features */}
+                              {(levelUpChecklist.unlockedClassFeatures.length > 0 ||
+                                levelUpChecklist.unlockedSubclassFeatures.length > 0) && (
+                                <div className="text-[11px] text-slate-200 space-y-1">
+                                  <div className="text-slate-400">• Открылись новые умения:</div>
+                                  <div className="flex flex-wrap gap-1 pl-2">
+                                    {levelUpChecklist.unlockedClassFeatures.map((f) => (
+                                      <span
+                                        key={f.id}
+                                        className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] text-amber-200"
+                                      >
+                                        Ур.{f.level} {f.name}
+                                      </span>
+                                    ))}
+                                    {levelUpChecklist.unlockedSubclassFeatures.map((f) => (
+                                      <span
+                                        key={f.id}
+                                        className="px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-400/50 text-[10px] text-violet-200"
+                                      >
+                                        Ур.{f.level} {f.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {/* 5. Subclass Selection Reminder (Level 3+) */}
+                          {levelUpChecklist.needsSubclassChoice && (
+                            <div className="p-2.5 rounded-lg bg-violet-950/50 border border-violet-500/50 space-y-1.5">
+                              <div className="text-[11px] font-semibold text-violet-200 flex items-center gap-1.5">
+                                <GitBranch className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                                <span>
+                                  Выбор подкласса (3 ур.) — уведомите игрока и выберите подкласс:
+                                </span>
+                              </div>
+                              <select
+                                value={selectedPlayer.subclassId ?? ''}
+                                onChange={(e) =>
+                                  send({
+                                    type: 'dm:updateStats',
+                                    playerId: selectedPlayer.id,
+                                    subclassId: e.target.value,
+                                  })
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-[#0B0F17] border border-violet-500/50 text-xs text-slate-100"
+                              >
+                                <option value="">— Выбрать подкласс для {selectedClassRef?.name ?? 'класса'} —</option>
+                                {catalogs.subclasses
+                                  .filter((s) => s.classId === selectedPlayer.classId)
+                                  .map((sc) => (
+                                    <option key={sc.id} value={sc.id}>
+                                      {sc.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                     {/* Player Sub-Tabs */}
                     <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0B0F17] border border-slate-800 text-[11px] font-medium">
@@ -1822,6 +2076,51 @@ export function DmView({ onNavigate }: DmViewProps) {
                           </div>
                           <div className="text-[10px] text-slate-400 truncate">
                             КЗ: {computePlayerAcDetails(selectedPlayer, catalogs).breakdown}
+                          </div>
+                        </div>
+
+                        {/* Hero Combat Actions (Unarmed + Inventory Weapons) */}
+                        <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                              <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span>Действия героя ({heroActions.length})</span>
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400">
+                              БМ +{profBonus}
+                            </span>
+                          </div>
+                          <div className="divide-y divide-slate-800/80">
+                            {heroActions.map((act) => (
+                              <div
+                                key={act.id}
+                                className={`py-1.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2 text-xs ${
+                                  act.equipped ? 'text-slate-100' : 'text-slate-400 opacity-75'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium truncate flex items-center gap-1.5">
+                                    <span className="truncate">{act.name}</span>
+                                    {!act.equipped && (
+                                      <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] text-slate-400 shrink-0">
+                                        в рюкзаке
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">
+                                    {act.rangeLabel} · {act.hitBreakdown}
+                                  </div>
+                                </div>
+                                <div className="text-right font-mono tabular-nums shrink-0">
+                                  <div className="text-[11px] font-semibold text-amber-300">
+                                    {act.hitFormula}
+                                  </div>
+                                  <div className="text-[10px] text-rose-300">
+                                    {act.damageFormula}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
 
@@ -2293,6 +2592,48 @@ export function DmView({ onNavigate }: DmViewProps) {
                             </label>
                           </div>
 
+                          {/* Subclass Selector (Locked until Level 3) */}
+                          <label className="block space-y-1">
+                            <span className="text-[11px] text-slate-400 flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-1">
+                                <GitBranch className="w-3 h-3 text-violet-400" />
+                                <span>Подкласс</span>
+                              </span>
+                              {selectedPlayer.level < 3 && (
+                                <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                                  <Lock className="w-2.5 h-2.5" />
+                                  <span>Открывается с 3 уровня</span>
+                                </span>
+                              )}
+                            </span>
+                            <select
+                              value={selectedPlayer.level >= 3 ? (selectedPlayer.subclassId ?? '') : ''}
+                              disabled={selectedPlayer.level < 3}
+                              onChange={(e) =>
+                                send({
+                                  type: 'dm:updateStats',
+                                  playerId: selectedPlayer.id,
+                                  subclassId: e.target.value,
+                                })
+                              }
+                              className="w-full px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100 disabled:opacity-45 disabled:cursor-not-allowed"
+                            >
+                              <option value="">
+                                {selectedPlayer.level < 3
+                                  ? 'Доступно с 3 уровня'
+                                  : '— Подкласс не выбран —'}
+                              </option>
+                              {selectedPlayer.level >= 3 &&
+                                catalogs.subclasses
+                                  .filter((s) => s.classId === selectedPlayer.classId)
+                                  .map((sc) => (
+                                    <option key={sc.id} value={sc.id}>
+                                      {sc.name}
+                                    </option>
+                                  ))}
+                            </select>
+                          </label>
+
                           <label className="block space-y-1">
                             <span className="text-[11px] text-slate-400">Владелец (аккаунт участника)</span>
                             <select
@@ -2365,6 +2706,20 @@ export function DmView({ onNavigate }: DmViewProps) {
                               ))}
                             </div>
                           </div>
+
+                          {selectedClassRef && (
+                            <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                              <span className="text-slate-400">
+                                Хиты за ур.:{' '}
+                                <span className="text-slate-200">
+                                  {getClassHitDieInfo(selectedClassRef).hint}
+                                </span>
+                              </span>
+                              <span className="font-mono font-semibold text-amber-300">
+                                БМ +{profBonus}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Ability Scores Grid */}
@@ -2483,6 +2838,116 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   </div>
                                 ))}
                               </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Class Scaling Resources & Unlocked Class/Subclass Features */}
+                        {(() => {
+                          const resources = getClassResourcesAtLevel(
+                            selectedClassRef,
+                            selectedPlayer.level
+                          );
+                          const classFeats = getHeroClassFeatures(
+                            selectedPlayer.classId,
+                            selectedPlayer.level,
+                            catalogs
+                          );
+                          const subFeats = getHeroSubclassFeatures(
+                            selectedPlayer.classId,
+                            selectedPlayer.subclassId,
+                            selectedPlayer.level,
+                            catalogs
+                          );
+                          const combined = [
+                            ...classFeats.map((f) => ({
+                              id: f.id,
+                              level: f.level,
+                              name: f.name,
+                              description: f.description,
+                              isSubclass: false,
+                            })),
+                            ...subFeats.map((f) => ({
+                              id: f.id,
+                              level: f.level,
+                              name: f.name,
+                              description: f.description,
+                              isSubclass: true,
+                            })),
+                          ].sort((a, b) => a.level - b.level);
+
+                          if (resources.length === 0 && combined.length === 0) return null;
+                          return (
+                            <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                  <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span>Умения класса ({combined.length})</span>
+                                </span>
+                                <span className="text-[10px] font-mono text-amber-300">
+                                  Ур. {selectedPlayer.level} · БМ +{profBonus}
+                                </span>
+                              </div>
+
+                              {resources.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {resources.map((r) => (
+                                    <span
+                                      key={r.id}
+                                      className="px-2 py-0.5 rounded-md bg-[#131A26] border border-slate-700 text-[11px] text-slate-300"
+                                    >
+                                      {r.name}:{' '}
+                                      <span className="font-mono font-semibold text-amber-300">
+                                        {r.value}
+                                      </span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {combined.length > 0 && (
+                                <div className="divide-y divide-slate-800/80">
+                                  {combined.map((feat) => {
+                                    const open = expandedDmFeatureId === feat.id;
+                                    return (
+                                      <div key={feat.id} className="py-1.5 first:pt-0 last:pb-0">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedDmFeatureId(open ? null : feat.id)
+                                          }
+                                          className="w-full flex items-center justify-between gap-2 text-left"
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span
+                                              className={`px-1 py-0.5 rounded font-mono text-[9px] font-semibold shrink-0 ${
+                                                feat.isSubclass
+                                                  ? 'bg-violet-500/20 text-violet-300'
+                                                  : 'bg-amber-500/15 text-amber-300'
+                                              }`}
+                                            >
+                                              Ур.{feat.level}
+                                            </span>
+                                            <span className="text-xs font-medium text-slate-100 truncate">
+                                              {feat.name}
+                                            </span>
+                                          </div>
+                                          <ChevronDown
+                                            className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${
+                                              open ? 'rotate-180' : ''
+                                            }`}
+                                          />
+                                        </button>
+                                        {open && feat.description && (
+                                          <p className="mt-1.5 text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">
+                                            {feat.description}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           );
                         })()}

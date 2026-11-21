@@ -31,6 +31,7 @@ export interface UserAccount {
 export interface CharacterDraft {
   name: string;
   classId: string;
+  subclassId?: string;
   backgroundId: string;
   speciesId: string;
   color: string;
@@ -77,10 +78,25 @@ export interface FeatRef {
   description: string;
 }
 
+export interface ClassResourceScaling {
+  id: string;
+  name: string;
+  /** Values for levels 1..20 (index 0 = level 1, index 19 = level 20) */
+  values: string[];
+}
+
 export interface ClassRef {
   id: string;
   name: string;
   description: string;
+  /** Hit die sides (e.g. 6, 8, 10, 12) */
+  hitDie?: number;
+  /** Human-readable HP per level hint (e.g. "1к10 (или 6) + ваш модификатор Телосложения (суммарно минимум 1)") */
+  hpPerLevelHint?: string;
+  /** Proficiency bonus progression for levels 1..20 */
+  proficiencyBonusByLevel?: number[];
+  /** Scaling class table columns (e.g. Второе дыхание, Оружейное мастерство, Ярость) */
+  classResources?: ClassResourceScaling[];
   /** Saving throw proficiencies (ability IDs, shown strictly to DM) */
   savingThrowAbilityIds?: string[];
   /** Number of class skills selectable at character creation */
@@ -95,6 +111,30 @@ export interface ClassRef {
   weaponProficiencyNote?: string;
   /** Default armor training proficiency IDs linked to catalogs.proficiencies */
   armorProficiencyIds?: string[];
+}
+
+export interface SubclassRef {
+  id: string;
+  classId: string;
+  name: string;
+  description: string;
+}
+
+export interface ClassFeatureRef {
+  id: string;
+  classId: string;
+  level: number;
+  name: string;
+  description: string;
+}
+
+export interface SubclassFeatureRef {
+  id: string;
+  classId: string;
+  subclassId: string;
+  level: number;
+  name: string;
+  description: string;
 }
 
 export interface BackgroundRef {
@@ -218,6 +258,9 @@ export interface GameCatalogs {
   abilities: AbilityRef[];
   abilityModifiers: AbilityModifierRef[];
   classes: ClassRef[];
+  subclasses: SubclassRef[];
+  classFeatures: ClassFeatureRef[];
+  subclassFeatures: SubclassFeatureRef[];
   backgrounds: BackgroundRef[];
   feats: FeatRef[];
   species: SpeciesRef[];
@@ -334,6 +377,7 @@ export interface PublicPlayerInfo {
   name: string;
   role: string;
   classId: string;
+  subclassId?: string;
   speciesId: string;
   backgroundId: string;
   xp: number;
@@ -356,6 +400,8 @@ export interface PublicPlayerInfo {
 }
 
 export interface PlayerCharacter extends PublicPlayerInfo {
+  /** Last hero level acknowledged/processed by DM (used for level-up checklist reminders) */
+  acknowledgedLevel?: number;
   abilities: Record<string, number>;
   proficientSkillIds: string[];
   expertiseSkillIds?: string[];
@@ -513,6 +559,7 @@ export type ClientMessage =
         ownerAccountId?: string;
         name: string;
         classId?: string;
+        subclassId?: string;
         backgroundId?: string;
         speciesId?: string;
         role?: string;
@@ -537,10 +584,12 @@ export type ClientMessage =
       ownerAccountId?: string;
       name?: string;
       classId?: string;
+      subclassId?: string;
       backgroundId?: string;
       speciesId?: string;
       color?: string;
       xp?: number;
+      acknowledgedLevel?: number;
       hp?: number;
       maxHp?: number;
       tempHp?: number;
@@ -577,6 +626,9 @@ export type ClientMessage =
   | { type: 'dm:upsertCatalogItem'; catalog: 'abilities'; item: AbilityRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'abilityModifiers'; item: AbilityModifierRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'classes'; item: ClassRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'subclasses'; item: SubclassRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'classFeatures'; item: ClassFeatureRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'subclassFeatures'; item: SubclassFeatureRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'backgrounds'; item: BackgroundRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'feats'; item: FeatRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'species'; item: SpeciesRef }

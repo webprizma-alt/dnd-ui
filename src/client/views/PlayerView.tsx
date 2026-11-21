@@ -13,8 +13,10 @@ import {
   Compass,
   Eye,
   FlaskConical,
+  GitBranch,
   Image as ImageIcon,
   KeyRound,
+  Layers,
   Loader2,
   LogOut,
   MapPin,
@@ -23,21 +25,26 @@ import {
   Shield,
   Sparkles,
   Sword,
+  Swords,
   User,
   UserPlus,
   X,
 } from 'lucide-react';
 import {
+  computeHeroActions,
   computeLevelFromXp,
   computePlayerAcDetails,
   formatEntityVisions,
   formatModifier,
   getAbilityModifier,
   getArmorCategoryLabel,
+  getClassProficiencyBonus,
+  getClassResourcesAtLevel,
   getEffectiveDraftAbilities,
+  getHeroClassFeatures,
   getHeroFeats,
+  getHeroSubclassFeatures,
   getNextLevelThreshold,
-  getProficiencyBonus,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
   resolveWeaponReachRange,
@@ -105,6 +112,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>('hero');
   const [confirmUseId, setConfirmUseId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
+  const [expandedFeatureId, setExpandedFeatureId] = useState<string | null>(null);
   const [onlyProficientSkills, setOnlyProficientSkills] = useState(false);
 
   // Hero AI portrait generation modal state (used only inside entered hero sheet)
@@ -416,7 +424,18 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
       ? getEffectiveDraftAbilities(draft, catalogs)
       : {};
     const draftLevel = draft ? computeLevelFromXp(draft.xp, catalogs.levels) : 1;
-    const draftProfBonus = getProficiencyBonus(draftLevel);
+    const draftProfBonus = getClassProficiencyBonus(draftLevel, draftClass);
+    const draftSubclass =
+      draft?.subclassId && draftLevel >= 3
+        ? catalogs.subclasses.find((s) => s.id === draft.subclassId) ?? null
+        : null;
+    const draftClassResources = getClassResourcesAtLevel(draftClass, draftLevel);
+    const draftClassFeatures = draft
+      ? getHeroClassFeatures(draft.classId, draftLevel, catalogs)
+      : [];
+    const draftSubclassFeatures = draft
+      ? getHeroSubclassFeatures(draft.classId, draft.subclassId, draftLevel, catalogs)
+      : [];
     const draftDexVal = draft ? draftEffectiveAbilities.dex : null;
     const draftDexMod =
       typeof draftDexVal === 'number' && !Number.isNaN(draftDexVal)
@@ -571,7 +590,8 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         {draft.name.trim() || 'Ожидание имени...'}
                       </div>
                       <div className="text-xs text-slate-400">
-                        {draftClass ? draftClass.name : 'Класс —'} ·{' '}
+                        {draftClass ? draftClass.name : 'Класс —'}
+                        {draftSubclass ? ` (${draftSubclass.name})` : ''} ·{' '}
                         {draftSpecies ? draftSpecies.name : 'Вид —'} ·{' '}
                         {draftBackground ? draftBackground.name : 'Предыстория —'}
                       </div>
@@ -778,6 +798,59 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   )}
                 </div>
 
+                {/* Live Class Parameters & Unlocked Features Preview */}
+                {draftClass &&
+                  (draftClassResources.length > 0 ||
+                    draftClassFeatures.length > 0 ||
+                    draftSubclassFeatures.length > 0) && (
+                    <div className="space-y-2 pt-3 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5 text-amber-400" />
+                          <span>
+                            Умения класса ({draftClassFeatures.length + draftSubclassFeatures.length})
+                          </span>
+                        </span>
+                        <span className="font-mono text-amber-400">БМ +{draftProfBonus}</span>
+                      </div>
+                      {draftClassResources.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {draftClassResources.map((r) => (
+                            <span
+                              key={r.id}
+                              className="px-2 py-0.5 rounded-md bg-[#0B0F17] border border-slate-800 text-[11px] text-slate-300"
+                            >
+                              {r.name}:{' '}
+                              <span className="font-mono font-semibold text-amber-300">
+                                {r.value}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        {draftClassFeatures.map((f) => (
+                          <span
+                            key={f.id}
+                            className="px-2 py-0.5 rounded-md bg-[#0B0F17] border border-slate-800 text-[11px] text-slate-200"
+                          >
+                            <span className="font-mono text-amber-400 mr-1">Ур.{f.level}</span>
+                            {f.name}
+                          </span>
+                        ))}
+                        {draftSubclassFeatures.map((f) => (
+                          <span
+                            key={f.id}
+                            className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-500/40 text-[11px] text-violet-200"
+                          >
+                            <span className="font-mono text-violet-300 mr-1">Ур.{f.level}</span>
+                            {f.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                 {/* Optional Private Note */}
                 {draft.privateNote.trim() && (
                   <div className="space-y-1.5 pt-3 border-t border-slate-800/80">
@@ -878,6 +951,10 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   // STEP 3: FULL IN-GAME CHARACTER SHEET
   const self = playerState.self;
   const classRef = catalogs.classes.find((c) => c.id === self.classId);
+  const subclassRef =
+    self.subclassId && self.level >= 3
+      ? catalogs.subclasses.find((s) => s.id === self.subclassId) ?? null
+      : null;
   const backgroundRef = catalogs.backgrounds.find((b) => b.id === self.backgroundId);
   const speciesRef = catalogs.species.find((s) => s.id === self.speciesId);
 
@@ -895,7 +972,18 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
         )
       )
     : 100;
-  const profBonus = getProficiencyBonus(self.level);
+  const profBonus = getClassProficiencyBonus(self.level, classRef);
+  const heroActions = computeHeroActions(self, catalogs);
+  const classResources = getClassResourcesAtLevel(classRef, self.level);
+  const unlockedClassFeatures = getHeroClassFeatures(self.classId, self.level, catalogs);
+  const unlockedSubclassFeatures = getHeroSubclassFeatures(
+    self.classId,
+    self.subclassId,
+    self.level,
+    catalogs
+  );
+  const hasAvailableSubclasses = catalogs.subclasses.some((s) => s.classId === self.classId);
+  const needsSubclassNotice = self.level >= 3 && !subclassRef && hasAvailableSubclasses;
 
   const hpPct = Math.max(0, Math.min(100, Math.round((self.hp / Math.max(1, self.maxHp)) * 100)));
   const hpBarColor =
@@ -1009,7 +1097,8 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
               {self.name}
             </div>
             <div className="text-[11px] text-slate-400 truncate leading-tight">
-              {classRef?.name ?? self.role} · Ур. {self.level} · КЗ {self.ac}
+              {classRef?.name ?? self.role}
+              {subclassRef ? ` (${subclassRef.name})` : ''} · Ур. {self.level} · КЗ {self.ac}
             </div>
           </div>
         </div>
@@ -1303,8 +1392,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   <div className="space-y-1 min-w-0">
                     <h1 className="text-xl font-semibold text-slate-100 truncate">{self.name}</h1>
                     <p className="text-xs text-slate-400">
-                      {classRef?.name ?? self.role} · {speciesRef?.name ?? '—'} ·{' '}
-                      {backgroundRef?.name ?? '—'}
+                      {classRef?.name ?? self.role}
+                      {subclassRef ? (
+                        <span className="text-violet-300 font-medium"> ({subclassRef.name})</span>
+                      ) : null}{' '}
+                      · {speciesRef?.name ?? '—'} · {backgroundRef?.name ?? '—'}
                     </p>
                     {self.locationName && (
                       <p className="text-xs text-amber-300/90 flex items-center gap-1.5 pt-0.5">
@@ -1438,6 +1530,113 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   </p>
                 </div>
               )}
+
+              {needsSubclassNotice && (
+                <div className="pt-3 border-t border-slate-800/80">
+                  <div className="rounded-xl bg-violet-950/40 border border-violet-500/45 px-3.5 py-2.5 flex items-start gap-2.5">
+                    <GitBranch className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
+                    <div className="text-xs text-violet-200 leading-relaxed">
+                      На 3 уровне открывается <span className="font-semibold">подкласс</span>! Сообщите мастеру, какую специализацию вы выбираете.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Hero Actions (Unarmed Strike + Inventory Weapons) */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                  <Swords className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Действия ({heroActions.length})</span>
+                </h2>
+                <span className="text-[11px] font-mono text-slate-400">
+                  БМ +{profBonus}
+                </span>
+              </div>
+
+              <div className="space-y-2.5">
+                {heroActions.map((act) => {
+                  const invItem = act.inventoryItemId
+                    ? self.inventory.find((i) => i.id === act.inventoryItemId)
+                    : undefined;
+                  return (
+                    <div
+                      key={act.id}
+                      className={`rounded-2xl border p-4 space-y-2.5 transition-colors ${
+                        act.equipped
+                          ? 'bg-[#131A26] border-slate-800'
+                          : 'bg-[#131A26]/65 border-slate-800/70 opacity-85'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-100">
+                              {act.name}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px] text-slate-300">
+                              {act.rangeLabel}
+                            </span>
+                            {!act.equipped && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-400">
+                                В рюкзаке
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">{act.subtitle}</div>
+                        </div>
+
+                        {!act.equipped && invItem && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEquip(invItem)}
+                            className="min-h-[36px] px-3 rounded-xl bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-xs font-medium text-amber-300 shrink-0 transition-colors"
+                          >
+                            Надеть
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 px-3 py-2">
+                          <div className="text-[10px] text-slate-400">Попадание</div>
+                          <div className="text-sm font-mono tabular-nums font-bold text-amber-400">
+                            {act.hitFormula}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate">
+                            {act.hitBreakdown}
+                          </div>
+                        </div>
+                        <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 px-3 py-2">
+                          <div className="text-[10px] text-slate-400">Урон</div>
+                          <div className="text-sm font-mono tabular-nums font-bold text-rose-300">
+                            {act.damageFormula}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {act.damageBreakdown}
+                          </div>
+                        </div>
+                      </div>
+
+                      {((act.properties && act.properties !== '—') ||
+                        (act.mastery && act.mastery !== '—')) && (
+                        <div className="text-[11px] text-slate-400 leading-snug">
+                          {act.mastery && act.mastery !== '—' && (
+                            <span className="text-amber-300/90 font-medium">
+                              Мастерство: {act.mastery}
+                              {act.properties && act.properties !== '—' ? ' · ' : ''}
+                            </span>
+                          )}
+                          {act.properties && act.properties !== '—' && (
+                            <span>{act.properties}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Abilities Grid */}
@@ -1586,6 +1785,109 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                 )}
               </div>
             </div>
+
+            {/* Class & Subclass Features + Scaling Class Parameters */}
+            {(() => {
+              const allFeatures = [
+                ...unlockedClassFeatures.map((f) => ({
+                  id: f.id,
+                  level: f.level,
+                  name: f.name,
+                  description: f.description,
+                  isSubclass: false,
+                })),
+                ...unlockedSubclassFeatures.map((f) => ({
+                  id: f.id,
+                  level: f.level,
+                  name: f.name,
+                  description: f.description,
+                  isSubclass: true,
+                })),
+              ].sort((a, b) => a.level - b.level);
+
+              if (classResources.length === 0 && allFeatures.length === 0) return null;
+
+              return (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Умения класса ({allFeatures.length})</span>
+                    </h2>
+                    {subclassRef && (
+                      <span className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-500/40 text-[11px] font-medium text-violet-300 truncate max-w-[180px]">
+                        {subclassRef.name}
+                      </span>
+                    )}
+                  </div>
+
+                  {classResources.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {classResources.map((res) => (
+                        <div
+                          key={res.id}
+                          className="rounded-xl bg-[#131A26] border border-slate-800 px-3.5 py-2.5"
+                        >
+                          <div className="text-[11px] text-slate-400 truncate">{res.name}</div>
+                          <div className="mt-0.5 text-base font-mono tabular-nums font-bold text-amber-400">
+                            {res.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {allFeatures.length > 0 && (
+                    <div className="rounded-2xl bg-[#131A26] border border-slate-800 divide-y divide-slate-800/80 overflow-hidden">
+                      {allFeatures.map((feat) => {
+                        const isOpen = expandedFeatureId === feat.id;
+                        return (
+                          <div key={feat.id}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedFeatureId(isOpen ? null : feat.id)}
+                              className="w-full min-h-[48px] px-4 py-2.5 flex items-center justify-between gap-3 text-left hover:bg-slate-800/40 transition-colors"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold shrink-0 ${
+                                    feat.isSubclass
+                                      ? 'bg-violet-500/20 border border-violet-400/50 text-violet-200'
+                                      : 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                                  }`}
+                                >
+                                  Ур. {feat.level}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-slate-100 truncate">
+                                    {feat.name}
+                                  </div>
+                                  {feat.isSubclass && subclassRef && (
+                                    <div className="text-[10px] text-violet-300">
+                                      Подкласс: {subclassRef.name}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <ChevronDown
+                                className={`w-4 h-4 text-slate-500 shrink-0 transition-transform ${
+                                  isOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                            {isOpen && (
+                              <div className="px-4 pb-3.5 pt-1 text-xs text-slate-300 leading-relaxed whitespace-pre-line bg-[#0B0F17]/50">
+                                {feat.description || 'Описание не заполнено в справочнике.'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Hero Feats (Origin Feat & Others) */}
             {(() => {

@@ -686,6 +686,23 @@ export class GameStore {
             }
             return {
               ...c,
+              hitDie:
+                typeof c.hitDie === 'number' && Number.isFinite(c.hitDie) && c.hitDie >= 4
+                  ? Math.round(c.hitDie)
+                  : def?.hitDie ?? 8,
+              hpPerLevelHint:
+                typeof c.hpPerLevelHint === 'string' && c.hpPerLevelHint.trim()
+                  ? c.hpPerLevelHint.trim()
+                  : def?.hpPerLevelHint,
+              proficiencyBonusByLevel:
+                Array.isArray(c.proficiencyBonusByLevel) && c.proficiencyBonusByLevel.length === 20
+                  ? c.proficiencyBonusByLevel.map((v) => clamp(Math.round(Number(v) || 2), 1, 12))
+                  : def?.proficiencyBonusByLevel ?? [
+                      2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6,
+                    ],
+              classResources: Array.isArray(c.classResources)
+                ? c.classResources
+                : def?.classResources ?? [],
               savingThrowAbilityIds: Array.isArray(c.savingThrowAbilityIds)
                 ? c.savingThrowAbilityIds
                 : def?.savingThrowAbilityIds ?? [],
@@ -713,6 +730,39 @@ export class GameStore {
             };
           })
         : defaults.classes;
+
+    const rawSubclasses =
+      Array.isArray(rawCatalogs.subclasses) && rawCatalogs.subclasses.length > 0
+        ? rawCatalogs.subclasses.map((sc) => ({
+            id: sc.id || makeId('sub'),
+            classId: sc.classId || rawClasses[0]?.id || '',
+            name: (sc.name || '').trim() || 'Подкласс',
+            description: (sc.description || '').trim(),
+          }))
+        : defaults.subclasses;
+
+    const rawClassFeatures =
+      Array.isArray(rawCatalogs.classFeatures) && rawCatalogs.classFeatures.length > 0
+        ? rawCatalogs.classFeatures.map((f) => ({
+            id: f.id || makeId('cfeat'),
+            classId: f.classId || rawClasses[0]?.id || '',
+            level: clamp(Math.round(Number(f.level) || 1), 1, 20),
+            name: (f.name || '').trim() || 'Умение',
+            description: (f.description || '').trim(),
+          }))
+        : defaults.classFeatures;
+
+    const rawSubclassFeatures =
+      Array.isArray(rawCatalogs.subclassFeatures) && rawCatalogs.subclassFeatures.length > 0
+        ? rawCatalogs.subclassFeatures.map((f) => ({
+            id: f.id || makeId('scfeat'),
+            classId: f.classId || rawClasses[0]?.id || '',
+            subclassId: f.subclassId || '',
+            level: clamp(Math.round(Number(f.level) || 3), 1, 20),
+            name: (f.name || '').trim() || 'Умение подкласса',
+            description: (f.description || '').trim(),
+          }))
+        : defaults.subclassFeatures;
 
     const defaultBgsById = new Map(defaults.backgrounds.map((b) => [b.id, b]));
     const rawBackgrounds =
@@ -745,6 +795,9 @@ export class GameStore {
         ? sortAbilityModifiers(rawCatalogs.abilityModifiers!)
         : defaults.abilityModifiers,
       classes: rawClasses,
+      subclasses: rawSubclasses,
+      classFeatures: rawClassFeatures,
+      subclassFeatures: rawSubclassFeatures,
       backgrounds: rawBackgrounds,
       feats: rawFeats,
       species:
@@ -869,16 +922,29 @@ export class GameStore {
         catalogs
       );
 
+      const validSubclassId =
+        level >= 3 &&
+        typeof p.subclassId === 'string' &&
+        catalogs.subclasses.some((sc) => sc.id === p.subclassId && sc.classId === classId)
+          ? p.subclassId
+          : undefined;
+      const acknowledgedLevel =
+        typeof p.acknowledgedLevel === 'number' && Number.isFinite(p.acknowledgedLevel)
+          ? Math.max(1, Math.min(20, Math.floor(p.acknowledgedLevel)))
+          : level;
+
       return {
         id: p.id || makeId('player'),
         ownerAccountId: p.ownerAccountId,
         name: p.name || 'Безымянный',
         role: resolvedClass?.name || p.role || 'Без класса',
         classId,
+        subclassId: validSubclassId,
         backgroundId: p.backgroundId || defaultBackgroundId,
         speciesId: p.speciesId || defaultSpeciesId,
         xp,
         level,
+        acknowledgedLevel,
         color: p.color || '#F59E0B',
         hp: typeof p.hp === 'number' ? p.hp : 10,
         maxHp: typeof p.maxHp === 'number' ? Math.max(1, p.maxHp) : 10,
@@ -1055,6 +1121,7 @@ export class GameStore {
       name: resolved.name,
       role: resolved.role,
       classId: resolved.classId,
+      subclassId: resolved.subclassId,
       speciesId: resolved.speciesId,
       backgroundId: resolved.backgroundId,
       xp: resolved.xp,
@@ -1733,6 +1800,17 @@ export class GameStore {
         const classChanged = rest.classId !== undefined && rest.classId !== prevClassId;
         const bgChanged = rest.backgroundId !== undefined && rest.backgroundId !== prevBgId;
 
+        // Clear subclass if class changed or draft level < 3
+        const draftLevel = computeLevelFromXp(nextDraft.xp, this.state.catalogs.levels);
+        if (classChanged || draftLevel < 3) {
+          nextDraft.subclassId = undefined;
+        } else if (nextDraft.subclassId) {
+          const validSub = this.state.catalogs.subclasses.some(
+            (sc) => sc.id === nextDraft.subclassId && sc.classId === nextDraft.classId
+          );
+          if (!validSub) nextDraft.subclassId = undefined;
+        }
+
         if (bgChanged && backgroundAbilityBonuses === undefined) {
           nextDraft.backgroundAbilityBonuses = {};
         }
@@ -1852,6 +1930,14 @@ export class GameStore {
             : getClassDefaultProficiencyIds(classId, this.state.catalogs);
 
         const featIds = bgRef?.featId ? [bgRef.featId] : [];
+        const finalSubclassId =
+          derivedLevel >= 3 &&
+          req.draft.subclassId &&
+          this.state.catalogs.subclasses.some(
+            (sc) => sc.id === req.draft.subclassId && sc.classId === classId
+          )
+            ? req.draft.subclassId
+            : undefined;
 
         const newPlayer: PlayerCharacter = {
           id: newId,
@@ -1859,10 +1945,12 @@ export class GameStore {
           name: cleanName,
           role: classRef?.name || 'Без класса',
           classId,
+          subclassId: finalSubclassId,
           backgroundId,
           speciesId,
           xp: safeXp,
           level: derivedLevel,
+          acknowledgedLevel: derivedLevel,
           color: req.draft.color || '#F59E0B',
           hp: safeMaxHp,
           maxHp: safeMaxHp,
@@ -2123,10 +2211,19 @@ export class GameStore {
             name: cleanName,
             role: classRef?.name || incoming.role?.trim() || 'Без класса',
             classId,
+            subclassId:
+              derivedLevel >= 3 &&
+              incoming.subclassId &&
+              this.state.catalogs.subclasses.some(
+                (sc) => sc.id === incoming.subclassId && sc.classId === classId
+              )
+                ? incoming.subclassId
+                : undefined,
             backgroundId,
             speciesId,
             xp: safeXp,
             level: derivedLevel,
+            acknowledgedLevel: derivedLevel,
             color: incoming.color || '#F59E0B',
             hp: safeMaxHp,
             maxHp: safeMaxHp,
@@ -2197,11 +2294,22 @@ export class GameStore {
           player.classId = msg.classId;
           const classRef = this.state.catalogs.classes.find((c) => c.id === msg.classId);
           player.role = classRef?.name || 'Без класса';
-          if (msg.classId !== prevClassId && !Array.isArray(msg.proficiencyIds)) {
-            const prevDefaults = new Set(getClassDefaultProficiencyIds(prevClassId, this.state.catalogs));
-            const nextDefaults = getClassDefaultProficiencyIds(msg.classId, this.state.catalogs);
-            const retained = player.proficiencyIds.filter((id) => !prevDefaults.has(id));
-            player.proficiencyIds = Array.from(new Set([...nextDefaults, ...retained]));
+          if (msg.classId !== prevClassId) {
+            // Reset subclass if it doesn't belong to the newly picked class
+            if (
+              player.subclassId &&
+              !this.state.catalogs.subclasses.some(
+                (sc) => sc.id === player.subclassId && sc.classId === msg.classId
+              )
+            ) {
+              player.subclassId = undefined;
+            }
+            if (!Array.isArray(msg.proficiencyIds)) {
+              const prevDefaults = new Set(getClassDefaultProficiencyIds(prevClassId, this.state.catalogs));
+              const nextDefaults = getClassDefaultProficiencyIds(msg.classId, this.state.catalogs);
+              const retained = player.proficiencyIds.filter((id) => !prevDefaults.has(id));
+              player.proficiencyIds = Array.from(new Set([...nextDefaults, ...retained]));
+            }
           }
         }
         if (typeof msg.backgroundId === 'string') {
@@ -2232,8 +2340,37 @@ export class GameStore {
           player.speciesId = msg.speciesId;
         }
         if (typeof msg.xp === 'number' && Number.isFinite(msg.xp)) {
+          const prevLevel = player.level;
           player.xp = Math.max(0, Math.floor(msg.xp));
           player.level = computeLevelFromXp(player.xp, this.state.catalogs.levels);
+          // Initialize acknowledgedLevel if not set yet so leveling up triggers DM checklist
+          if (typeof player.acknowledgedLevel !== 'number') {
+            player.acknowledgedLevel = prevLevel;
+          }
+          // If DM lowered XP below acknowledgedLevel, clamp acknowledgedLevel down too
+          if (player.level < player.acknowledgedLevel) {
+            player.acknowledgedLevel = player.level;
+          }
+          // Lock subclass if level dropped below 3
+          if (player.level < 3) {
+            player.subclassId = undefined;
+          }
+        }
+        if ('subclassId' in msg) {
+          const reqSub = typeof msg.subclassId === 'string' ? msg.subclassId.trim() : '';
+          if (player.level < 3 || !reqSub) {
+            player.subclassId = undefined;
+          } else {
+            const validSub = this.state.catalogs.subclasses.some(
+              (sc) => sc.id === reqSub && sc.classId === player.classId
+            );
+            if (validSub) {
+              player.subclassId = reqSub;
+            }
+          }
+        }
+        if (typeof msg.acknowledgedLevel === 'number' && Number.isFinite(msg.acknowledgedLevel)) {
+          player.acknowledgedLevel = clamp(Math.floor(msg.acknowledgedLevel), 1, 20);
         }
         if (typeof msg.maxHp === 'number') {
           player.maxHp = Math.max(1, Math.round(msg.maxHp));
@@ -2576,10 +2713,42 @@ export class GameStore {
           const validAbilityIds = new Set(this.state.catalogs.abilities.map((a) => a.id));
           const validSkillIds = new Set(this.state.catalogs.skills.map((s) => s.id));
           const validProfIds = new Set(this.state.catalogs.proficiencies.map((p) => p.id));
+          const existingCls = msg.item.id
+            ? this.state.catalogs.classes.find((x) => x.id === msg.item.id)
+            : undefined;
+          const hitDie =
+            typeof msg.item.hitDie === 'number' && Number.isFinite(msg.item.hitDie) && msg.item.hitDie >= 4
+              ? clamp(Math.round(msg.item.hitDie), 4, 20)
+              : existingCls?.hitDie ?? 8;
+          const pbArr =
+            Array.isArray(msg.item.proficiencyBonusByLevel) &&
+            msg.item.proficiencyBonusByLevel.length === 20
+              ? msg.item.proficiencyBonusByLevel.map((v) => clamp(Math.round(Number(v) || 2), 1, 12))
+              : existingCls?.proficiencyBonusByLevel ?? [
+                  2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6,
+                ];
+          const normalizedResources = Array.isArray(msg.item.classResources)
+            ? msg.item.classResources
+                .filter((r) => r && r.name && r.name.trim())
+                .map((r) => ({
+                  id: r.id || makeId('cres'),
+                  name: r.name.trim(),
+                  values: Array.from({ length: 20 }, (_, i) =>
+                    String(r.values?.[i] ?? '—').trim() || '—'
+                  ),
+                }))
+            : existingCls?.classResources ?? [];
+
           const normalized = {
             id: msg.item.id || makeId('cls'),
             name: cleanName,
             description: (msg.item.description || '').trim(),
+            hitDie,
+            hpPerLevelHint:
+              (msg.item.hpPerLevelHint || '').trim() ||
+              `1к${hitDie} (или ${Math.floor(hitDie / 2) + 1}) + ваш модификатор Телосложения (суммарно минимум 1)`,
+            proficiencyBonusByLevel: pbArr,
+            classResources: normalizedResources,
             savingThrowAbilityIds: Array.isArray(msg.item.savingThrowAbilityIds)
               ? Array.from(new Set(msg.item.savingThrowAbilityIds)).filter((id) =>
                   validAbilityIds.has(id)
@@ -2603,6 +2772,52 @@ export class GameStore {
               : [],
           };
           const list = this.state.catalogs.classes;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'subclasses') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';
+          const normalized = {
+            id: msg.item.id || makeId('sub'),
+            classId: msg.item.classId || fallbackClass,
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.subclasses;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'classFeatures') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';
+          const normalized = {
+            id: msg.item.id || makeId('cfeat'),
+            classId: msg.item.classId || fallbackClass,
+            level: clamp(Math.round(Number(msg.item.level) || 1), 1, 20),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.classFeatures;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'subclassFeatures') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const subRef = this.state.catalogs.subclasses.find((s) => s.id === msg.item.subclassId);
+          if (!subRef) return false;
+          const normalized = {
+            id: msg.item.id || makeId('scfeat'),
+            classId: subRef.classId,
+            subclassId: subRef.id,
+            level: clamp(Math.round(Number(msg.item.level) || 3), 1, 20),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.subclassFeatures;
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
@@ -2978,8 +3193,27 @@ export class GameStore {
         } else if (key === 'classes') {
           const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';
           for (const p of this.state.players) {
-            if (p.classId === msg.itemId) p.classId = fallbackClass;
+            if (p.classId === msg.itemId) {
+              p.classId = fallbackClass;
+              p.subclassId = undefined;
+            }
           }
+          this.state.catalogs.subclasses = this.state.catalogs.subclasses.filter(
+            (sc) => sc.classId !== msg.itemId
+          );
+          this.state.catalogs.classFeatures = this.state.catalogs.classFeatures.filter(
+            (f) => f.classId !== msg.itemId
+          );
+          this.state.catalogs.subclassFeatures = this.state.catalogs.subclassFeatures.filter(
+            (f) => f.classId !== msg.itemId
+          );
+        } else if (key === 'subclasses') {
+          for (const p of this.state.players) {
+            if (p.subclassId === msg.itemId) p.subclassId = undefined;
+          }
+          this.state.catalogs.subclassFeatures = this.state.catalogs.subclassFeatures.filter(
+            (f) => f.subclassId !== msg.itemId
+          );
         } else if (key === 'backgrounds') {
           const fallbackBg = this.state.catalogs.backgrounds[0]?.id ?? '';
           for (const p of this.state.players) {
