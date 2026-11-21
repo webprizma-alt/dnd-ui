@@ -3,7 +3,7 @@ import type {
   ClassResourceScaling,
   SubclassFeatureRef,
   SubclassRef,
-} from "./types";
+} from './types.ts';
 
 export interface ClassProgressionMeta {
   hitDie: number;

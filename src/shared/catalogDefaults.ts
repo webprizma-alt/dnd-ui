@@ -3,7 +3,7 @@ import {
   DEFAULT_CLASS_PROGRESSION_META,
   DEFAULT_SUBCLASS_FEATURES,
   DEFAULT_SUBCLASSES,
-} from './classProgressionData';
+} from './classProgressionData.ts';
 import type {
   AbilityModifierRef,
   AbilityRef,
@@ -26,7 +26,7 @@ import type {
   WeaponCategory,
   WeaponRangeType,
   WeaponRef,
-} from './types';
+} from './types.ts';
 
 export function createDefaultCatalogs(): GameCatalogs {
   const abilities: AbilityRef[] = [
