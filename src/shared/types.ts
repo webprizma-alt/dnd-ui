@@ -76,6 +76,15 @@ export interface FeatRef {
   id: string;
   name: string;
   description: string;
+  automatedSummary?: string;
+}
+
+export interface ConditionRef {
+  id: string;
+  name: string;
+  description: string;
+  automationKey?: string;
+  automatedSummary?: string;
 }
 
 export interface ClassResourceScaling {
@@ -126,6 +135,7 @@ export interface ClassFeatureRef {
   level: number;
   name: string;
   description: string;
+  automatedSummary?: string;
 }
 
 export interface SubclassFeatureRef {
@@ -135,6 +145,7 @@ export interface SubclassFeatureRef {
   level: number;
   name: string;
   description: string;
+  automatedSummary?: string;
 }
 
 export interface BackgroundRef {
@@ -268,6 +279,7 @@ export interface GameCatalogs {
   skills: SkillRef[];
   proficiencies: ProficiencyRef[];
   visions: VisionRef[];
+  conditions: ConditionRef[];
   weapons: WeaponRef[];
   armors: ArmorRef[];
   monsters: MonsterRef[];
@@ -324,6 +336,8 @@ export interface MapConfig {
   lighting?: MapLighting;
 }
 
+export type MonsterCombatStatus = 'alive' | 'unconscious' | 'dead';
+
 export interface MapToken {
   id: string;
   label: string;
@@ -340,6 +354,9 @@ export interface MapToken {
   maxHp?: number;
   ac?: number;
   portraitUrl?: string | null;
+  combatStatus?: MonsterCombatStatus;
+  conditions?: string[];
+  pendingZeroHpChoice?: boolean;
 }
 
 export interface GameLocation {
@@ -388,6 +405,8 @@ export interface PublicPlayerInfo {
   tempHp: number;
   ac: number;
   initiative: number;
+  speed?: number;
+  exhaustionLevel?: number;
   conditions: string[];
   isConnected: boolean;
   /** Persisted location & position of this hero */
@@ -422,12 +441,33 @@ export interface ActiveBanner {
   timestamp: number;
 }
 
+export interface InitiativeEntry {
+  tokenId: string;
+  kind: 'player' | 'enemy' | 'npc';
+  label: string;
+  color: string;
+  portraitUrl?: string | null;
+  dexMod: number;
+  initiativeBonus: number;
+  bonusBreakdown?: string;
+  roll: number | null;
+  total: number | null;
+  playerId?: string;
+}
+
+export interface InitiativeRollSession {
+  active: boolean;
+  locationId: string;
+  entries: InitiativeEntry[];
+}
+
 export interface SceneState {
   locationName: string;
   mode: SceneMode;
   round: number;
   activeTurnTokenId: string | null;
   activeEvent: ActiveBanner | null;
+  initiativeSession?: InitiativeRollSession | null;
 }
 
 export interface GameEventEntry {
@@ -595,6 +635,8 @@ export type ClientMessage =
       tempHp?: number;
       ac?: number;
       initiative?: number;
+      speed?: number;
+      exhaustionLevel?: number;
       gold?: number;
       conditions?: string[];
       privateNote?: string;
@@ -612,6 +654,13 @@ export type ClientMessage =
   | { type: 'dm:updateInventoryItem'; playerId: string; itemId: string; patch: Partial<InventoryItem> }
   | { type: 'dm:removeInventoryItem'; playerId: string; itemId: string }
   | { type: 'dm:setScene'; patch: Partial<SceneState> }
+  | { type: 'dm:startInitiativeRoll' }
+  | { type: 'dm:setInitiativeEntry'; tokenId: string; roll?: number | null; total: number | null }
+  | { type: 'dm:autoRollMonstersInitiative' }
+  | { type: 'dm:completeInitiativeRoll' }
+  | { type: 'dm:cancelInitiativeRoll' }
+  | { type: 'dm:resolveMonsterZeroHp'; tokenId: string; outcome: 'dead' | 'unconscious' }
+  | { type: 'dm:setTokenConditions'; tokenId: string; conditions: string[] }
   | {
       type: 'dm:triggerEvent';
       scope: 'public' | 'private';
@@ -636,6 +685,7 @@ export type ClientMessage =
   | { type: 'dm:upsertCatalogItem'; catalog: 'skills'; item: SkillRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'proficiencies'; item: ProficiencyRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'visions'; item: VisionRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'conditions'; item: ConditionRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'weapons'; item: WeaponRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'armors'; item: ArmorRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'monsters'; item: MonsterRef }

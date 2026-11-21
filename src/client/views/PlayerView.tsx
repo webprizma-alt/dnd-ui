@@ -29,14 +29,19 @@ import {
   User,
   UserPlus,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   computeHeroActions,
+  computeHeroSkillTotal,
   computeLevelFromXp,
   computePlayerAcDetails,
+  computePlayerEffectiveSpeed,
+  computePlayerInitiativeDetails,
   formatEntityVisions,
   formatModifier,
   getAbilityModifier,
+  getActiveConditionEffects,
   getArmorCategoryLabel,
   getClassProficiencyBonus,
   getClassResourcesAtLevel,
@@ -113,6 +118,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   const [confirmUseId, setConfirmUseId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [expandedFeatureId, setExpandedFeatureId] = useState<string | null>(null);
+  const [expandedConditionName, setExpandedConditionName] = useState<string | null>(null);
   const [onlyProficientSkills, setOnlyProficientSkills] = useState(false);
 
   // Hero AI portrait generation modal state (used only inside entered hero sheet)
@@ -1471,35 +1477,60 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-800/80">
-                <div>
-                  <div className="text-[11px] text-slate-400">Класс Защиты</div>
-                  <div className="text-lg font-mono tabular-nums font-semibold text-slate-100">
-                    {self.ac}
+              {(() => {
+                const acDetails = computePlayerAcDetails(self, catalogs);
+                const speedDetails = computePlayerEffectiveSpeed(self, catalogs);
+                const initDetails = computePlayerInitiativeDetails(self, catalogs);
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2 border-t border-slate-800/80">
+                    <div>
+                      <div className="text-[11px] text-slate-400">Класс Защиты</div>
+                      <div className="text-lg font-mono tabular-nums font-semibold text-slate-100">
+                        {self.ac}
+                      </div>
+                      <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                        {acDetails.breakdown}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400">Скорость</div>
+                      <div
+                        className={`text-lg font-mono tabular-nums font-semibold ${
+                          speedDetails.effectiveFt === 0 ? 'text-rose-400' : 'text-emerald-300'
+                        }`}
+                      >
+                        {speedDetails.effectiveFt} фт.
+                      </div>
+                      {speedDetails.effectiveFt !== speedDetails.baseFt && (
+                        <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                          {speedDetails.breakdown}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400">Инициатива</div>
+                      <div className="text-lg font-mono tabular-nums font-semibold text-sky-400">
+                        {self.initiative ?? 10}
+                      </div>
+                      <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                        Бросок: 1к20 {formatModifier(initDetails.bonus)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400">Бонус мастерства</div>
+                      <div className="text-lg font-mono tabular-nums font-semibold text-amber-400">
+                        +{profBonus}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400">Золото</div>
+                      <div className="text-lg font-mono tabular-nums font-semibold text-slate-100">
+                        {self.gold} зм
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
-                    {computePlayerAcDetails(self, catalogs).breakdown}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] text-slate-400">Инициатива</div>
-                  <div className="text-lg font-mono tabular-nums font-semibold text-sky-400">
-                    {self.initiative ?? 10}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] text-slate-400">Бонус мастерства</div>
-                  <div className="text-lg font-mono tabular-nums font-semibold text-amber-400">
-                    +{profBonus}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] text-slate-400">Золото</div>
-                  <div className="text-lg font-mono tabular-nums font-semibold text-slate-100">
-                    {self.gold} зм
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {(() => {
                 const heroVisions = formatEntityVisions(self.visions, catalogs.visions);
@@ -1522,14 +1553,89 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                 );
               })()}
 
-              {self.conditions.length > 0 && (
-                <div className="pt-3 border-t border-slate-800/80">
-                  <div className="text-xs text-slate-400 mb-1">Активные состояния</div>
-                  <p className="text-sm font-medium text-amber-300">
-                    {self.conditions.join(' · ')}
-                  </p>
-                </div>
-              )}
+              {(() => {
+                const activeEffects = getActiveConditionEffects(
+                  self.conditions,
+                  self.exhaustionLevel
+                );
+                if (self.conditions.length === 0 && activeEffects.exhaustionLevel === 0) return null;
+
+                return (
+                  <div className="pt-3 border-t border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-medium text-amber-300 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>Активные состояния ({self.conditions.length})</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500">Нажмите для правил</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {self.conditions.map((condName) => {
+                        const ref = catalogs.conditions.find(
+                          (c) => c.name.toLowerCase() === condName.toLowerCase()
+                        );
+                        const isOpen = expandedConditionName === condName;
+                        const isExhaustion = condName.toLowerCase().includes('истощ');
+                        return (
+                          <div
+                            key={condName}
+                            className="rounded-xl bg-amber-950/25 border border-amber-500/35 overflow-hidden"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setExpandedConditionName(isOpen ? null : condName)}
+                              className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-amber-950/35 transition-colors"
+                            >
+                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-semibold text-amber-200">
+                                  {condName}
+                                  {isExhaustion && activeEffects.exhaustionLevel > 0
+                                    ? ` (ур. ${activeEffects.exhaustionLevel})`
+                                    : ''}
+                                </span>
+                                {ref?.automatedSummary && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300">
+                                    <Zap className="w-2.5 h-2.5" />
+                                    <span>Авто</span>
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 text-amber-300/80 shrink-0 transition-transform ${
+                                  isOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </button>
+                            {isOpen && (
+                              <div className="px-3 pb-3 pt-1 border-t border-amber-500/20 bg-[#0B0F17]/75 space-y-1.5">
+                                {ref?.automatedSummary && (
+                                  <div className="text-[11px] text-emerald-300 font-medium">
+                                    Автоэффект: {ref.automatedSummary}
+                                  </div>
+                                )}
+                                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                                  {ref?.description || 'Описание статуса не заполнено в справочнике.'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {activeEffects.combatCallouts.length > 0 && (
+                      <div className="rounded-xl bg-[#0B0F17]/80 border border-slate-800 px-3 py-2 space-y-1">
+                        {activeEffects.combatCallouts.map((note, idx) => (
+                          <div key={idx} className="text-[11px] text-amber-200/90 leading-snug">
+                            • {note}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {needsSubclassNotice && (
                 <div className="pt-3 border-t border-slate-800/80">
@@ -1600,12 +1706,12 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 px-3 py-2">
-                          <div className="text-[10px] text-slate-400">Попадание</div>
+                          <div className="text-[10px] text-slate-400">Бросок попадания</div>
                           <div className="text-sm font-mono tabular-nums font-bold text-amber-400">
                             {act.hitFormula}
                           </div>
-                          <div className="text-[10px] text-slate-500 font-mono truncate">
-                            {act.hitBreakdown}
+                          <div className="text-[10px] text-slate-400 font-mono leading-tight mt-0.5">
+                            Бонус: {act.hitBreakdown}
                           </div>
                         </div>
                         <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 px-3 py-2">
@@ -1613,11 +1719,17 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                           <div className="text-sm font-mono tabular-nums font-bold text-rose-300">
                             {act.damageFormula}
                           </div>
-                          <div className="text-[10px] text-slate-500 truncate">
+                          <div className="text-[10px] text-slate-400 leading-tight mt-0.5">
                             {act.damageBreakdown}
                           </div>
                         </div>
                       </div>
+
+                      {act.bonusNote && (
+                        <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-2.5 py-1.5 text-[11px] text-emerald-300 leading-snug">
+                          {act.bonusNote}
+                        </div>
+                      )}
 
                       {((act.properties && act.properties !== '—') ||
                         (act.mastery && act.mastery !== '—')) && (
@@ -1705,13 +1817,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
 
               <div className="rounded-2xl bg-[#131A26] border border-slate-800 divide-y divide-slate-800/80 overflow-hidden">
                 {visibleSkills.map((sk) => {
-                  const isExp = (self.expertiseSkillIds ?? []).includes(sk.id);
-                  const isProf = isExp || self.proficientSkillIds.includes(sk.id);
+                  const skillCalc = computeHeroSkillTotal(self, sk, catalogs);
+                  const isExp = skillCalc.isExpertise;
+                  const isProf = skillCalc.isProficient;
                   const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
-                  const baseScore = self.abilities[sk.abilityId] ?? 10;
-                  const bonusAdd = isExp ? profBonus * 2 : isProf ? profBonus : 0;
-                  const totalMod =
-                    getAbilityModifier(baseScore, catalogs.abilityModifiers) + bonusAdd;
+                  const totalMod = skillCalc.total;
                   const isExpanded = expandedSkillId === sk.id;
 
                   return (
@@ -1728,7 +1838,9 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                                 ? 'bg-sky-400 border-sky-400 text-slate-950'
                                 : isProf
                                   ? 'bg-amber-500 border-amber-500 text-slate-950'
-                                  : 'border-slate-700'
+                                  : skillCalc.hasJackOfAllTrades
+                                    ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                                    : 'border-slate-700'
                             }`}
                           >
                             {isProf && <Check className="w-2.5 h-2.5" />}
@@ -1741,10 +1853,19 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                                   ×2
                                 </span>
                               )}
+                              {skillCalc.hasJackOfAllTrades && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-mono text-emerald-300 shrink-0">
+                                  ½БМ
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-slate-400">
                               {ab ? ab.name : 'Без характеристики'}
-                              {isExp ? ' · Экспертиза' : ''}
+                              {isExp
+                                ? ' · Экспертиза'
+                                : skillCalc.hasJackOfAllTrades
+                                  ? ' · Мастер на все руки'
+                                  : ''}
                             </div>
                           </div>
                         </div>
@@ -1770,9 +1891,16 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                       </button>
 
                       {isExpanded && (
-                        <div className="px-4 pb-3.5 pt-0.5 text-xs text-slate-300 leading-relaxed bg-[#0B0F17]/50">
-                          <span className="text-slate-400">Пример использования: </span>
-                          {sk.usageExample || 'Описание не заполнено в справочнике.'}
+                        <div className="px-4 pb-3.5 pt-1 text-xs text-slate-300 leading-relaxed bg-[#0B0F17]/50 space-y-1">
+                          {skillCalc.exhaustionPenalty !== 0 && (
+                            <div className="text-[11px] font-mono text-rose-300">
+                              Штраф от истощения: {skillCalc.exhaustionPenalty}
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-slate-400">Пример использования: </span>
+                            {sk.usageExample || 'Описание не заполнено в справочнике.'}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1794,6 +1922,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   level: f.level,
                   name: f.name,
                   description: f.description,
+                  automatedSummary: f.automatedSummary,
                   isSubclass: false,
                 })),
                 ...unlockedSubclassFeatures.map((f) => ({
@@ -1801,6 +1930,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   level: f.level,
                   name: f.name,
                   description: f.description,
+                  automatedSummary: f.automatedSummary,
                   isSubclass: true,
                 })),
               ].sort((a, b) => a.level - b.level);
@@ -1859,8 +1989,14 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                                   Ур. {feat.level}
                                 </span>
                                 <div className="min-w-0">
-                                  <div className="text-sm font-medium text-slate-100 truncate">
-                                    {feat.name}
+                                  <div className="text-sm font-medium text-slate-100 truncate flex items-center gap-1.5">
+                                    <span className="truncate">{feat.name}</span>
+                                    {feat.automatedSummary && (
+                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-medium text-emerald-300 shrink-0">
+                                        <Zap className="w-2.5 h-2.5" />
+                                        <span>Авто</span>
+                                      </span>
+                                    )}
                                   </div>
                                   {feat.isSubclass && subclassRef && (
                                     <div className="text-[10px] text-violet-300">
@@ -1876,8 +2012,15 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                               />
                             </button>
                             {isOpen && (
-                              <div className="px-4 pb-3.5 pt-1 text-xs text-slate-300 leading-relaxed whitespace-pre-line bg-[#0B0F17]/50">
-                                {feat.description || 'Описание не заполнено в справочнике.'}
+                              <div className="px-4 pb-3.5 pt-1.5 text-xs text-slate-300 leading-relaxed whitespace-pre-line bg-[#0B0F17]/50 space-y-1.5">
+                                {feat.automatedSummary && (
+                                  <div className="text-[11px] text-emerald-300 bg-emerald-950/25 border border-emerald-500/25 rounded-md px-2.5 py-1">
+                                    Автоэффект: {feat.automatedSummary}
+                                  </div>
+                                )}
+                                <div>
+                                  {feat.description || 'Описание не заполнено в справочнике.'}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1902,7 +2045,20 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   <div className="divide-y divide-slate-800/80">
                     {heroFeats.map((feat) => (
                       <div key={feat.id} className="py-2.5 first:pt-0 last:pb-0 space-y-1">
-                        <div className="text-xs font-semibold text-amber-300">{feat.name}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-amber-300">{feat.name}</span>
+                          {feat.automatedSummary && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-medium text-emerald-300">
+                              <Zap className="w-2.5 h-2.5" />
+                              <span>Авто</span>
+                            </span>
+                          )}
+                        </div>
+                        {feat.automatedSummary && (
+                          <div className="text-[11px] text-emerald-300/95">
+                            Автоэффект: {feat.automatedSummary}
+                          </div>
+                        )}
                         <p className="text-xs text-slate-300 leading-relaxed">
                           {feat.description}
                         </p>

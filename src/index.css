@@ -106,6 +106,91 @@
   will-change: transform;
 }
 
+/* Cartoon dizzy stars orbit for unconscious monsters */
+@keyframes dizzyOrbitA {
+  0% {
+    transform: translate3d(-11px, 0px, 0) scale(0.95) rotate(0deg);
+    opacity: 0.95;
+  }
+  25% {
+    transform: translate3d(0px, -4px, 0) scale(1.15) rotate(90deg);
+    opacity: 1;
+  }
+  50% {
+    transform: translate3d(11px, 0px, 0) scale(0.9) rotate(180deg);
+    opacity: 0.9;
+  }
+  75% {
+    transform: translate3d(0px, 3px, 0) scale(0.75) rotate(270deg);
+    opacity: 0.65;
+  }
+  100% {
+    transform: translate3d(-11px, 0px, 0) scale(0.95) rotate(360deg);
+    opacity: 0.95;
+  }
+}
+
+@keyframes dizzyOrbitB {
+  0% {
+    transform: translate3d(11px, 0px, 0) scale(0.9) rotate(180deg);
+    opacity: 0.9;
+  }
+  25% {
+    transform: translate3d(0px, 3px, 0) scale(0.75) rotate(270deg);
+    opacity: 0.65;
+  }
+  50% {
+    transform: translate3d(-11px, 0px, 0) scale(0.95) rotate(360deg);
+    opacity: 0.95;
+  }
+  75% {
+    transform: translate3d(0px, -4px, 0) scale(1.15) rotate(450deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(11px, 0px, 0) scale(0.9) rotate(540deg);
+    opacity: 0.9;
+  }
+}
+
+@keyframes dizzyOrbitC {
+  0% {
+    transform: translate3d(0px, -4px, 0) scale(1.1) rotate(45deg);
+    opacity: 1;
+  }
+  25% {
+    transform: translate3d(11px, 0px, 0) scale(0.88) rotate(135deg);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate3d(0px, 3px, 0) scale(0.72) rotate(225deg);
+    opacity: 0.6;
+  }
+  75% {
+    transform: translate3d(-11px, 0px, 0) scale(0.92) rotate(315deg);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(0px, -4px, 0) scale(1.1) rotate(405deg);
+    opacity: 1;
+  }
+}
+
+.animate-dizzy-a {
+  animation: dizzyOrbitA 2.1s linear infinite;
+  will-change: transform, opacity;
+}
+
+.animate-dizzy-b {
+  animation: dizzyOrbitB 2.1s linear infinite;
+  will-change: transform, opacity;
+}
+
+.animate-dizzy-c {
+  animation: dizzyOrbitC 2.1s linear infinite;
+  will-change: transform, opacity;
+}
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;

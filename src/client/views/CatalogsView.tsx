@@ -30,6 +30,7 @@ import {
   Trash2,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   DEFAULT_PROFICIENCY_BONUS_BY_LEVEL,
@@ -57,6 +58,7 @@ import type {
   ClassFeatureRef,
   ClassRef,
   ClassResourceScaling,
+  ConditionRef,
   EntityVisionEntry,
   FeatRef,
   LevelThresholdRef,
@@ -167,6 +169,12 @@ const SECTIONS: CatalogSectionMeta[] = [
     label: 'Зрение',
     subtitle: 'Типы зрения и особых чувств (1 клетка = 5 фт.) для расчёта видимости на тактической карте ДМ.',
     icon: Eye,
+  },
+  {
+    key: 'conditions',
+    label: 'Статусы',
+    subtitle: 'Состояния персонажей и монстров (PHB 2024): правила и автоматические эффекты в бою и на карте.',
+    icon: AlertTriangle,
   },
   {
     key: 'weapons',
@@ -577,6 +585,11 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setNameDraft(vis.name);
       setVisionBehaviorDraft(vis.behavior || 'normal');
       setDescDraft(vis.description);
+    } else if (activeSection === 'conditions') {
+      const cond = item as ConditionRef;
+      setEditingId(cond.id);
+      setNameDraft(cond.name);
+      setDescDraft(cond.description);
     } else if (activeSection === 'weapons') {
       const wp = item as WeaponRef;
       setEditingId(wp.id);
@@ -845,6 +858,20 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           name: nameDraft.trim(),
           behavior: visionBehaviorDraft,
           description: descDraft.trim(),
+        },
+      });
+    } else if (activeSection === 'conditions') {
+      if (!nameDraft.trim()) return;
+      const existing = editingId ? catalogs.conditions.find((c) => c.id === editingId) : undefined;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'conditions',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+          automationKey: existing?.automationKey,
+          automatedSummary: existing?.automatedSummary,
         },
       });
     } else if (activeSection === 'weapons') {
@@ -2251,6 +2278,35 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
+              {activeSection === 'conditions' && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название статуса (напр. Отравленный)"
+                      className="sm:col-span-9 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-3 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Полное описание правил статуса (PHB 2024)..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
               {activeSection === 'weapons' && (
                 <div className="space-y-3">
                   {/* Dual Toggles: Простое/Воинское & Рукопашное/Дальнобойное */}
@@ -3520,7 +3576,18 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                     · {cls?.name ?? cf.classId}
                                   </span>
                                 )}
+                                {cf.automatedSummary && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-medium text-emerald-300">
+                                    <Zap className="w-3 h-3 shrink-0" />
+                                    <span>Автоматизировано</span>
+                                  </span>
+                                )}
                               </div>
+                              {cf.automatedSummary && (
+                                <div className="text-[11px] text-emerald-300/95 bg-emerald-950/25 border border-emerald-500/25 rounded-md px-2.5 py-1">
+                                  Автоэффект: {cf.automatedSummary}
+                                </div>
+                              )}
                               {cf.description && (
                                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line line-clamp-4">
                                   {cf.description}
@@ -3647,7 +3714,18 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                   · {sc?.name ?? sf.subclassId}
                                   {subFeatureFilterClassId === 'all' && cls ? ` (${cls.name})` : ''}
                                 </span>
+                                {sf.automatedSummary && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-medium text-emerald-300">
+                                    <Zap className="w-3 h-3 shrink-0" />
+                                    <span>Автоматизировано</span>
+                                  </span>
+                                )}
                               </div>
+                              {sf.automatedSummary && (
+                                <div className="text-[11px] text-emerald-300/95 bg-emerald-950/25 border border-emerald-500/25 rounded-md px-2.5 py-1">
+                                  Автоэффект: {sf.automatedSummary}
+                                </div>
+                              )}
                               {sf.description && (
                                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line line-clamp-4">
                                   {sf.description}
@@ -3768,7 +3846,20 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                         className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
                       >
                         <div className="min-w-0 space-y-1">
-                          <div className="text-sm font-semibold text-slate-100">{ft.name}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-100">{ft.name}</span>
+                            {ft.automatedSummary && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-medium text-emerald-300">
+                                <Zap className="w-3 h-3 shrink-0" />
+                                <span>Автоматизировано</span>
+                              </span>
+                            )}
+                          </div>
+                          {ft.automatedSummary && (
+                            <div className="text-[11px] text-emerald-300/95 bg-emerald-950/25 border border-emerald-500/25 rounded-md px-2.5 py-1">
+                              Автоэффект: {ft.automatedSummary}
+                            </div>
+                          )}
                           {ft.description && (
                             <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
                               {ft.description}
@@ -4028,6 +4119,65 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                           <button
                             type="button"
                             onClick={() => handleDelete(vis.id)}
+                            className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                            aria-label="Удалить"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {activeSection === 'conditions' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.conditions
+                    .filter(
+                      (c) =>
+                        !q ||
+                        c.name.toLowerCase().includes(q) ||
+                        c.description.toLowerCase().includes(q) ||
+                        (c.automatedSummary ?? '').toLowerCase().includes(q)
+                    )
+                    .map((cond) => (
+                      <div
+                        key={cond.id}
+                        className="p-4 flex items-start justify-between gap-4 hover:bg-slate-800/20 transition-colors"
+                      >
+                        <div className="space-y-1.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-100">
+                              {cond.name}
+                            </span>
+                            {cond.automatedSummary && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[11px] font-medium text-emerald-300">
+                                <Zap className="w-3 h-3 shrink-0" />
+                                <span>Автоматизировано</span>
+                              </span>
+                            )}
+                          </div>
+                          {cond.automatedSummary && (
+                            <div className="text-xs text-emerald-300/95 bg-emerald-950/25 border border-emerald-500/25 rounded-lg px-3 py-1.5">
+                              Автоэффект: {cond.automatedSummary}
+                            </div>
+                          )}
+                          <p className="text-xs text-slate-300 whitespace-pre-line leading-relaxed">
+                            {cond.description || 'Без описания'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(cond)}
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                            aria-label="Редактировать"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(cond.id)}
                             className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
                             aria-label="Удалить"
                           >

@@ -1,12 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  AUTOMATED_CLASS_FEATURE_SUMMARIES,
+  AUTOMATED_FEAT_SUMMARIES,
+  AUTOMATED_SUBCLASS_FEATURE_SUMMARIES,
   canPlayerEquipItem,
   computeLevelFromXp,
   computePlayerAc,
   computePlayerInitiative,
+  computePlayerInitiativeDetails,
   createDefaultCatalogs,
   formatArmorClassFormula,
+  formatModifier,
+  getAbilityModifier,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
   getClassSelectableSkillIds,
@@ -31,6 +37,7 @@ import type {
   GameCatalogs,
   GameEventEntry,
   GameLocation,
+  InitiativeEntry,
   LocationHotspot,
   MapLighting,
   MapToken,
@@ -663,8 +670,24 @@ export class GameStore {
             id: f.id || makeId('feat'),
             name: (f.name || '').trim() || 'Черта',
             description: (f.description || '').trim(),
+            automatedSummary: f.automatedSummary ?? AUTOMATED_FEAT_SUMMARIES[f.id],
           }))
         : defaults.feats;
+
+    const defaultConditionsById = new Map(defaults.conditions.map((c) => [c.id, c]));
+    const rawConditions =
+      Array.isArray(rawCatalogs.conditions) && rawCatalogs.conditions.length > 0
+        ? rawCatalogs.conditions.map((c) => {
+            const def = defaultConditionsById.get(c.id);
+            return {
+              id: c.id || makeId('cond'),
+              name: (c.name || '').trim() || 'Статус',
+              description: (c.description || '').trim(),
+              automationKey: c.automationKey ?? def?.automationKey,
+              automatedSummary: c.automatedSummary ?? def?.automatedSummary,
+            };
+          })
+        : defaults.conditions;
 
     const defaultClassesById = new Map(defaults.classes.map((c) => [c.id, c]));
     const rawClasses =
@@ -749,6 +772,7 @@ export class GameStore {
             level: clamp(Math.round(Number(f.level) || 1), 1, 20),
             name: (f.name || '').trim() || 'Умение',
             description: (f.description || '').trim(),
+            automatedSummary: f.automatedSummary ?? AUTOMATED_CLASS_FEATURE_SUMMARIES[f.id],
           }))
         : defaults.classFeatures;
 
@@ -761,6 +785,7 @@ export class GameStore {
             level: clamp(Math.round(Number(f.level) || 3), 1, 20),
             name: (f.name || '').trim() || 'Умение подкласса',
             description: (f.description || '').trim(),
+            automatedSummary: f.automatedSummary ?? AUTOMATED_SUBCLASS_FEATURE_SUMMARIES[f.id],
           }))
         : defaults.subclassFeatures;
 
@@ -814,6 +839,7 @@ export class GameStore {
           : defaults.skills,
       proficiencies: rawProficiencies,
       visions: rawVisions,
+      conditions: rawConditions,
       weapons: rawWeapons,
       armors: rawArmors,
       monsters: Array.isArray(rawCatalogs.monsters)
@@ -917,10 +943,6 @@ export class GameStore {
       const builtAbilities = buildDefaultAbilities(catalogs, p.abilities);
       const builtInventory = Array.isArray(p.inventory) ? p.inventory : [];
       const defaultInit = computePlayerInitiative(builtAbilities, catalogs);
-      const computedAc = computePlayerAc(
-        { abilities: builtAbilities, inventory: builtInventory },
-        catalogs
-      );
 
       const validSubclassId =
         level >= 3 &&
@@ -928,6 +950,16 @@ export class GameStore {
         catalogs.subclasses.some((sc) => sc.id === p.subclassId && sc.classId === classId)
           ? p.subclassId
           : undefined;
+      const computedAc = computePlayerAc(
+        {
+          abilities: builtAbilities,
+          inventory: builtInventory,
+          classId,
+          subclassId: validSubclassId,
+          level,
+        },
+        catalogs
+      );
       const acknowledgedLevel =
         typeof p.acknowledgedLevel === 'number' && Number.isFinite(p.acknowledgedLevel)
           ? Math.max(1, Math.min(20, Math.floor(p.acknowledgedLevel)))
@@ -954,6 +986,14 @@ export class GameStore {
           hadModifiersSchema && typeof p.initiative === 'number' && Number.isFinite(p.initiative)
             ? Math.round(p.initiative)
             : defaultInit,
+        speed:
+          typeof p.speed === 'number' && Number.isFinite(p.speed) && p.speed >= 0
+            ? Math.round(p.speed)
+            : 30,
+        exhaustionLevel:
+          typeof p.exhaustionLevel === 'number' && Number.isFinite(p.exhaustionLevel) && p.exhaustionLevel > 0
+            ? clamp(Math.round(p.exhaustionLevel), 1, 6)
+            : undefined,
         conditions: Array.isArray(p.conditions) ? p.conditions : [],
         isConnected: false,
         locationId: targetLoc.id,
@@ -1000,10 +1040,12 @@ export class GameStore {
       ? {
           ...parsed.scene,
           locationName: activeLoc.name,
+          initiativeSession: null,
         }
       : {
           ...fallback.scene,
           locationName: activeLoc.name,
+          initiativeSession: null,
         };
 
     const nextState: FullGameState = {
@@ -1132,6 +1174,8 @@ export class GameStore {
       tempHp: resolved.tempHp,
       ac: resolved.ac,
       initiative: resolved.initiative,
+      speed: resolved.speed ?? 30,
+      exhaustionLevel: resolved.exhaustionLevel,
       conditions: resolved.conditions,
       isConnected: resolved.isConnected,
       locationId: resolved.locationId,
@@ -1338,6 +1382,71 @@ export class GameStore {
     this.syncActiveLocationView();
   }
 
+  private startInitiativeRollForActiveLocation(): boolean {
+    const activeLoc = this.getLocationById(this.state.activeLocationId);
+    if (activeLoc.kind !== 'tactical') return false;
+    this.syncActiveLocationView();
+
+    const combatants = this.state.tokens.filter(
+      (t) => t.kind !== 'object' && t.combatStatus !== 'dead'
+    );
+    if (combatants.length === 0) return false;
+
+    const entries: InitiativeEntry[] = combatants.map((tok) => {
+      if (tok.kind === 'player' && tok.playerId) {
+        const player = this.state.players.find((p) => p.id === tok.playerId);
+        if (player) {
+          const details = computePlayerInitiativeDetails(player, this.state.catalogs);
+          return {
+            tokenId: tok.id,
+            kind: 'player',
+            label: player.name,
+            color: player.color,
+            portraitUrl: player.portraitUrl ?? null,
+            dexMod: details.dexMod,
+            initiativeBonus: details.bonus,
+            bonusBreakdown: details.breakdown,
+            roll: null,
+            total: null,
+            playerId: player.id,
+          };
+        }
+      }
+
+      const linkedMonster = tok.monsterId
+        ? this.state.catalogs.monsters.find((m) => m.id === tok.monsterId)
+        : undefined;
+      const dexMod = linkedMonster
+        ? getAbilityModifier(
+            linkedMonster.abilities?.dex ?? 10,
+            this.state.catalogs.abilityModifiers
+          )
+        : 0;
+      return {
+        tokenId: tok.id,
+        kind: tok.kind === 'npc' ? 'npc' : 'enemy',
+        label: tok.label,
+        color: tok.color,
+        portraitUrl: linkedMonster?.portraitUrl ?? tok.portraitUrl ?? null,
+        dexMod,
+        initiativeBonus: dexMod,
+        bonusBreakdown: `ЛОВ (${formatModifier(dexMod)})`,
+        roll: null,
+        total: null,
+      };
+    });
+
+    this.state.scene.initiativeSession = {
+      active: true,
+      locationId: activeLoc.id,
+      entries,
+    };
+    this.state.scene.mode = 'combat';
+    this.state.scene.round = 1;
+    this.state.scene.activeTurnTokenId = null;
+    return true;
+  }
+
   public applyAction(msg: ClientMessage): boolean {
     return this.tryApplyAction(msg).changed;
   }
@@ -1399,6 +1508,9 @@ export class GameStore {
           startedAt: Date.now(),
         };
         const activeLoc = this.getLocationById(this.state.activeLocationId);
+        if (activeLoc.kind === 'tactical') {
+          this.startInitiativeRollForActiveLocation();
+        }
         this.appendEvent({
           scope: 'public',
           title: 'Сессия началась',
@@ -1493,12 +1605,17 @@ export class GameStore {
           travelMessage: undefined,
           startedAt: Date.now(),
         };
+        if (activeLoc.kind === 'tactical') {
+          this.startInitiativeRollForActiveLocation();
+        } else {
+          this.state.scene.initiativeSession = null;
+        }
         this.appendEvent({
           scope: 'public',
           title: `Прибытие: ${activeLoc.name}`,
           message:
             activeLoc.kind === 'tactical'
-              ? 'Тактическая карта открыта. Приготовьтесь к действиям.'
+              ? 'Тактическая карта открыта. Бросайте инициативу (1к20 + мод. Ловкости)!'
               : activeLoc.description || `Партия вошла в локацию «${activeLoc.name}».`,
           tone: activeLoc.kind === 'tactical' ? 'danger' : 'neutral',
         });
@@ -1908,8 +2025,22 @@ export class GameStore {
           this.state.catalogs
         );
         const builtAbilities = buildDefaultAbilities(this.state.catalogs, effectiveDraftAbilities);
+        const finalSubclassId =
+          derivedLevel >= 3 &&
+          req.draft.subclassId &&
+          this.state.catalogs.subclasses.some(
+            (sc) => sc.id === req.draft.subclassId && sc.classId === classId
+          )
+            ? req.draft.subclassId
+            : undefined;
         const computedAc = computePlayerAc(
-          { abilities: builtAbilities, inventory: [] },
+          {
+            abilities: builtAbilities,
+            inventory: [],
+            classId,
+            subclassId: finalSubclassId,
+            level: derivedLevel,
+          },
           this.state.catalogs
         );
         const computedInit = computePlayerInitiative(builtAbilities, this.state.catalogs);
@@ -1930,14 +2061,6 @@ export class GameStore {
             : getClassDefaultProficiencyIds(classId, this.state.catalogs);
 
         const featIds = bgRef?.featId ? [bgRef.featId] : [];
-        const finalSubclassId =
-          derivedLevel >= 3 &&
-          req.draft.subclassId &&
-          this.state.catalogs.subclasses.some(
-            (sc) => sc.id === req.draft.subclassId && sc.classId === classId
-          )
-            ? req.draft.subclassId
-            : undefined;
 
         const newPlayer: PlayerCharacter = {
           id: newId,
@@ -2083,14 +2206,50 @@ export class GameStore {
         const size = clamp(Math.round(incoming.size || 1), 1, 4);
         const maxX = Math.max(0, activeLoc.map.cols - size);
         const maxY = Math.max(0, activeLoc.map.rows - size);
+        const tokenId = incoming.id || makeId('token');
+        const idx = activeLoc.tokens.findIndex((t) => t.id === tokenId);
+        const prevToken = idx >= 0 ? activeLoc.tokens[idx] : undefined;
+
+        let nextCombatStatus = incoming.combatStatus ?? prevToken?.combatStatus ?? 'alive';
+        let nextPendingZeroHp = incoming.pendingZeroHpChoice ?? prevToken?.pendingZeroHpChoice ?? false;
+        let nextConditions = Array.isArray(incoming.conditions)
+          ? [...incoming.conditions]
+          : Array.isArray(prevToken?.conditions)
+            ? [...prevToken.conditions]
+            : [];
+        const nextHp =
+          typeof incoming.hp === 'number' && Number.isFinite(incoming.hp)
+            ? Math.max(0, Math.round(incoming.hp))
+            : incoming.hp;
+
+        // Monster 0-HP workflow: strictly for monsters ('enemy'), never heroes
+        if (incoming.kind === 'enemy' && typeof nextHp === 'number') {
+          if (nextHp <= 0) {
+            if (nextCombatStatus !== 'dead' && nextCombatStatus !== 'unconscious') {
+              nextPendingZeroHp = true;
+            }
+          } else {
+            nextPendingZeroHp = false;
+            if (nextCombatStatus === 'dead' || nextCombatStatus === 'unconscious') {
+              nextCombatStatus = 'alive';
+              nextConditions = nextConditions.filter(
+                (c) => c.trim().toLowerCase() !== 'бессознательный'
+              );
+            }
+          }
+        }
+
         const normalized: MapToken = {
           ...incoming,
-          id: incoming.id || makeId('token'),
+          id: tokenId,
           x: clamp(roundCoord(incoming.x, snapToGrid), 0, maxX),
           y: clamp(roundCoord(incoming.y, snapToGrid), 0, maxY),
           size,
+          hp: nextHp,
+          combatStatus: incoming.kind === 'enemy' ? nextCombatStatus : undefined,
+          pendingZeroHpChoice: incoming.kind === 'enemy' ? nextPendingZeroHp : undefined,
+          conditions: nextConditions,
         };
-        const idx = activeLoc.tokens.findIndex((t) => t.id === normalized.id);
         if (idx >= 0) {
           activeLoc.tokens[idx] = normalized;
         } else {
@@ -2184,8 +2343,22 @@ export class GameStore {
             this.state.players.filter((p) => p.locationId === activeLoc.id).length
           );
           const builtAbilities = buildDefaultAbilities(this.state.catalogs, incoming.abilities);
+          const newSubclassId =
+            derivedLevel >= 3 &&
+            incoming.subclassId &&
+            this.state.catalogs.subclasses.some(
+              (sc) => sc.id === incoming.subclassId && sc.classId === classId
+            )
+              ? incoming.subclassId
+              : undefined;
           const computedAc = computePlayerAc(
-            { abilities: builtAbilities, inventory: [] },
+            {
+              abilities: builtAbilities,
+              inventory: [],
+              classId,
+              subclassId: newSubclassId,
+              level: derivedLevel,
+            },
             this.state.catalogs
           );
           const validVisionIds = new Set(this.state.catalogs.visions.map((v) => v.id));
@@ -2211,14 +2384,7 @@ export class GameStore {
             name: cleanName,
             role: classRef?.name || incoming.role?.trim() || 'Без класса',
             classId,
-            subclassId:
-              derivedLevel >= 3 &&
-              incoming.subclassId &&
-              this.state.catalogs.subclasses.some(
-                (sc) => sc.id === incoming.subclassId && sc.classId === classId
-              )
-                ? incoming.subclassId
-                : undefined,
+            subclassId: newSubclassId,
             backgroundId,
             speciesId,
             xp: safeXp,
@@ -2388,11 +2554,26 @@ export class GameStore {
         if (typeof msg.initiative === 'number' && Number.isFinite(msg.initiative)) {
           player.initiative = Math.max(-10, Math.min(50, Math.round(msg.initiative)));
         }
+        if (typeof msg.speed === 'number' && Number.isFinite(msg.speed)) {
+          player.speed = clamp(Math.round(msg.speed), 0, 300);
+        }
+        if (typeof msg.exhaustionLevel === 'number' && Number.isFinite(msg.exhaustionLevel)) {
+          player.exhaustionLevel =
+            msg.exhaustionLevel <= 0 ? undefined : clamp(Math.round(msg.exhaustionLevel), 1, 6);
+        }
         if (typeof msg.gold === 'number') {
           player.gold = Math.max(0, Math.round(msg.gold));
         }
         if (Array.isArray(msg.conditions)) {
           player.conditions = msg.conditions;
+          const hasExhaustion = msg.conditions.some((c) =>
+            c.trim().toLowerCase().includes('истощ')
+          );
+          if (hasExhaustion && (!player.exhaustionLevel || player.exhaustionLevel < 1)) {
+            player.exhaustionLevel = 1;
+          } else if (!hasExhaustion) {
+            player.exhaustionLevel = undefined;
+          }
         }
         if (typeof msg.privateNote === 'string') {
           player.privateNote = msg.privateNote;
@@ -2606,6 +2787,190 @@ export class GameStore {
         return true;
       }
 
+      case 'dm:startInitiativeRoll': {
+        const started = this.startInitiativeRollForActiveLocation();
+        if (!started) return false;
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:setInitiativeEntry': {
+        const session = this.state.scene.initiativeSession;
+        if (!session || !session.active) return false;
+        const entry = session.entries.find((e) => e.tokenId === msg.tokenId);
+        if (!entry) return false;
+        if (msg.roll !== undefined) {
+          entry.roll =
+            typeof msg.roll === 'number' && Number.isFinite(msg.roll)
+              ? clamp(Math.round(msg.roll), 1, 20)
+              : null;
+        }
+        entry.total =
+          typeof msg.total === 'number' && Number.isFinite(msg.total)
+            ? clamp(Math.round(msg.total), -10, 60)
+            : null;
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:autoRollMonstersInitiative': {
+        const session = this.state.scene.initiativeSession;
+        if (!session || !session.active) return false;
+        let rolledAny = false;
+        for (const entry of session.entries) {
+          if (entry.kind !== 'player') {
+            const d20 = Math.floor(Math.random() * 20) + 1;
+            entry.roll = d20;
+            entry.total = d20 + entry.initiativeBonus;
+            rolledAny = true;
+          }
+        }
+        if (!rolledAny) return false;
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:completeInitiativeRoll': {
+        const session = this.state.scene.initiativeSession;
+        if (!session || !session.active) return false;
+        const activeLoc = this.getLocationById(this.state.activeLocationId);
+
+        for (const entry of session.entries) {
+          const finalTotal =
+            typeof entry.total === 'number' && Number.isFinite(entry.total)
+              ? clamp(Math.round(entry.total), -10, 60)
+              : 10 + entry.initiativeBonus;
+          if (entry.playerId) {
+            const pl = this.state.players.find((p) => p.id === entry.playerId);
+            if (pl) pl.initiative = finalTotal;
+          } else {
+            const tok = activeLoc.tokens.find((t) => t.id === entry.tokenId);
+            if (tok) tok.initiative = finalTotal;
+          }
+        }
+
+        this.syncActiveLocationView();
+
+        const aliveCombatants = this.state.tokens
+          .filter((t) => t.kind !== 'object' && t.combatStatus !== 'dead')
+          .sort((a, b) => {
+            const aInit = a.playerId
+              ? this.state.players.find((p) => p.id === a.playerId)?.initiative ?? a.initiative ?? 0
+              : a.initiative ?? 0;
+            const bInit = b.playerId
+              ? this.state.players.find((p) => p.id === b.playerId)?.initiative ?? b.initiative ?? 0
+              : b.initiative ?? 0;
+            return bInit - aInit;
+          });
+
+        const visibleAlive = aliveCombatants.filter((t) => t.visibleOnTv);
+        const firstToken = visibleAlive[0] ?? aliveCombatants[0] ?? null;
+
+        this.state.scene.initiativeSession = null;
+        this.state.scene.mode = 'combat';
+        this.state.scene.round = 1;
+        this.state.scene.activeTurnTokenId = firstToken?.id ?? null;
+
+        const orderSummary = aliveCombatants
+          .slice(0, 8)
+          .map((t) => {
+            const val = t.playerId
+              ? this.state.players.find((p) => p.id === t.playerId)?.initiative ?? t.initiative ?? 0
+              : t.initiative ?? 0;
+            return `${t.label} (${val})`;
+          })
+          .join(' → ');
+
+        this.appendEvent({
+          scope: 'public',
+          title: 'Бой начался — порядок инициативы',
+          message: orderSummary || 'Все участники определили инициативу.',
+          tone: 'danger',
+        });
+
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:cancelInitiativeRoll': {
+        if (!this.state.scene.initiativeSession) return false;
+        this.state.scene.initiativeSession = null;
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:resolveMonsterZeroHp': {
+        const activeLoc = this.getLocationById(this.state.activeLocationId);
+        const token = activeLoc.tokens.find((t) => t.id === msg.tokenId && t.kind === 'enemy');
+        if (!token) return false;
+        token.hp = 0;
+        token.pendingZeroHpChoice = false;
+        token.combatStatus = msg.outcome;
+        const currentConds = Array.isArray(token.conditions) ? [...token.conditions] : [];
+        if (msg.outcome === 'unconscious') {
+          if (!currentConds.some((c) => c.trim().toLowerCase() === 'бессознательный')) {
+            currentConds.push('Бессознательный');
+          }
+          token.conditions = currentConds;
+          this.appendEvent({
+            scope: 'public',
+            title: `${token.label} без сознания`,
+            message: `${token.label} падает без сознания (0 HP).`,
+            tone: 'neutral',
+          });
+        } else {
+          token.conditions = currentConds.filter(
+            (c) => c.trim().toLowerCase() !== 'бессознательный'
+          );
+          this.appendEvent({
+            scope: 'public',
+            title: `${token.label} повержен`,
+            message: `${token.label} погибает и выбывает из порядка ходов.`,
+            tone: 'reward',
+          });
+        }
+
+        this.syncActiveLocationView();
+
+        // If the dead monster currently held the active turn, advance to the next alive combatant
+        if (msg.outcome === 'dead' && this.state.scene.activeTurnTokenId === token.id) {
+          const alivePool = this.state.tokens
+            .filter((t) => t.kind !== 'object' && t.combatStatus !== 'dead' && t.visibleOnTv)
+            .sort((a, b) => {
+              const aInit = a.playerId
+                ? this.state.players.find((p) => p.id === a.playerId)?.initiative ?? a.initiative ?? 0
+                : a.initiative ?? 0;
+              const bInit = b.playerId
+                ? this.state.players.find((p) => p.id === b.playerId)?.initiative ?? b.initiative ?? 0
+                : b.initiative ?? 0;
+              return bInit - aInit;
+            });
+          this.state.scene.activeTurnTokenId = alivePool[0]?.id ?? null;
+        }
+
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:setTokenConditions': {
+        const activeLoc = this.getLocationById(this.state.activeLocationId);
+        const token = activeLoc.tokens.find((t) => t.id === msg.tokenId);
+        if (!token) return false;
+        token.conditions = Array.from(
+          new Set((msg.conditions || []).map((c) => c.trim()).filter(Boolean))
+        );
+        this.syncActiveLocationView();
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
       case 'dm:triggerEvent': {
         const title = msg.title.trim();
         const message = msg.message.trim();
@@ -2793,12 +3158,19 @@ export class GameStore {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
           const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';
+          const existing = msg.item.id
+            ? this.state.catalogs.classFeatures.find((x) => x.id === msg.item.id)
+            : undefined;
           const normalized = {
             id: msg.item.id || makeId('cfeat'),
             classId: msg.item.classId || fallbackClass,
             level: clamp(Math.round(Number(msg.item.level) || 1), 1, 20),
             name: cleanName,
             description: (msg.item.description || '').trim(),
+            automatedSummary:
+              msg.item.automatedSummary ??
+              existing?.automatedSummary ??
+              AUTOMATED_CLASS_FEATURE_SUMMARIES[msg.item.id],
           };
           const list = this.state.catalogs.classFeatures;
           const idx = list.findIndex((x) => x.id === normalized.id);
@@ -2809,6 +3181,9 @@ export class GameStore {
           if (!cleanName) return false;
           const subRef = this.state.catalogs.subclasses.find((s) => s.id === msg.item.subclassId);
           if (!subRef) return false;
+          const existing = msg.item.id
+            ? this.state.catalogs.subclassFeatures.find((x) => x.id === msg.item.id)
+            : undefined;
           const normalized = {
             id: msg.item.id || makeId('scfeat'),
             classId: subRef.classId,
@@ -2816,6 +3191,10 @@ export class GameStore {
             level: clamp(Math.round(Number(msg.item.level) || 3), 1, 20),
             name: cleanName,
             description: (msg.item.description || '').trim(),
+            automatedSummary:
+              msg.item.automatedSummary ??
+              existing?.automatedSummary ??
+              AUTOMATED_SUBCLASS_FEATURE_SUMMARIES[msg.item.id],
           };
           const list = this.state.catalogs.subclassFeatures;
           const idx = list.findIndex((x) => x.id === normalized.id);
@@ -2920,6 +3299,23 @@ export class GameStore {
             description: (msg.item.description || '').trim(),
           };
           const list = this.state.catalogs.visions;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'conditions') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const existing = msg.item.id
+            ? this.state.catalogs.conditions.find((x) => x.id === msg.item.id)
+            : undefined;
+          const normalized = {
+            id: msg.item.id || makeId('cond'),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+            automationKey: msg.item.automationKey ?? existing?.automationKey,
+            automatedSummary: msg.item.automatedSummary ?? existing?.automatedSummary,
+          };
+          const list = this.state.catalogs.conditions;
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
@@ -3189,6 +3585,25 @@ export class GameStore {
           }
           for (const m of this.state.catalogs.monsters) {
             m.visions = (m.visions ?? []).filter((v) => v.visionId !== msg.itemId);
+          }
+        } else if (key === 'conditions') {
+          const removed = (list as Array<{ id: string; name?: string }>).find(
+            (c) => c.id === msg.itemId
+          );
+          if (removed?.name) {
+            const targetLower = removed.name.trim().toLowerCase();
+            for (const p of this.state.players) {
+              p.conditions = p.conditions.filter((c) => c.trim().toLowerCase() !== targetLower);
+            }
+            for (const loc of this.state.locations) {
+              for (const tok of loc.tokens) {
+                if (Array.isArray(tok.conditions)) {
+                  tok.conditions = tok.conditions.filter(
+                    (c) => c.trim().toLowerCase() !== targetLower
+                  );
+                }
+              }
+            }
           }
         } else if (key === 'classes') {
           const fallbackClass = this.state.catalogs.classes[0]?.id ?? '';

@@ -12,6 +12,7 @@ import type {
   CharacterDraft,
   ClassFeatureRef,
   ClassRef,
+  ConditionRef,
   EntityVisionEntry,
   FeatRef,
   GameCatalogs,
@@ -20,6 +21,7 @@ import type {
   MapLighting,
   MonsterActionRef,
   PlayerCharacter,
+  SkillRef,
   SubclassFeatureRef,
   VisionBehavior,
   VisionRef,
@@ -27,6 +29,134 @@ import type {
   WeaponRangeType,
   WeaponRef,
 } from './types.ts';
+
+export const AUTOMATED_CLASS_FEATURE_SUMMARIES: Record<string, string> = {
+  'barbarian-feat-unarmored-defense-l1':
+    'Авто-расчёт КЗ без доспехов: 10 + мод. ЛОВ + мод. ТЕЛ (работает со щитом).',
+  'barbarian-feat-fast-movement-l5':
+    'Авто-бонус к скорости: +10 фт., если не надеты тяжёлые доспехи.',
+  'barbarian-feat-rage-l1':
+    'В блоке «Действия героя» автоматически показывается текущий бонус урона Ярости (+2…+4 по уровню).',
+  'monk-feat-unarmored-defense-l1':
+    'Авто-расчёт КЗ без доспехов и щита: 10 + мод. ЛОВ + мод. МДР.',
+  'monk-feat-martial-arts-l1':
+    'Безоружный удар использует кость Боевых искусств (1к6…1к12) и макс(СИЛ, ЛОВ) для безоружного удара и монашеского оружия.',
+  'monk-feat-unarmored-movement-l2':
+    'Авто-бонус к скорости (+10…+30 фт. по уровню), если не надеты доспехи и щит.',
+  'bard-feat-jack-of-all-trades-l2':
+    'Авто-прибавка +⌊БМ/2⌋ к неизученным навыкам и к бонусу Инициативы.',
+  'rogue-feat-sneak-attack-l1':
+    'В «Действиях героя» автоматически показывается кость Коварной атаки (1к6…10к6) для фехтовального и дальнобойного оружия.',
+};
+
+export const AUTOMATED_SUBCLASS_FEATURE_SUMMARIES: Record<string, string> = {
+  'sorcerer-draconic-sorcery-f-draconic-sorcery-draconic-resilience-l3':
+    'Авто-расчёт КЗ без доспехов: 10 + мод. ЛОВ + мод. ХАР.',
+};
+
+export const AUTOMATED_FEAT_SUMMARIES: Record<string, string> = {
+  alert: 'Авто-прибавка Бонуса мастерства (+БМ) к броску Инициативы.',
+  tavern_brawler: 'Безоружный удар автоматически использует 1к4 + мод. СИЛ дробящего урона.',
+};
+
+export const DEFAULT_CONDITIONS: ConditionRef[] = [
+  {
+    id: 'unconscious',
+    name: 'Бессознательный',
+    automationKey: 'unconscious',
+    automatedSummary:
+      'Скорость = 0 фт. · Зрение на карте отключено (0 фт.) · Помеха на Инициативу · Автопровал спасбросков СИЛ/ЛОВ · Предупреждение о критах в 5 фт.',
+    description:
+      'Пока у вас есть состояние Бессознательный, на вас действуют следующие эффекты:\n\nБездеятельность. У вас есть состояния Недееспособный и Опрокинутый, и вы роняете всё, что держите. Когда ваше состояние Бессознательный заканчивается, вы остаётесь Опрокинутым.\n\nСкорость 0. Ваша Скорость равна 0 и не может быть увеличена.\n\nВлияние на атаки. Броски атаки по вам совершаются с Преимуществом.\n\nВлияние на спасброски. Вы автоматически проваливаете спасброски Силы и Ловкости.\n\nАвтоматические критические попадания. Все броски атаки, попадающие по вам, считаются Критическими попаданиями, если атакующий находится в пределах 5 футов от вас.\n\nНеосознанность. Вы не осознаёте своё окружение.',
+  },
+  {
+    id: 'frightened',
+    name: 'Испуганный',
+    automationKey: 'frightened',
+    automatedSummary:
+      'Пометка в бою и проверках: Помеха на броски атаки и проверки характеристик (пока источник в поле зрения).',
+    description:
+      'Пока у вас есть состояние Испуганный, на вас действуют следующие эффекты:\n\nВлияние на атаки и проверки характеристик. Пока существует линия видимости между вами и источником вашего испуга, вы совершаете с Помехой проверки характеристик и броски атаки.\n\nНе можете приближаться. Вы не можете добровольно приближаться к источнику вашего испуга.',
+  },
+  {
+    id: 'exhaustion',
+    name: 'Истощение',
+    automationKey: 'exhaustion',
+    automatedSummary:
+      'Авто-штраф −2 × уровень к тестам к20 (атаки, навыки, инициатива, спасброски) и −5 фт. × уровень к скорости.',
+    description:
+      'Пока у вас есть состояние Истощение, на вас действуют следующие эффекты:\n\nУровни истощения. Это состояние складывается само с собой. Каждый раз, когда вы получаете это состояние, уровень Истощения увеличивается на 1. Когда уровень Истощения становится 6, вы умираете.\n\nВлияние на тесты к20. Когда вы совершаете Тест к20, результат броска уменьшается на уровень Истощения, умноженный на 2.\n\nСнижение скорости. Ваша Скорость снижается на уровень Истощения, умноженный на 5 футов.\n\nСнятие уровней истощения. Когда вы завершаете Долгий отдых, уровень Истощения снижается на 1. Когда уровень Истощения снижается до 0, состояние на вас заканчивается.',
+  },
+  {
+    id: 'invisible',
+    name: 'Невидимый',
+    automationKey: 'invisible',
+    automatedSummary:
+      'Пометка в бою: Преимущество на Инициативу и броски атаки; атаки по цели с Помехой.',
+    description:
+      'Пока у вас есть состояние Невидимый, на вас действуют следующие эффекты:\n\nВнезапность. Если вы совершаете бросок Инициативы с состоянием Невидимый, то делаете это с Преимуществом.\n\nСкрытость. На вас не может влиять никакой эффект, требующий, чтобы его цель была видна, если только создатель такого эффекта не может каким-либо образом видеть вас. Всё несомое и носимое вами снаряжение также скрывается.\n\nВлияние на атаки. Броски атаки по вам совершаются с Помехой, а ваши броски атаки совершаются с Преимуществом, если только существо не может каким-либо образом видеть вас.',
+  },
+  {
+    id: 'incapacitated',
+    name: 'Недееспособный',
+    automationKey: 'incapacitated',
+    automatedSummary:
+      'Скорость = 0 фт. · Помеха на Инициативу · Предупреждение о невозможности действий, реакций и концентрации.',
+    description:
+      'Пока у вас есть состояние Недееспособный, на вас действуют следующие эффекты:\n\nБездействие. Вы не можете совершать действия, Бонусные действия и Реакции.\n\nБез концентрации. Вы не можете Концентрироваться.\n\nБезмолвие. Вы не можете говорить.\n\nПотрясение. Если вы совершаете бросок Инициативы с состоянием Недееспособный, то делаете это с Помехой.',
+  },
+  {
+    id: 'deafened',
+    name: 'Оглохший',
+    description:
+      'Пока у вас есть состояние Оглохший, на вас действует следующий эффект:\n\nНе можете слышать. Вы не можете слышать и автоматически проваливаете проверки характеристик, требующие слуха.',
+  },
+  {
+    id: 'petrified',
+    name: 'Окаменевший',
+    automationKey: 'petrified',
+    automatedSummary:
+      'Скорость = 0 фт. · Зрение на карте отключено · Помеха на Инициативу · Автопровал спасбросков СИЛ/ЛОВ · Сопротивление всему урону.',
+    description:
+      'Пока у вас есть состояние Окаменевший, на вас действуют следующие эффекты:\n\nНеодушевлённая материя. Вы, вместе со всеми немагическими объектами, которые вы несёте или носите, обращены в твёрдую неодушевлённую материю (обычно — в камень). Ваш вес увеличивается в десять раз, и вы перестаёте стареть.\n\nНедееспособный. У вас есть состояние Недееспособный.\n\nСкорость 0. Ваша Скорость равна 0 и не может быть увеличена.\n\nВлияние на спасброски. Вы автоматически проваливаете спасброски Силы и Ловкости.\n\nВлияние на атаки. Броски атаки по вам совершаются с Преимуществом.\n\nСопротивление урону. У вас есть Сопротивление всему урону.\n\nИммунитет к отравлению. У вас есть Иммунитет к состоянию Отравленный.',
+  },
+  {
+    id: 'prone',
+    name: 'Опрокинутый',
+    automationKey: 'prone',
+    automatedSummary:
+      'Пометка в бою: Помеха на броски атаки; встать стоит половину скорости (невозможно при Скорости 0).',
+    description:
+      'Пока у вас есть состояние Опрокинутый, на вас действуют следующие эффекты:\n\nОграниченное перемещение. Вы можете перемещаться только ползком, или вы можете потратить перемещение в размере, равном половине вашей Скорости (округляя вниз), чтобы подняться и таким образом окончить на себе это состояние. Вы не можете подняться, если ваша Скорость равна 0.\n\nВлияние на атаки. Вы совершаете с Помехой броски атаки. Броски атаки по вам совершаются с Преимуществом, если атакующий находится в пределах 5 футов от вас; броски атаки по вам совершаются с Помехой, если атакующий находится далее 5 футов от вас.',
+  },
+  {
+    id: 'restrained',
+    name: 'Опутанный',
+    automationKey: 'restrained',
+    automatedSummary:
+      'Скорость = 0 фт. · Помеха на броски атаки и спасброски ЛОВ · Атаки по цели с Преимуществом.',
+    description:
+      'Пока у вас есть состояние Опутанный, на вас действуют следующие эффекты:\n\nСкорость 0. Ваша Скорость равна 0 и не может быть увеличена.\n\nВлияние на атаки. Ваши броски атаки совершаются с Помехой, а броски атаки по вам совершаются с Преимуществом.\n\nВлияние на спасброски. Вы совершаете с Помехой спасброски Ловкости.',
+  },
+  {
+    id: 'blinded',
+    name: 'Ослеплённый',
+    automationKey: 'blinded',
+    automatedSummary:
+      'Отключает Обычное, Тёмное и Истинное зрение на карте (оставляет Слепое зрение и Чувство вибрации) · Помеха на броски атаки.',
+    description:
+      'Пока у вас есть состояние Ослеплённый, на вас действуют следующие эффекты:\n\nНе можете видеть. Вы не можете видеть и автоматически проваливаете проверки характеристик, требующие зрения.\n\nВлияние на атаки. Ваши броски атаки совершаются с Помехой, а броски атаки по вам совершаются с Преимуществом.',
+  },
+  {
+    id: 'poisoned',
+    name: 'Отравленный',
+    automationKey: 'poisoned',
+    automatedSummary:
+      'Пометка в бою и проверках: Помеха на броски атаки и проверки характеристик.',
+    description:
+      'Пока у вас есть состояние Отравленный, на вас действует следующий эффект:\n\nВлияние на атаки и проверки характеристик. Вы совершаете с Помехой броски атаки и проверки характеристик.',
+  },
+];
 
 export function createDefaultCatalogs(): GameCatalogs {
   const abilities: AbilityRef[] = [
@@ -313,8 +443,14 @@ export function createDefaultCatalogs(): GameCatalogs {
     abilityModifiers,
     classes: baseClasses.map(withProgressionMeta),
     subclasses: DEFAULT_SUBCLASSES.map((s) => ({ ...s })),
-    classFeatures: DEFAULT_CLASS_FEATURES.map((f) => ({ ...f })),
-    subclassFeatures: DEFAULT_SUBCLASS_FEATURES.map((f) => ({ ...f })),
+    classFeatures: DEFAULT_CLASS_FEATURES.map((f) => ({
+      ...f,
+      automatedSummary: AUTOMATED_CLASS_FEATURE_SUMMARIES[f.id],
+    })),
+    subclassFeatures: DEFAULT_SUBCLASS_FEATURES.map((f) => ({
+      ...f,
+      automatedSummary: AUTOMATED_SUBCLASS_FEATURE_SUMMARIES[f.id],
+    })),
     backgrounds: [
       {
         id: 'entertainer',
@@ -449,6 +585,7 @@ export function createDefaultCatalogs(): GameCatalogs {
       {
         id: 'alert',
         name: 'Бдительный',
+        automatedSummary: AUTOMATED_FEAT_SUMMARIES.alert,
         description:
           'Владение Инициативой: при броске Инициативы добавляйте свой Бонус владения. Обмен Инициативой: сразу после броска Инициативы вы можете обменяться значениями Инициативы с одним согласным союзником в том же бою (если никто из вас не Недееспособен).',
       },
@@ -461,6 +598,7 @@ export function createDefaultCatalogs(): GameCatalogs {
       {
         id: 'tavern_brawler',
         name: 'Дебошир',
+        automatedSummary: AUTOMATED_FEAT_SUMMARIES.tavern_brawler,
         description:
           'Усиленный безоружный удар (1к4 + мод. Силы дробящего урона) с перебросом «1» на кости урона. Владение импровизированным оружием. Толчок: 1 раз в ход при попадании Безоружным ударом частью действия Атака можно оттолкнуть цель на 5 футов.',
       },
@@ -745,6 +883,7 @@ export function createDefaultCatalogs(): GameCatalogs {
           'Существо, обладающее Чувством вибрации, может определять местоположение существ и движущихся объектов в определённых пределах, если и обладатель Чувства вибрации, и ощущаемое им существо или объект находятся в контакте с одной и той же поверхностью (как, например, земля, стена, потолок) или жидкостью.\n\nЧувство вибрации не может определять местоположение существ или объектов, находящихся в воздухе. Чувство вибрации не считается зрением.',
       },
     ],
+    conditions: DEFAULT_CONDITIONS.map((c) => ({ ...c })),
     weapons: [
       {
         id: 'wpn-dagger',
@@ -1119,9 +1258,13 @@ export function resolveInventoryArmorCategory(
 }
 
 export function computePlayerAcDetails(
-  player: Pick<PlayerCharacter, 'abilities' | 'inventory'>,
+  player: Pick<PlayerCharacter, 'abilities' | 'inventory'> & {
+    classId?: string;
+    subclassId?: string;
+    level?: number;
+  },
   catalogs: GameCatalogs
-): { total: number; breakdown: string } {
+): { total: number; breakdown: string; automatedBy?: string } {
   const dexScore = player.abilities?.dex ?? 10;
   const dexMod = getAbilityModifier(dexScore, catalogs.abilityModifiers);
 
@@ -1143,6 +1286,45 @@ export function computePlayerAcDetails(
 
   let baseAc = 10 + dexMod;
   let baseLabel = `10 + ЛОВ (${formatModifier(dexMod)})`;
+  let automatedBy: string | undefined;
+
+  if (!bodyArmorItem) {
+    const level = Math.max(1, Math.floor(Number(player.level) || 1));
+    // Barbarian Unarmored Defense: 10 + DEX + CON (allowed with shield)
+    if (player.classId === 'barbarian') {
+      const conMod = getAbilityModifier(player.abilities?.con ?? 10, catalogs.abilityModifiers);
+      const barbAc = 10 + dexMod + conMod;
+      if (barbAc >= baseAc) {
+        baseAc = barbAc;
+        baseLabel = `Защита без доспехов: 10 + ЛОВ (${formatModifier(dexMod)}) + ТЕЛ (${formatModifier(conMod)})`;
+        automatedBy = 'Защита без доспехов (Варвар)';
+      }
+    }
+    // Monk Unarmored Defense: 10 + DEX + WIS (no armor, no shield)
+    if (player.classId === 'monk' && !shieldItem) {
+      const wisMod = getAbilityModifier(player.abilities?.wis ?? 10, catalogs.abilityModifiers);
+      const monkAc = 10 + dexMod + wisMod;
+      if (monkAc >= baseAc) {
+        baseAc = monkAc;
+        baseLabel = `Защита без доспехов: 10 + ЛОВ (${formatModifier(dexMod)}) + МДР (${formatModifier(wisMod)})`;
+        automatedBy = 'Защита без доспехов (Монах)';
+      }
+    }
+    // Draconic Sorcerer: 10 + DEX + CHA (lvl 3+, no armor)
+    if (
+      player.classId === 'sorcerer' &&
+      player.subclassId === 'sorcerer-draconic-sorcery' &&
+      level >= 3
+    ) {
+      const chaMod = getAbilityModifier(player.abilities?.cha ?? 10, catalogs.abilityModifiers);
+      const draconicAc = 10 + dexMod + chaMod;
+      if (draconicAc >= baseAc) {
+        baseAc = draconicAc;
+        baseLabel = `Драконья устойчивость: 10 + ЛОВ (${formatModifier(dexMod)}) + ХАР (${formatModifier(chaMod)})`;
+        automatedBy = 'Драконья устойчивость (Чародей)';
+      }
+    }
+  }
 
   if (bodyArmorItem) {
     const catalogArmor =
@@ -1236,11 +1418,16 @@ export function computePlayerAcDetails(
   return {
     total: Math.max(1, baseAc + shieldBonus),
     breakdown: `${baseLabel}${shieldLabel}`,
+    automatedBy,
   };
 }
 
 export function computePlayerAc(
-  player: Pick<PlayerCharacter, 'abilities' | 'inventory'>,
+  player: Pick<PlayerCharacter, 'abilities' | 'inventory'> & {
+    classId?: string;
+    subclassId?: string;
+    level?: number;
+  },
   catalogs: GameCatalogs
 ): number {
   return computePlayerAcDetails(player, catalogs).total;
@@ -1252,6 +1439,308 @@ export function computePlayerInitiative(
 ): number {
   const dexScore = abilities?.dex ?? 10;
   return 10 + getAbilityModifier(dexScore, catalogs.abilityModifiers);
+}
+
+// ============================================================================
+// Condition Effects, Effective Speed, Initiative Bonus & Skill Automation
+// ============================================================================
+
+export interface ActiveConditionEffects {
+  speedZero: boolean;
+  speedZeroSources: string[];
+  blinded: boolean;
+  unaware: boolean;
+  incapacitated: boolean;
+  exhaustionLevel: number;
+  d20Penalty: number;
+  speedPenaltyFt: number;
+  attackDisadvantage: string[];
+  attackAdvantage: string[];
+  checkDisadvantage: string[];
+  initiativeAdvantage: boolean;
+  initiativeDisadvantage: boolean;
+  autoFailStrDexSaves: boolean;
+  dexSaveDisadvantage: boolean;
+  combatCallouts: string[];
+}
+
+function normalizeConditionKey(name: string): string {
+  const lower = name.trim().toLowerCase().replace(/ё/g, 'е');
+  if (lower.includes('бессознат')) return 'unconscious';
+  if (lower.includes('испуг')) return 'frightened';
+  if (lower.includes('истощ')) return 'exhaustion';
+  if (lower.includes('невидим')) return 'invisible';
+  if (lower.includes('недееспособ')) return 'incapacitated';
+  if (lower.includes('оглох')) return 'deafened';
+  if (lower.includes('окаменев')) return 'petrified';
+  if (lower.includes('опрокин')) return 'prone';
+  if (lower.includes('опутан')) return 'restrained';
+  if (lower.includes('ослепл')) return 'blinded';
+  if (lower.includes('отравл')) return 'poisoned';
+  return lower;
+}
+
+export function getActiveConditionEffects(
+  conditions: string[] | undefined,
+  exhaustionLevel?: number
+): ActiveConditionEffects {
+  const list = Array.isArray(conditions) ? conditions : [];
+  const keys = new Set(list.map(normalizeConditionKey));
+
+  const speedZeroSources: string[] = [];
+  if (keys.has('unconscious')) speedZeroSources.push('Бессознательный');
+  if (keys.has('petrified')) speedZeroSources.push('Окаменевший');
+  if (keys.has('restrained')) speedZeroSources.push('Опутанный');
+  if (keys.has('incapacitated')) speedZeroSources.push('Недееспособный');
+
+  const unaware = keys.has('unconscious') || keys.has('petrified');
+  const blinded = unaware || keys.has('blinded');
+  const incapacitated = unaware || keys.has('incapacitated');
+
+  const effExhaustion = keys.has('exhaustion')
+    ? Math.max(1, Math.min(6, Math.round(Number(exhaustionLevel) || 1)))
+    : 0;
+  const d20Penalty = effExhaustion > 0 ? -(effExhaustion * 2) : 0;
+  const speedPenaltyFt = effExhaustion > 0 ? effExhaustion * 5 : 0;
+
+  const attackDisadvantage: string[] = [];
+  if (keys.has('blinded')) attackDisadvantage.push('Ослеплённый');
+  if (keys.has('frightened')) attackDisadvantage.push('Испуганный');
+  if (keys.has('poisoned')) attackDisadvantage.push('Отравленный');
+  if (keys.has('prone')) attackDisadvantage.push('Опрокинутый');
+  if (keys.has('restrained')) attackDisadvantage.push('Опутанный');
+
+  const attackAdvantage: string[] = [];
+  if (keys.has('invisible')) attackAdvantage.push('Невидимый');
+
+  const checkDisadvantage: string[] = [];
+  if (keys.has('poisoned')) checkDisadvantage.push('Отравленный');
+  if (keys.has('frightened')) checkDisadvantage.push('Испуганный');
+
+  const initiativeAdvantage = keys.has('invisible');
+  const initiativeDisadvantage = incapacitated;
+  const autoFailStrDexSaves = keys.has('unconscious') || keys.has('petrified');
+  const dexSaveDisadvantage = keys.has('restrained');
+
+  const combatCallouts: string[] = [];
+  if (speedZeroSources.length > 0) {
+    combatCallouts.push(`Скорость = 0 фт. (${speedZeroSources.join(', ')})`);
+  }
+  if (effExhaustion > 0) {
+    combatCallouts.push(
+      `Истощение ур. ${effExhaustion}: ${d20Penalty} к тестам к20, −${speedPenaltyFt} фт. скорости`
+    );
+  }
+  if (incapacitated) {
+    combatCallouts.push('Не может совершать действия, бонусные действия, реакции и концентрацию');
+  }
+  if (attackDisadvantage.length > 0) {
+    combatCallouts.push(`Помеха на атаки (${attackDisadvantage.join(', ')})`);
+  }
+  if (attackAdvantage.length > 0) {
+    combatCallouts.push(`Преимущество на атаки и инициативу (${attackAdvantage.join(', ')})`);
+  }
+  if (checkDisadvantage.length > 0) {
+    combatCallouts.push(`Помеха на проверки характеристик (${checkDisadvantage.join(', ')})`);
+  }
+  if (keys.has('unconscious')) {
+    combatCallouts.push('Атаки в пределах 5 фт. — автокрит; автопровал спасбросков СИЛ/ЛОВ');
+  } else if (keys.has('petrified')) {
+    combatCallouts.push('Сопротивление всему урону; автопровал спасбросков СИЛ/ЛОВ');
+  }
+  if (keys.has('prone') && !keys.has('unconscious')) {
+    combatCallouts.push('Атаки по цели в 5 фт. с Преимуществом, дальше 5 фт. — с Помехой');
+  }
+
+  return {
+    speedZero: speedZeroSources.length > 0,
+    speedZeroSources,
+    blinded,
+    unaware,
+    incapacitated,
+    exhaustionLevel: effExhaustion,
+    d20Penalty,
+    speedPenaltyFt,
+    attackDisadvantage,
+    attackAdvantage,
+    checkDisadvantage,
+    initiativeAdvantage,
+    initiativeDisadvantage,
+    autoFailStrDexSaves,
+    dexSaveDisadvantage,
+    combatCallouts,
+  };
+}
+
+export function computePlayerEffectiveSpeed(
+  player: Pick<PlayerCharacter, 'classId' | 'level' | 'inventory' | 'conditions'> & {
+    speed?: number;
+    exhaustionLevel?: number;
+  },
+  catalogs: Pick<GameCatalogs, 'classes' | 'armors'>
+): { baseFt: number; effectiveFt: number; breakdown: string; isZeroByCondition: boolean } {
+  const baseFt =
+    typeof player.speed === 'number' && Number.isFinite(player.speed) && player.speed >= 0
+      ? Math.round(player.speed)
+      : 30;
+  const effects = getActiveConditionEffects(player.conditions, player.exhaustionLevel);
+  if (effects.speedZero) {
+    return {
+      baseFt,
+      effectiveFt: 0,
+      breakdown: `0 фт. (${effects.speedZeroSources.join(', ')})`,
+      isZeroByCondition: true,
+    };
+  }
+
+  const equippedArmors = (player.inventory || []).filter(
+    (i) => i.equipped && i.category === 'armor'
+  );
+  let hasAnyArmor = false;
+  let hasHeavyArmor = false;
+  let hasShield = false;
+  for (const item of equippedArmors) {
+    const cat = resolveInventoryArmorCategory(item, catalogs as GameCatalogs);
+    if (cat === 'shield') hasShield = true;
+    else {
+      hasAnyArmor = true;
+      if (cat === 'heavy') hasHeavyArmor = true;
+    }
+  }
+
+  let bonusFt = 0;
+  const parts: string[] = [`База ${baseFt} фт.`];
+  const level = Math.max(1, Math.floor(Number(player.level) || 1));
+
+  // Barbarian Fast Movement (lvl 5+, no heavy armor)
+  if (player.classId === 'barbarian' && level >= 5 && !hasHeavyArmor) {
+    bonusFt += 10;
+    parts.push('+10 фт. (Быстрое передвижение)');
+  }
+
+  // Monk Unarmored Movement (lvl 2+, no armor and no shield)
+  if (player.classId === 'monk' && level >= 2 && !hasAnyArmor && !hasShield) {
+    const monkCls = catalogs.classes.find((c) => c.id === 'monk');
+    const moveRes = monkCls?.classResources?.find((r) => r.id === 'monk-res-5');
+    const rawVal = moveRes?.values[Math.min(level - 1, (moveRes.values.length || 1) - 1)] ?? '';
+    const m = /\d+/.exec(rawVal);
+    const monkBonus = m ? Number(m[0]) : 10;
+    if (monkBonus > 0) {
+      bonusFt += monkBonus;
+      parts.push(`+${monkBonus} фт. (Движение без доспехов)`);
+    }
+  }
+
+  if (effects.speedPenaltyFt > 0) {
+    parts.push(`−${effects.speedPenaltyFt} фт. (Истощение ур. ${effects.exhaustionLevel})`);
+  }
+
+  const effectiveFt = Math.max(0, baseFt + bonusFt - effects.speedPenaltyFt);
+  return {
+    baseFt,
+    effectiveFt,
+    breakdown: parts.join(' '),
+    isZeroByCondition: false,
+  };
+}
+
+export function computePlayerInitiativeDetails(
+  player: Pick<
+    PlayerCharacter,
+    'abilities' | 'classId' | 'level' | 'backgroundId' | 'featIds' | 'conditions'
+  > & { exhaustionLevel?: number },
+  catalogs: Pick<GameCatalogs, 'abilityModifiers' | 'classes' | 'backgrounds' | 'feats'>
+): {
+  bonus: number;
+  dexMod: number;
+  passiveTotal: number;
+  breakdown: string;
+  hasAdvantage: boolean;
+  hasDisadvantage: boolean;
+} {
+  const dexMod = getAbilityModifier(player.abilities?.dex ?? 10, catalogs.abilityModifiers);
+  const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
+  const profBonus = getClassProficiencyBonus(player.level, classRef);
+  const feats = getHeroFeats(player, catalogs);
+  const hasAlert = feats.some((f) => f.id === 'alert');
+  const isBardJack = player.classId === 'bard' && player.level >= 2;
+  const effects = getActiveConditionEffects(player.conditions, player.exhaustionLevel);
+
+  let bonus = dexMod;
+  const parts: string[] = [`ЛОВ (${formatModifier(dexMod)})`];
+
+  if (hasAlert) {
+    bonus += profBonus;
+    parts.push(`Бдительный (+${profBonus})`);
+  } else if (isBardJack) {
+    const halfPb = Math.floor(profBonus / 2);
+    if (halfPb > 0) {
+      bonus += halfPb;
+      parts.push(`Мастер на все руки (+${halfPb})`);
+    }
+  }
+
+  if (effects.d20Penalty !== 0) {
+    bonus += effects.d20Penalty;
+    parts.push(`Истощение (${effects.d20Penalty})`);
+  }
+
+  return {
+    bonus,
+    dexMod,
+    passiveTotal: 10 + bonus,
+    breakdown: `${parts.join(' + ')} = ${formatModifier(bonus)}`,
+    hasAdvantage: effects.initiativeAdvantage,
+    hasDisadvantage: effects.initiativeDisadvantage,
+  };
+}
+
+export function computeHeroSkillTotal(
+  player: Pick<
+    PlayerCharacter,
+    | 'abilities'
+    | 'classId'
+    | 'level'
+    | 'proficientSkillIds'
+    | 'expertiseSkillIds'
+    | 'conditions'
+  > & { exhaustionLevel?: number },
+  skill: Pick<SkillRef, 'id' | 'abilityId'>,
+  catalogs: Pick<GameCatalogs, 'abilityModifiers' | 'classes'>
+): {
+  total: number;
+  isProficient: boolean;
+  isExpertise: boolean;
+  hasJackOfAllTrades: boolean;
+  exhaustionPenalty: number;
+} {
+  const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
+  const profBonus = getClassProficiencyBonus(player.level, classRef);
+  const abMod = getAbilityModifier(
+    player.abilities?.[skill.abilityId] ?? 10,
+    catalogs.abilityModifiers
+  );
+  const isExpertise = (player.expertiseSkillIds ?? []).includes(skill.id);
+  const isProficient = isExpertise || player.proficientSkillIds.includes(skill.id);
+  const hasJackOfAllTrades =
+    !isProficient && player.classId === 'bard' && player.level >= 2;
+  const effects = getActiveConditionEffects(player.conditions, player.exhaustionLevel);
+
+  const profAdd = isExpertise
+    ? profBonus * 2
+    : isProficient
+      ? profBonus
+      : hasJackOfAllTrades
+        ? Math.floor(profBonus / 2)
+        : 0;
+
+  return {
+    total: abMod + profAdd + effects.d20Penalty,
+    isProficient,
+    isExpertise,
+    hasJackOfAllTrades,
+    exhaustionPenalty: effects.d20Penalty,
+  };
 }
 
 export function parseStrengthRequirement(raw?: string): number | null {
@@ -1633,12 +2122,22 @@ export function formatEntityVisions(
 export function computeEffectiveVisionRanges(
   entries: EntityVisionEntry[] | undefined,
   catalogVisions: VisionRef[],
-  lighting: MapLighting = 'bright'
+  lighting: MapLighting = 'bright',
+  conditions?: string[]
 ): {
   clearRangeFt: number;
   visibleRangeFt: number;
   summary: string;
 } {
+  const condEffects = getActiveConditionEffects(conditions);
+  if (condEffects.unaware) {
+    return {
+      clearRangeFt: 0,
+      visibleRangeFt: 0,
+      summary: 'Не осознаёт окружение — 0 фт. (Бессознательный/Окаменевший)',
+    };
+  }
+
   const effectiveEntries: EntityVisionEntry[] =
     Array.isArray(entries) && entries.length > 0
       ? entries
@@ -1673,6 +2172,19 @@ export function computeEffectiveVisionRanges(
     } else if (behavior === 'tremorsense') {
       tremorsenseRange = Math.max(tremorsenseRange, r);
     }
+  }
+
+  // Condition: Blinded disables normal, darkvision, and truesight (keeps blindsight & tremorsense)
+  if (condEffects.blinded) {
+    const blindClear = Math.max(blindsightRange, tremorsenseRange);
+    return {
+      clearRangeFt: blindClear,
+      visibleRangeFt: blindClear,
+      summary:
+        blindClear > 0
+          ? `Ослеплён — видит только особыми чувствами (${blindClear} фт.)`
+          : 'Ослеплён — не видит (0 фт.)',
+    };
   }
 
   // Creatures with darkvision or truesight also see normally in lit areas unless explicitly blind
@@ -2095,6 +2607,7 @@ export interface HeroActionItem {
   rangeLabel: string;
   properties?: string;
   mastery?: string;
+  bonusNote?: string;
 }
 
 function formatDamageWithAbilityMod(baseDamage: string, mod: number): string {
@@ -2113,9 +2626,36 @@ function formatDamageWithAbilityMod(baseDamage: string, mod: number): string {
   return `${dicePart} ${sign} ${Math.abs(mod)}${restPart}`;
 }
 
+function formatHitFormula(hitBonus: number): string {
+  if (hitBonus === 0) return '1к20';
+  return hitBonus > 0 ? `1к20 + ${hitBonus}` : `1к20 − ${Math.abs(hitBonus)}`;
+}
+
+function formatHitBreakdown(
+  profBonus: number,
+  abilityLabel: string,
+  abilityMod: number,
+  exhaustionPenalty: number,
+  total: number
+): string {
+  const parts = [`БМ (+${profBonus})`, `${abilityLabel} (${formatModifier(abilityMod)})`];
+  if (exhaustionPenalty !== 0) {
+    parts.push(`Истощ. (${exhaustionPenalty})`);
+  }
+  return `${parts.join(' + ')} = ${formatModifier(total)}`;
+}
+
 export function computeHeroActions(
-  player: Pick<PlayerCharacter, 'abilities' | 'level' | 'classId' | 'inventory'>,
-  catalogs: Pick<GameCatalogs, 'classes' | 'weapons' | 'abilityModifiers'>
+  player: Pick<PlayerCharacter, 'abilities' | 'level' | 'classId' | 'inventory'> & {
+    backgroundId?: string;
+    featIds?: string[];
+    conditions?: string[];
+    exhaustionLevel?: number;
+  },
+  catalogs: Pick<GameCatalogs, 'classes' | 'weapons' | 'abilityModifiers'> & {
+    backgrounds?: GameCatalogs['backgrounds'];
+    feats?: GameCatalogs['feats'];
+  }
 ): HeroActionItem[] {
   const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
   const profBonus = getClassProficiencyBonus(player.level, classRef);
@@ -2123,29 +2663,79 @@ export function computeHeroActions(
   const dexScore = player.abilities?.dex ?? 10;
   const strMod = getAbilityModifier(strScore, catalogs.abilityModifiers);
   const dexMod = getAbilityModifier(dexScore, catalogs.abilityModifiers);
+  const condEffects = getActiveConditionEffects(player.conditions, player.exhaustionLevel);
+  const exPen = condEffects.d20Penalty;
+
+  const isMonk = player.classId === 'monk';
+  const isBarbarian = player.classId === 'barbarian';
+  const isRogue = player.classId === 'rogue';
+  const safeLevel = Math.max(1, Math.min(20, Math.floor(Number(player.level) || 1)));
+
+  const monkDieRaw = isMonk
+    ? classRef?.classResources?.find((r) => r.id === 'monk-res-3')?.values[safeLevel - 1]
+    : undefined;
+  const monkDie = monkDieRaw && /^1?[кk]\d+/i.test(monkDieRaw) ? monkDieRaw.toLowerCase() : isMonk ? '1к6' : null;
+  const rageDamageRaw = isBarbarian
+    ? classRef?.classResources?.find((r) => r.id === 'barbarian-res-4')?.values[safeLevel - 1]
+    : undefined;
+  const sneakAttackRaw = isRogue
+    ? classRef?.classResources?.find((r) => r.id === 'rogue-res-3')?.values[safeLevel - 1]
+    : undefined;
+
+  const hasTavernBrawler =
+    Array.isArray(player.featIds) && player.featIds.includes('tavern_brawler')
+      ? true
+      : Boolean(
+          catalogs.backgrounds &&
+            player.backgroundId &&
+            catalogs.backgrounds.find((b) => b.id === player.backgroundId)?.featId === 'tavern_brawler'
+        );
 
   const actions: HeroActionItem[] = [];
 
-  // 1. Unarmed Strike (always available)
-  const unarmedHitBonus = profBonus + strMod;
-  const unarmedDamageTotal = Math.max(1, 1 + strMod);
+  // 1. Unarmed Strike (always available; automated for Monk Martial Arts & Tavern Brawler)
+  const useMonkDex = isMonk && dexMod > strMod;
+  const unarmedAbMod = useMonkDex ? dexMod : strMod;
+  const unarmedAbShort = useMonkDex ? 'ЛОВ' : 'СИЛ';
+  const unarmedHitBonus = profBonus + unarmedAbMod + exPen;
+  let unarmedDamageFormula: string;
+  let unarmedDamageBreakdown: string;
+  let unarmedSubtitle = 'Всегда доступно';
+
+  if (monkDie) {
+    unarmedDamageFormula = formatDamageWithAbilityMod(`${monkDie} дробящий`, unarmedAbMod);
+    unarmedDamageBreakdown = `${monkDie} + ${unarmedAbShort} (${formatModifier(unarmedAbMod)}) · Боевые искусства`;
+    unarmedSubtitle = 'Боевые искусства (авто)';
+  } else if (hasTavernBrawler) {
+    unarmedDamageFormula = formatDamageWithAbilityMod('1к4 дробящий', strMod);
+    unarmedDamageBreakdown = `1к4 + СИЛ (${formatModifier(strMod)}) · Черта «Дебошир»`;
+    unarmedSubtitle = 'Усилен чертой «Дебошир»';
+  } else {
+    const unarmedDamageTotal = Math.max(1, 1 + strMod);
+    unarmedDamageFormula = `${unarmedDamageTotal} дробящий`;
+    unarmedDamageBreakdown = `1 + СИЛ (${formatModifier(strMod)})`;
+  }
+
   actions.push({
     id: 'action-unarmed',
     kind: 'unarmed',
     name: 'Безоружный удар',
-    subtitle: 'Всегда доступно',
+    subtitle: unarmedSubtitle,
     equipped: true,
     hitBonus: unarmedHitBonus,
-    hitFormula: `1к20 ${formatModifier(unarmedHitBonus)}`,
-    hitBreakdown: `БМ +${profBonus} + СИЛ ${formatModifier(strMod)}`,
-    damageFormula: `${unarmedDamageTotal} дробящий`,
-    damageBreakdown: `1 + мод. СИЛ (${formatModifier(strMod)})`,
+    hitFormula: formatHitFormula(unarmedHitBonus),
+    hitBreakdown: formatHitBreakdown(profBonus, unarmedAbShort, unarmedAbMod, exPen, unarmedHitBonus),
+    damageFormula: unarmedDamageFormula,
+    damageBreakdown: unarmedDamageBreakdown,
     rangeLabel: '5 фт.',
+    bonusNote:
+      isBarbarian && rageDamageRaw && !useMonkDex
+        ? `В Ярости: ${rageDamageRaw} к урону`
+        : undefined,
   });
 
   // 2 & 3. Melee & Ranged Weapon Attacks from inventory
   const weaponsInInventory = (player.inventory ?? []).filter((item) => item.category === 'weapon');
-  // Sort equipped weapons first
   const sortedWeapons = [...weaponsInInventory].sort((a, b) => Number(b.equipped) - Number(a.equipped));
 
   for (const item of sortedWeapons) {
@@ -2162,10 +2752,30 @@ export function computeHeroActions(
         ? `${resolvedRange.normalFt}/${resolvedRange.maxFt} фт.`
         : `${resolvedRange.normalFt} фт.`;
 
+    const propsStr = (item.properties || catalogWeapon?.properties || '').toLowerCase();
+    const isFinesse = propsStr.includes('фехтовал');
+    const wpnCat = item.weaponCategory ?? catalogWeapon?.category;
+    const isMonkWeapon =
+      isMonk &&
+      !isRanged &&
+      (wpnCat === 'simple' || propsStr.includes('лёгк') || propsStr.includes('легк'));
+
     const baseDamage = item.damage || catalogWeapon?.damage || '1к4';
-    const abilityMod = isRanged ? dexMod : strMod;
-    const abilityShort = isRanged ? 'ЛОВ' : 'СИЛ';
-    const hitBonus = profBonus + abilityMod;
+    let abilityMod = isRanged ? dexMod : strMod;
+    let abilityShort = isRanged ? 'ЛОВ' : 'СИЛ';
+    if (!isRanged && (isFinesse || isMonkWeapon) && dexMod > strMod) {
+      abilityMod = dexMod;
+      abilityShort = 'ЛОВ';
+    }
+
+    const hitBonus = profBonus + abilityMod + exPen;
+    const notes: string[] = [];
+    if (isBarbarian && rageDamageRaw && !isRanged && abilityShort === 'СИЛ') {
+      notes.push(`В Ярости: ${rageDamageRaw} к урону`);
+    }
+    if (isRogue && sneakAttackRaw && (isRanged || isFinesse)) {
+      notes.push(`Коварная атака: +${sneakAttackRaw}`);
+    }
 
     actions.push({
       id: `action-wpn-${item.id}`,
@@ -2175,13 +2785,14 @@ export function computeHeroActions(
       equipped: item.equipped,
       inventoryItemId: item.id,
       hitBonus,
-      hitFormula: `1к20 ${formatModifier(hitBonus)}`,
-      hitBreakdown: `БМ +${profBonus} + ${abilityShort} ${formatModifier(abilityMod)}`,
+      hitFormula: formatHitFormula(hitBonus),
+      hitBreakdown: formatHitBreakdown(profBonus, abilityShort, abilityMod, exPen, hitBonus),
       damageFormula: formatDamageWithAbilityMod(baseDamage, abilityMod),
-      damageBreakdown: `${baseDamage} + мод. ${abilityShort} (${formatModifier(abilityMod)})`,
+      damageBreakdown: `${baseDamage} + ${abilityShort} (${formatModifier(abilityMod)})`,
       rangeLabel,
       properties: item.properties || catalogWeapon?.properties,
       mastery: item.mastery || catalogWeapon?.mastery,
+      bonusNote: notes.length > 0 ? notes.join(' · ') : undefined,
     });
   }
 

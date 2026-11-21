@@ -3,6 +3,7 @@ import {
   Check,
   Compass,
   Copy,
+  Dices,
   Footprints,
   MapPin,
   QrCode,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import { TacticalMap } from '../components/TacticalMap';
 import { useGameSocket } from '../useGameSocket';
+import type { MonsterCombatStatus } from '../../shared/types';
 
 interface TvViewProps {
   onNavigate: (path: string) => void;
@@ -64,6 +66,8 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
 
   const { scene, map, tokens, hotspots, players, tvDisplay, locationKind, activeLocationId } = tvState;
   const isCityMap = locationKind === 'city';
+  const initiativeSession =
+    tvDisplay.phase === 'live' && scene.initiativeSession?.active ? scene.initiativeSession : null;
 
   // Build tactical turn-order playing cards: heroes on this map + monsters/NPCs sorted by initiative desc
   const tacticalTurnEntries = !isCityMap
@@ -77,6 +81,8 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
           initiative: number;
           isTurn: boolean;
           portraitUrl: string | null;
+          combatStatus: MonsterCombatStatus;
+          conditions: string[];
         }> = [];
         const coveredPlayerIds = new Set<string>();
 
@@ -85,6 +91,7 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
           if (tok.kind === 'player' && tok.playerId) {
             const pl = players.find((p) => p.id === tok.playerId);
             coveredPlayerIds.add(tok.playerId);
+            const playerConds = pl?.conditions ?? tok.conditions ?? [];
             entries.push({
               key: tok.id,
               tokenId: tok.id,
@@ -94,6 +101,8 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               initiative: pl?.initiative ?? tok.initiative ?? 0,
               isTurn: scene.activeTurnTokenId === tok.id,
               portraitUrl: pl?.portraitUrl ?? tok.portraitUrl ?? null,
+              combatStatus: 'alive',
+              conditions: playerConds,
             });
           } else {
             entries.push({
@@ -103,8 +112,10 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               color: tok.color,
               kind: tok.kind === 'enemy' ? 'enemy' : 'npc',
               initiative: tok.initiative ?? 0,
-              isTurn: scene.activeTurnTokenId === tok.id,
+              isTurn: tok.combatStatus !== 'dead' && scene.activeTurnTokenId === tok.id,
               portraitUrl: tok.portraitUrl ?? null,
+              combatStatus: tok.combatStatus ?? 'alive',
+              conditions: tok.conditions ?? [],
             });
           }
         }
@@ -121,6 +132,8 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               initiative: pl.initiative ?? 0,
               isTurn: false,
               portraitUrl: pl.portraitUrl ?? null,
+              combatStatus: 'alive',
+              conditions: pl.conditions ?? [],
             });
           }
         }
@@ -129,8 +142,25 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
       })()
     : [];
 
+  // Group consecutive cards with identical initiative into tie clusters
+  const turnClusters: Array<{
+    initiative: number;
+    entries: typeof tacticalTurnEntries;
+  }> = [];
+  for (const entry of tacticalTurnEntries) {
+    const prev = turnClusters[turnClusters.length - 1];
+    if (prev && prev.initiative === entry.initiative) {
+      prev.entries.push(entry);
+    } else {
+      turnClusters.push({ initiative: entry.initiative, entries: [entry] });
+    }
+  }
+
   const showCombatDeck =
-    tvDisplay.phase === 'live' && !isCityMap && tacticalTurnEntries.length > 0;
+    tvDisplay.phase === 'live' &&
+    !isCityMap &&
+    !initiativeSession &&
+    tacticalTurnEntries.length > 0;
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#0B0F17] text-slate-100 relative">
@@ -318,83 +348,370 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
         )}
       </main>
 
+      {/* BLOCKING INITIATIVE ROLL OVERLAY ON TV (Live live-sorted turn order while DM fills in rolls) */}
+      {initiativeSession && (() => {
+        const entered = initiativeSession.entries
+          .filter((e) => e.total !== null)
+          .sort((a, b) => (b.total ?? -999) - (a.total ?? -999));
+        const waiting = initiativeSession.entries.filter((e) => e.total === null);
+        const totalCounts = new Map<number, number>();
+        for (const e of entered) {
+          if (e.total !== null) {
+            totalCounts.set(e.total, (totalCounts.get(e.total) ?? 0) + 1);
+          }
+        }
+        const totalAll = initiativeSession.entries.length;
+        const pct = totalAll > 0 ? Math.round((entered.length / totalAll) * 100) : 0;
+
+        return (
+          <div className="fixed inset-0 z-40 bg-[#070B12]/88 backdrop-blur-md flex items-center justify-center p-6 sm:p-10">
+            <div className="w-full max-w-4xl rounded-2xl bg-[#111827]/95 border border-amber-500/40 shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+              <div className="px-6 py-5 border-b border-slate-800/90 flex items-center justify-between gap-4 bg-[#0C121E]">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center shrink-0">
+                    <Dices className="w-6 h-6 text-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-wide text-amber-100">
+                      Бросок инициативы
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                      Игроки бросают 1к20 + мод. Ловкости · Порядок ходов формируется в реальном времени
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-mono tabular-nums text-lg font-bold text-amber-300">
+                    {entered.length} / {totalAll}
+                  </div>
+                  <div className="text-[11px] text-slate-400">участников готово</div>
+                </div>
+              </div>
+
+              <div className="h-1 bg-slate-900 w-full">
+                <div
+                  className="h-full bg-amber-400 transition-all duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+
+              <div className="p-5 sm:p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left: Live Sorted Turn Order */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-medium text-slate-400 px-1">
+                    <span>Текущий порядок боя</span>
+                    <span>Инициатива</span>
+                  </div>
+                  {entered.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-800 bg-[#0B0F17]/60 px-4 py-8 text-center text-sm text-slate-400">
+                      Ожидание первых бросков...
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {entered.map((entry, idx) => {
+                        const isTied = entry.total !== null && (totalCounts.get(entry.total) ?? 0) > 1;
+                        const initials = entry.label.trim().slice(0, 2).toUpperCase();
+                        return (
+                          <div
+                            key={entry.tokenId}
+                            className={`flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl border transition-all ${
+                              isTied
+                                ? 'bg-amber-950/25 border-amber-500/45'
+                                : 'bg-[#0B0F17]/90 border-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="font-mono tabular-nums text-xs font-bold text-slate-500 w-5 text-center shrink-0">
+                                {idx + 1}
+                              </span>
+                              <div
+                                className="w-10 h-10 rounded-full overflow-hidden border-2 shrink-0 flex items-center justify-center bg-[#131A26]"
+                                style={{ borderColor: entry.color }}
+                              >
+                                {entry.portraitUrl ? (
+                                  <img
+                                    src={entry.portraitUrl}
+                                    alt={entry.label}
+                                    className="w-full h-full object-cover object-top"
+                                  />
+                                ) : entry.kind === 'enemy' ? (
+                                  <Skull className="w-5 h-5" style={{ color: entry.color }} />
+                                ) : entry.kind === 'npc' ? (
+                                  <Shield className="w-5 h-5" style={{ color: entry.color }} />
+                                ) : (
+                                  <span className="font-mono text-xs font-bold text-slate-100">
+                                    {initials}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-slate-100 truncate">
+                                  {entry.label}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {entry.kind === 'player'
+                                    ? 'Герой'
+                                    : entry.kind === 'enemy'
+                                      ? 'Противник'
+                                      : 'НИП'}
+                                  {isTied && (
+                                    <span className="ml-2 text-amber-300 font-medium">
+                                      · Ничья (порядок решает Мастер)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div
+                              className={`font-mono tabular-nums text-xl font-bold px-2.5 py-1 rounded-lg border shrink-0 ${
+                                isTied
+                                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                                  : 'bg-slate-900 border-slate-700 text-amber-300'
+                              }`}
+                            >
+                              {entry.total}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: Waiting to Roll */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-medium text-slate-400 px-1">
+                    <span>Ещё бросают кубик</span>
+                    <span>{waiting.length}</span>
+                  </div>
+                  {waiting.length === 0 ? (
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-8 text-center space-y-1">
+                      <div className="text-sm font-semibold text-emerald-300">
+                        Все инициативы определены
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Мастер вот-вот откроет бой...
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {waiting.map((entry) => {
+                        const initials = entry.label.trim().slice(0, 2).toUpperCase();
+                        return (
+                          <div
+                            key={entry.tokenId}
+                            className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl border border-slate-800/80 bg-[#0B0F17]/55 opacity-85"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className="w-9 h-9 rounded-full overflow-hidden border shrink-0 flex items-center justify-center bg-[#131A26] grayscale"
+                                style={{ borderColor: entry.color }}
+                              >
+                                {entry.portraitUrl ? (
+                                  <img
+                                    src={entry.portraitUrl}
+                                    alt={entry.label}
+                                    className="w-full h-full object-cover object-top"
+                                  />
+                                ) : entry.kind === 'enemy' ? (
+                                  <Skull className="w-4 h-4 text-slate-400" />
+                                ) : entry.kind === 'npc' ? (
+                                  <Shield className="w-4 h-4 text-slate-400" />
+                                ) : (
+                                  <span className="font-mono text-xs font-bold text-slate-300">
+                                    {initials}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-200 truncate">
+                                  {entry.label}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  {entry.kind === 'player'
+                                    ? 'Герой'
+                                    : entry.kind === 'enemy'
+                                      ? 'Противник'
+                                      : 'НИП'}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="text-xs font-mono text-slate-400 animate-pulse">
+                              1к20...
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* COMBAT ONLY: Bottom Half-Playing-Card Turn-Order Deck (overlaps bottom ~14px of the map!) */}
       {showCombatDeck && (
         <div
           aria-label="Порядок ходов"
-          className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none pl-4 pr-48 sm:pr-52 pt-5 flex items-end justify-center"
+          className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none pl-4 pr-48 sm:pr-52 pt-8 flex items-end justify-center"
         >
-          <div className="flex items-end justify-center gap-2 sm:gap-2.5 max-w-full overflow-x-auto no-scrollbar pt-5 px-2">
-            {tacticalTurnEntries.map((entry) => {
-              const initials = entry.label.trim().slice(0, 2).toUpperCase();
+          <div className="flex items-end justify-center gap-2.5 sm:gap-3 max-w-full overflow-x-auto no-scrollbar pt-8 px-3">
+            {turnClusters.map((cluster, clusterIdx) => {
+              const isTieCluster = cluster.entries.length > 1;
               return (
                 <div
-                  key={entry.key}
-                  className={`relative w-[92px] sm:w-[106px] lg:w-[114px] h-[116px] sm:h-[126px] rounded-t-xl border-x border-t overflow-hidden shrink-0 transition-all duration-200 will-change-transform bg-[#0E1420] ${
-                    entry.isTurn
-                      ? 'border-2 border-b-0 border-amber-400 -translate-y-3 scale-[1.05] z-20 shadow-[0_-8px_28px_rgba(245,158,11,0.42)]'
-                      : 'border-b-0 border-slate-600/80 translate-y-0 z-10 shadow-[0_-4px_16px_rgba(0,0,0,0.65)]'
+                  key={`cluster-${cluster.initiative}-${clusterIdx}`}
+                  className={`relative flex items-end shrink-0 ${
+                    isTieCluster
+                      ? 'px-1.5 pt-5 pb-0 rounded-t-2xl bg-amber-500/8 border-x border-t border-amber-400/35'
+                      : ''
                   }`}
                 >
-                  {/* Portrait Layer (Full Color when Active Turn, Grayscale when Waiting) */}
-                  <div
-                    className={`w-full h-full transition-all duration-200 ${
-                      entry.isTurn
-                        ? 'grayscale-0 brightness-105 contrast-105'
-                        : 'grayscale brightness-75 contrast-95 opacity-85'
-                    }`}
-                  >
-                    {entry.portraitUrl ? (
-                      <img
-                        src={entry.portraitUrl}
-                        alt={entry.label}
-                        className="w-full h-full object-cover object-top"
-                      />
-                    ) : (
-                      <div
-                        className="w-full h-full flex flex-col items-center justify-center pb-5"
-                        style={{
-                          background: `radial-gradient(circle at 50% 35%, ${entry.color}55 0%, #111827 78%, #070B12 100%)`,
-                        }}
-                      >
-                        {entry.kind === 'enemy' ? (
-                          <Skull
-                            className="w-9 h-9 opacity-90"
-                            style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
-                          />
-                        ) : entry.kind === 'npc' ? (
-                          <Shield
-                            className="w-9 h-9 opacity-90"
-                            style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
-                          />
-                        ) : (
-                          <span className="font-display text-2xl font-bold tracking-wider text-slate-100 drop-shadow">
-                            {initials}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Subtle Inner Playing-Card Ornamental Frame */}
-                  <div
-                    className={`absolute inset-[3px] bottom-0 rounded-t-lg pointer-events-none border-x border-t ${
-                      entry.isTurn ? 'border-amber-300/60' : 'border-slate-400/20'
-                    }`}
-                  />
-
-                  {/* Bottom Name Scrim (ONLY name — zero HP, levels, or AC) */}
-                  <div className="absolute inset-x-0 bottom-0 pt-7 pb-1.5 px-2 bg-gradient-to-t from-[#05080F] via-[#05080F]/90 to-transparent text-center">
-                    <div
-                      className={`text-xs sm:text-[13px] leading-tight truncate drop-shadow ${
-                        entry.isTurn
-                          ? 'font-bold text-amber-200'
-                          : 'font-semibold text-slate-200/95'
-                      }`}
-                    >
-                      {entry.label}
+                  {/* Shared Tie Indicator */}
+                  {isTieCluster && (
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded bg-[#0E1420] border border-amber-400/60 text-[10px] font-mono font-semibold text-amber-300 whitespace-nowrap shadow">
+                      = {cluster.initiative} · Ничья
                     </div>
-                  </div>
+                  )}
+
+                  {cluster.entries.map((entry, idx) => {
+                    const initials = entry.label.trim().slice(0, 2).toUpperCase();
+                    const isDead = entry.combatStatus === 'dead';
+                    const isUnconscious =
+                      !isDead &&
+                      (entry.combatStatus === 'unconscious' ||
+                        entry.conditions.some((c) => c.toLowerCase().includes('бессознат')));
+
+                    return (
+                      <div
+                        key={entry.key}
+                        className={`relative shrink-0 transition-all duration-200 will-change-transform ${
+                          isTieCluster && idx > 0 ? '-ml-3.5 sm:-ml-4' : ''
+                        } ${
+                          entry.isTurn
+                            ? '-translate-y-3 scale-[1.05] z-30'
+                            : isDead
+                              ? 'translate-y-1 z-0'
+                              : 'translate-y-0 z-10'
+                        }`}
+                      >
+                        {/* Animated Cartoon Dizzy Stars Above Unconscious Card */}
+                        {isUnconscious && (
+                          <div
+                            aria-hidden="true"
+                            className="absolute -top-5 left-1/2 -translate-x-1/2 w-16 h-6 pointer-events-none z-40 flex items-center justify-center"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="absolute w-4 h-4 text-amber-300 drop-shadow-[0_0_5px_rgba(251,191,36,0.95)] animate-dizzy-a"
+                              fill="currentColor"
+                            >
+                              <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                            </svg>
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="absolute w-3.5 h-3.5 text-yellow-200 drop-shadow-[0_0_5px_rgba(253,224,71,0.9)] animate-dizzy-b"
+                              fill="currentColor"
+                            >
+                              <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                            </svg>
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="absolute w-3 h-3 text-amber-400 drop-shadow-[0_0_5px_rgba(245,158,11,0.9)] animate-dizzy-c"
+                              fill="currentColor"
+                            >
+                              <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                            </svg>
+                          </div>
+                        )}
+
+                        <div
+                          className={`relative w-[92px] sm:w-[106px] lg:w-[114px] h-[116px] sm:h-[126px] rounded-t-xl border-x border-t overflow-hidden bg-[#0E1420] ${
+                            entry.isTurn
+                              ? 'border-2 border-b-0 border-amber-400 shadow-[0_-8px_28px_rgba(245,158,11,0.42)]'
+                              : isDead
+                                ? 'border-b-0 border-slate-700/70 opacity-60 shadow-none'
+                                : 'border-b-0 border-slate-600/80 shadow-[0_-4px_16px_rgba(0,0,0,0.65)]'
+                          }`}
+                        >
+                          {/* Portrait Layer */}
+                          <div
+                            className={`w-full h-full transition-all duration-200 ${
+                              isDead
+                                ? 'grayscale brightness-60 contrast-90'
+                                : entry.isTurn
+                                  ? 'grayscale-0 brightness-105 contrast-105'
+                                  : 'grayscale brightness-75 contrast-95 opacity-85'
+                            }`}
+                          >
+                            {isDead ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center pb-5 bg-gradient-to-b from-slate-800/80 via-slate-900 to-[#070B12]">
+                                <Skull className="w-10 h-10 text-slate-400" />
+                              </div>
+                            ) : entry.portraitUrl ? (
+                              <img
+                                src={entry.portraitUrl}
+                                alt={entry.label}
+                                className="w-full h-full object-cover object-top"
+                              />
+                            ) : (
+                              <div
+                                className="w-full h-full flex flex-col items-center justify-center pb-5"
+                                style={{
+                                  background: `radial-gradient(circle at 50% 35%, ${entry.color}55 0%, #111827 78%, #070B12 100%)`,
+                                }}
+                              >
+                                {entry.kind === 'enemy' ? (
+                                  <Skull
+                                    className="w-9 h-9 opacity-90"
+                                    style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
+                                  />
+                                ) : entry.kind === 'npc' ? (
+                                  <Shield
+                                    className="w-9 h-9 opacity-90"
+                                    style={{ color: entry.isTurn ? '#FBBF24' : entry.color }}
+                                  />
+                                ) : (
+                                  <span className="font-display text-2xl font-bold tracking-wider text-slate-100 drop-shadow">
+                                    {initials}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Subtle Inner Playing-Card Ornamental Frame */}
+                          <div
+                            className={`absolute inset-[3px] bottom-0 rounded-t-lg pointer-events-none border-x border-t ${
+                              entry.isTurn ? 'border-amber-300/60' : 'border-slate-400/20'
+                            }`}
+                          />
+
+                          {/* Bottom Name Scrim (ONLY name — zero HP, levels, or AC) */}
+                          <div className="absolute inset-x-0 bottom-0 pt-7 pb-1.5 px-2 bg-gradient-to-t from-[#05080F] via-[#05080F]/92 to-transparent text-center">
+                            <div
+                              className={`text-xs sm:text-[13px] leading-tight truncate drop-shadow ${
+                                isDead
+                                  ? 'font-medium text-slate-400 line-through'
+                                  : entry.isTurn
+                                    ? 'font-bold text-amber-200'
+                                    : 'font-semibold text-slate-200/95'
+                              }`}
+                            >
+                              {entry.label}
+                            </div>
+                            {isDead && (
+                              <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-0.5">
+                                Повержен
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

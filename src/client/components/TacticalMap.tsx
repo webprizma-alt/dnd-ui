@@ -573,7 +573,12 @@ export function TacticalMap({
           const isDragging = dragState?.tokenId === token.id;
           const displayX = isDragging ? dragState.x : token.x;
           const displayY = isDragging ? dragState.y : token.y;
-          const isTurn = activeTurnTokenId === token.id;
+          const isDead = token.combatStatus === 'dead';
+          const isUnconscious =
+            !isDead &&
+            (token.combatStatus === 'unconscious' ||
+              (token.conditions ?? []).some((c) => c.toLowerCase().includes('бессознат')));
+          const isTurn = !isDead && activeTurnTokenId === token.id;
           const isSelected = selectedTokenId === token.id;
           const initials = token.label.trim().slice(0, 2).toUpperCase();
 
@@ -609,20 +614,54 @@ export function TacticalMap({
                     : isSelected
                       ? 'ring-2 ring-sky-400 ring-offset-2 ring-offset-[#0B0F17]'
                       : ''
-                } ${!token.visibleOnTv ? 'opacity-55 border-dashed' : ''}`}
+                } ${isDead ? 'opacity-65 grayscale' : ''} ${!token.visibleOnTv ? 'opacity-55 border-dashed' : ''}`}
                 style={{
-                  backgroundColor: '#131A26',
-                  borderColor: token.color,
+                  backgroundColor: isDead ? '#0F172A' : '#131A26',
+                  borderColor: isDead ? '#475569' : token.color,
                   color: '#F8FAFC',
                 }}
               >
+                {/* Animated Cartoon Dizzy Stars Above Unconscious Token */}
+                {isUnconscious && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-3.5 left-1/2 -translate-x-1/2 w-10 h-5 pointer-events-none z-30 flex items-center justify-center"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="absolute w-3.5 h-3.5 text-amber-300 drop-shadow-[0_0_4px_rgba(251,191,36,0.95)] animate-dizzy-a"
+                      fill="currentColor"
+                    >
+                      <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                    </svg>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="absolute w-3 h-3 text-yellow-200 drop-shadow-[0_0_4px_rgba(253,224,71,0.9)] animate-dizzy-b"
+                      fill="currentColor"
+                    >
+                      <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                    </svg>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="absolute w-2.5 h-2.5 text-amber-400 drop-shadow-[0_0_4px_rgba(245,158,11,0.9)] animate-dizzy-c"
+                      fill="currentColor"
+                    >
+                      <path d="M12 1.8l2.6 5.9 6.4.6-4.8 4.2 1.4 6.2L12 15.4 6.4 18.7l1.4-6.2L3 8.3l6.4-.6L12 1.8z" />
+                    </svg>
+                  </span>
+                )}
+
                 <div
                   className="w-full h-full rounded-full overflow-hidden flex items-center justify-center gap-0.5 font-semibold text-[11px] sm:text-xs tracking-tight"
                   style={{
-                    background: `radial-gradient(circle at 35% 30%, ${token.color}44, #0B0F17 85%)`,
+                    background: isDead
+                      ? 'radial-gradient(circle at 50% 40%, #334155 0%, #090D14 88%)'
+                      : `radial-gradient(circle at 35% 30%, ${token.color}44, #0B0F17 85%)`,
                   }}
                 >
-                  {token.portraitUrl ? (
+                  {isDead ? (
+                    <Skull className="w-4 h-4 sm:w-5 sm:h-5 text-slate-300" />
+                  ) : token.portraitUrl ? (
                     <img
                       src={token.portraitUrl}
                       alt={token.label}
@@ -637,7 +676,13 @@ export function TacticalMap({
                 </div>
 
                 {/* Compact Label Below Token */}
-                <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-[#0B0F17]/92 border border-slate-800 text-[10px] font-medium text-slate-100 whitespace-nowrap pointer-events-none shadow">
+                <span
+                  className={`absolute -bottom-5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-[#0B0F17]/92 border text-[10px] font-medium whitespace-nowrap pointer-events-none shadow ${
+                    isDead
+                      ? 'border-slate-800/80 text-slate-400 line-through'
+                      : 'border-slate-800 text-slate-100'
+                  }`}
+                >
                   {token.label}
                 </span>
               </div>

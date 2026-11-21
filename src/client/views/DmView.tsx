@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowUpCircle,
   Award,
@@ -37,15 +38,20 @@ import {
   UserPlus,
   Users,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   computeEffectiveVisionRanges,
   computeHeroActions,
+  computeHeroSkillTotal,
   computePlayerAcDetails,
+  computePlayerEffectiveSpeed,
+  computePlayerInitiativeDetails,
   formatEntityVisions,
   formatModifier,
   formatWeaponReachRange,
   getAbilityModifier,
+  getActiveConditionEffects,
   getArmorCategoryLabel,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
@@ -86,9 +92,8 @@ interface DmViewProps {
 }
 
 type DmTab = 'queue' | 'players' | 'events' | 'tokens';
-type PlayerSubTab = 'combat' | 'sheet' | 'skills';
+type PlayerSubTab = 'combat' | 'checks' | 'gear' | 'profile';
 
-const PRESET_CONDITIONS = ['Отравлен', 'Оглушен', 'Сбит с ног', 'Невидим', 'Сосредоточен'];
 const PRESET_COLORS = ['#F59E0B', '#10B981', '#38BDF8', '#A855F7', '#EC4899', '#EF4444'];
 
 export function DmView({ onNavigate }: DmViewProps) {
@@ -260,7 +265,10 @@ export function DmView({ onNavigate }: DmViewProps) {
 
   const handleNextTurn = () => {
     if (activeLocation?.kind === 'city') return;
-    const combatTokens = dmState.tokens.filter((t) => t.kind !== 'object');
+    // Skip dead monsters automatically; unconscious combatants remain in turn order!
+    const combatTokens = dmState.tokens.filter(
+      (t) => t.kind !== 'object' && t.combatStatus !== 'dead'
+    );
     if (combatTokens.length === 0) return;
     const visibleTokens = combatTokens.filter((t) => t.visibleOnTv);
     const pool = [...(visibleTokens.length > 0 ? visibleTokens : combatTokens)].sort((a, b) => {
@@ -362,9 +370,24 @@ export function DmView({ onNavigate }: DmViewProps) {
     const next = exists
       ? selectedPlayer.conditions.filter((c) => c !== cond)
       : [...selectedPlayer.conditions, cond];
+    const isExhaustion = cond.toLowerCase().includes('истощ');
     send({
       type: 'dm:updateStats',
       playerId: selectedPlayer.id,
+      conditions: next,
+      ...(isExhaustion
+        ? { exhaustionLevel: exists ? 0 : Math.max(1, selectedPlayer.exhaustionLevel ?? 1) }
+        : {}),
+    });
+  };
+
+  const handleToggleTokenCondition = (tok: MapToken, condName: string) => {
+    const current = tok.conditions ?? [];
+    const exists = current.includes(condName);
+    const next = exists ? current.filter((c) => c !== condName) : [...current, condName];
+    send({
+      type: 'dm:setTokenConditions',
+      tokenId: tok.id,
       conditions: next,
     });
   };
@@ -578,14 +601,25 @@ export function DmView({ onNavigate }: DmViewProps) {
           </button>
 
           {activeLocation?.kind !== 'city' && (
-            <button
-              type="button"
-              onClick={handleNextTurn}
-              className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
-            >
-              <span>След. ход</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => send({ type: 'dm:startInitiativeRoll' })}
+                className="px-3 py-2 rounded-lg bg-[#131A26] hover:bg-slate-800 border border-slate-700 hover:border-amber-500/60 text-xs font-medium text-amber-300 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                title="Открыть бросок инициативы для всех участников на карте"
+              >
+                <Dices className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Инициатива</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleNextTurn}
+                className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
+              >
+                <span>След. ход</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </>
           )}
 
           <a
@@ -985,11 +1019,16 @@ export function DmView({ onNavigate }: DmViewProps) {
                 ? turnMonster.visions
                 : undefined;
 
+            const activeTurnConditions = turnPlayer
+              ? turnPlayer.conditions
+              : turnToken?.conditions ?? [];
+
             const effectiveVision = turnToken
               ? computeEffectiveVisionRanges(
                   visionEntries,
                   catalogs.visions,
-                  dmState.map.lighting ?? 'bright'
+                  dmState.map.lighting ?? 'bright',
+                  activeTurnConditions
                 )
               : null;
 
@@ -1852,213 +1891,690 @@ export function DmView({ onNavigate }: DmViewProps) {
                         </div>
                       )}
 
-                    {/* Player Sub-Tabs */}
-                    <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0B0F17] border border-slate-800 text-[11px] font-medium">
-                      <button
-                        type="button"
-                        onClick={() => setPlayerSubTab('combat')}
-                        className={`py-1.5 px-2 rounded-md transition-colors whitespace-nowrap ${
-                          playerSubTab === 'combat'
-                            ? 'bg-[#131A26] text-amber-400'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Статы и вещи
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPlayerSubTab('sheet')}
-                        className={`py-1.5 px-2 rounded-md transition-colors whitespace-nowrap ${
-                          playerSubTab === 'sheet'
-                            ? 'bg-[#131A26] text-amber-400'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Анкета и XP
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPlayerSubTab('skills')}
-                        className={`py-1.5 px-2 rounded-md transition-colors whitespace-nowrap ${
-                          playerSubTab === 'skills'
-                            ? 'bg-[#131A26] text-amber-400'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Навыки ({selectedPlayer.proficientSkillIds.length})
-                      </button>
+                    {/* Reorganized 4-Tab Hero Workspace: Бой / Проверки / Снаряжение / Анкета */}
+                    <div className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-[#0B0F17] border border-slate-800 text-[11px] font-medium">
+                      {(
+                        [
+                          { id: 'combat', label: 'Бой' },
+                          { id: 'checks', label: 'Проверки' },
+                          { id: 'gear', label: 'Снаряжение' },
+                          { id: 'profile', label: 'Анкета' },
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setPlayerSubTab(tab.id)}
+                          className={`py-1.5 px-1.5 rounded-md transition-colors whitespace-nowrap ${
+                            playerSubTab === tab.id
+                              ? 'bg-[#131A26] text-amber-400'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
                     </div>
 
-                    {/* SUB-TAB 1: COMBAT STATS, LOCATION, CONDITIONS, PRIVATE NOTE & INVENTORY */}
-                    {playerSubTab === 'combat' && (
-                      <div className="space-y-4">
-                        {/* Persisted Character Location & Status Note */}
-                        <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-400 flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                              <span>Расположение персонажа</span>
-                            </span>
-                            {selectedPlayer.locationId !== dmState.activeLocationId && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  send({
-                                    type: 'dm:movePlayerToLocation',
-                                    playerId: selectedPlayer.id,
-                                    locationId: dmState.activeLocationId,
-                                  })
-                                }
-                                className="text-[11px] font-medium text-amber-400 hover:text-amber-300"
-                              >
-                                Перенести на текущую карту
-                              </button>
-                            )}
-                          </div>
+                    {/* SUB-TAB 1: БОЙ (HP, КЗ, Скорость, Инициатива, Действия, Состояния, Ресурсы класса) */}
+                    {playerSubTab === 'combat' && (() => {
+                      const acDetails = computePlayerAcDetails(selectedPlayer, catalogs);
+                      const speedDetails = computePlayerEffectiveSpeed(selectedPlayer, catalogs);
+                      const initDetails = computePlayerInitiativeDetails(selectedPlayer, catalogs);
+                      const condEffects = getActiveConditionEffects(
+                        selectedPlayer.conditions,
+                        selectedPlayer.exhaustionLevel
+                      );
+                      const combatResources = getClassResourcesAtLevel(
+                        selectedClassRef,
+                        selectedPlayer.level
+                      );
 
-                          <select
-                            value={selectedPlayer.locationId}
-                            onChange={(e) =>
-                              send({
-                                type: 'dm:movePlayerToLocation',
-                                playerId: selectedPlayer.id,
-                                locationId: e.target.value,
-                              })
-                            }
-                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                          >
-                            {dmState.locations.map((loc) => (
-                              <option key={loc.id} value={loc.id}>
-                                {loc.kind === 'city' ? '[Город] ' : '[Бой] '}
-                                {loc.name}
-                              </option>
-                            ))}
-                          </select>
-
-                          <div className="flex gap-1.5">
-                            <input
-                              type="text"
-                              value={locationNoteDraft}
-                              onChange={(e) => setLocationNoteDraft(e.target.value)}
-                              onBlur={() => {
-                                if (locationNoteDraft.trim() !== (selectedPlayer.locationNote ?? '')) {
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    locationNote: locationNoteDraft.trim(),
-                                  });
-                                }
-                              }}
-                              placeholder="Статус / место (напр. Спит в казармах)"
-                              className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-200 placeholder:text-slate-500"
-                            />
-                            {locationNoteDraft.trim() !== (selectedPlayer.locationNote ?? '') && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    locationNote: locationNoteDraft.trim(),
-                                  })
-                                }
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-semibold"
-                                aria-label="Сохранить статус места"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-slate-400">Здоровье</span>
-                            <span className="font-mono tabular-nums text-sm font-bold text-slate-100">
-                              {selectedPlayer.hp} / {selectedPlayer.maxHp}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[-5, -1, 1, 5].map((delta) => (
-                              <button
-                                key={delta}
-                                type="button"
-                                onClick={() =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    hp: selectedPlayer.hp + delta,
-                                  })
-                                }
-                                className={`py-1.5 rounded-lg text-xs font-mono font-semibold border transition-colors ${
-                                  delta < 0
-                                    ? 'bg-red-950/40 border-red-900/60 text-red-300 hover:bg-red-900/50'
-                                    : 'bg-emerald-950/40 border-emerald-900/60 text-emerald-300 hover:bg-emerald-900/50'
-                                }`}
-                              >
-                                {delta > 0 ? `+${delta}` : delta}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="grid grid-cols-5 gap-1.5 pt-1 text-xs">
-                            <label className="space-y-1">
-                              <span className="text-[10px] text-slate-400">Макс. HP</span>
-                              <input
-                                type="number"
-                                min={1}
-                                value={selectedPlayer.maxHp}
-                                onChange={(e) =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    maxHp: Number(e.target.value) || 1,
-                                  })
-                                }
-                                className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-slate-100"
-                              />
-                            </label>
-                            <label className="space-y-1">
-                              <span className="text-[10px] text-slate-400">Врем.</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={selectedPlayer.tempHp}
-                                onChange={(e) =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    tempHp: Number(e.target.value) || 0,
-                                  })
-                                }
-                                className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-slate-100"
-                              />
-                            </label>
-                            <div
-                              className="space-y-1"
-                              title={computePlayerAcDetails(selectedPlayer, catalogs).breakdown}
-                            >
-                              <span className="text-[10px] text-slate-400">КЗ (авто)</span>
-                              <div className="w-full px-1.5 py-1 rounded bg-[#131A26]/80 border border-slate-800/90 font-mono tabular-nums text-sky-300 font-semibold text-center">
-                                {selectedPlayer.ac}
+                      return (
+                        <div className="space-y-4">
+                          {/* HP & Key Combat Numbers */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-400">Здоровье</span>
+                              <span className="font-mono tabular-nums text-sm font-bold text-slate-100">
+                                {selectedPlayer.hp} / {selectedPlayer.maxHp}
+                                {selectedPlayer.tempHp > 0 && (
+                                  <span className="ml-1.5 text-xs text-sky-400">
+                                    +{selectedPlayer.tempHp} врем.
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {[-5, -1, 1, 5].map((delta) => (
+                                <button
+                                  key={delta}
+                                  type="button"
+                                  onClick={() =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      hp: selectedPlayer.hp + delta,
+                                    })
+                                  }
+                                  className={`py-1.5 rounded-lg text-xs font-mono font-semibold border transition-colors ${
+                                    delta < 0
+                                      ? 'bg-red-950/40 border-red-900/60 text-red-300 hover:bg-red-900/50'
+                                      : 'bg-emerald-950/40 border-emerald-900/60 text-emerald-300 hover:bg-emerald-900/50'
+                                  }`}
+                                >
+                                  {delta > 0 ? `+${delta}` : delta}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-5 gap-1.5 pt-1 text-xs">
+                              <label className="space-y-1">
+                                <span className="text-[10px] text-slate-400">Макс. HP</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={selectedPlayer.maxHp}
+                                  onChange={(e) =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      maxHp: Number(e.target.value) || 1,
+                                    })
+                                  }
+                                  className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-slate-100"
+                                />
+                              </label>
+                              <label className="space-y-1">
+                                <span className="text-[10px] text-slate-400">Врем.</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={selectedPlayer.tempHp}
+                                  onChange={(e) =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      tempHp: Number(e.target.value) || 0,
+                                    })
+                                  }
+                                  className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-slate-100"
+                                />
+                              </label>
+                              <div className="space-y-1" title={acDetails.breakdown}>
+                                <span className="text-[10px] text-slate-400">КЗ (авто)</span>
+                                <div className="w-full px-1.5 py-1 rounded bg-[#131A26]/80 border border-slate-800/90 font-mono tabular-nums text-sky-300 font-semibold text-center">
+                                  {selectedPlayer.ac}
+                                </div>
+                              </div>
+                              <label className="space-y-1" title={speedDetails.breakdown}>
+                                <span className="text-[10px] text-slate-400">Скор. (баз)</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={5}
+                                  value={selectedPlayer.speed ?? 30}
+                                  onChange={(e) =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      speed: Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                  className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-emerald-300"
+                                />
+                              </label>
+                              <label className="space-y-1" title={`Бонус к броску: ${initDetails.breakdown}`}>
+                                <span className="text-[10px] text-slate-400">Иниц.</span>
+                                <input
+                                  type="number"
+                                  value={selectedPlayer.initiative ?? 0}
+                                  onChange={(e) =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      initiative: Number(e.target.value) || 0,
+                                    })
+                                  }
+                                  className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-sky-300"
+                                />
+                              </label>
+                            </div>
+                            <div className="space-y-0.5 pt-1 border-t border-slate-800/70 text-[10px] text-slate-400">
+                              <div className="truncate">
+                                КЗ: <span className="text-slate-300">{acDetails.breakdown}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate">
+                                  Скорость сейчас:{' '}
+                                  <span
+                                    className={`font-mono font-semibold ${
+                                      speedDetails.effectiveFt === 0
+                                        ? 'text-rose-400'
+                                        : 'text-emerald-300'
+                                    }`}
+                                  >
+                                    {speedDetails.effectiveFt} фт.
+                                  </span>
+                                  {speedDetails.effectiveFt !== speedDetails.baseFt
+                                    ? ` (${speedDetails.breakdown})`
+                                    : ''}
+                                </span>
+                                <span className="font-mono text-sky-300 shrink-0">
+                                  Иниц. 1к20 {formatModifier(initDetails.bonus)}
+                                </span>
                               </div>
                             </div>
-                            <label className="space-y-1">
-                              <span className="text-[10px] text-slate-400">Иниц.</span>
+                          </div>
+
+                          {/* Hero Combat Actions (Unambiguous Formula Display) */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>Действия героя ({heroActions.length})</span>
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400">
+                                БМ +{profBonus}
+                              </span>
+                            </div>
+                            <div className="divide-y divide-slate-800/80">
+                              {heroActions.map((act) => (
+                                <div
+                                  key={act.id}
+                                  className={`py-2 first:pt-0 last:pb-0 space-y-1 text-xs ${
+                                    act.equipped ? 'text-slate-100' : 'text-slate-400 opacity-75'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="font-medium truncate flex items-center gap-1.5">
+                                        <span className="truncate">{act.name}</span>
+                                        <span className="px-1 py-0.5 rounded bg-slate-800/90 font-mono text-[9px] text-slate-300 shrink-0">
+                                          {act.rangeLabel}
+                                        </span>
+                                        {!act.equipped && (
+                                          <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] text-slate-400 shrink-0">
+                                            в рюкзаке
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                        Бонус: {act.hitBreakdown}
+                                      </div>
+                                    </div>
+                                    <div className="text-right font-mono tabular-nums shrink-0">
+                                      <div className="text-xs font-bold text-amber-300">
+                                        {act.hitFormula}
+                                      </div>
+                                      <div className="text-[11px] text-rose-300">
+                                        {act.damageFormula}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {act.bonusNote && (
+                                    <div className="text-[10px] text-emerald-300 bg-emerald-950/25 border border-emerald-500/25 rounded px-2 py-0.5">
+                                      {act.bonusNote}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Conditions from Catalog (Synced to Player Phone + Automated Effects) */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>Состояния ({selectedPlayer.conditions.length})</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500">Видны игроку</span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {catalogs.conditions.map((cond) => {
+                                const active = selectedPlayer.conditions.includes(cond.name);
+                                return (
+                                  <button
+                                    key={cond.id}
+                                    type="button"
+                                    onClick={() => handleToggleCondition(cond.name)}
+                                    title={
+                                      cond.automatedSummary
+                                        ? `${cond.automatedSummary}\n\n${cond.description}`
+                                        : cond.description
+                                    }
+                                    className={`px-2 py-1 rounded-md text-[11px] border flex items-center gap-1 transition-colors ${
+                                      active
+                                        ? 'bg-amber-500/20 border-amber-500/70 text-amber-200 font-medium'
+                                        : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    <span>{cond.name}</span>
+                                    {cond.automatedSummary && (
+                                      <Zap
+                                        className={`w-2.5 h-2.5 shrink-0 ${
+                                          active ? 'text-emerald-300' : 'text-emerald-500/60'
+                                        }`}
+                                      />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Exhaustion Level Control (1-6) */}
+                            {(condEffects.exhaustionLevel > 0 ||
+                              selectedPlayer.conditions.some((c) =>
+                                c.toLowerCase().includes('истощ')
+                              )) && (
+                              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-xs">
+                                <span className="text-amber-300 font-medium">
+                                  Степень истощения ({condEffects.exhaustionLevel || 1} / 6)
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {[1, 2, 3, 4, 5, 6].map((lvl) => (
+                                    <button
+                                      key={lvl}
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:updateStats',
+                                          playerId: selectedPlayer.id,
+                                          exhaustionLevel: lvl,
+                                        })
+                                      }
+                                      className={`w-6 h-6 rounded font-mono text-[11px] font-semibold border transition-colors ${
+                                        (selectedPlayer.exhaustionLevel ?? 1) === lvl
+                                          ? 'bg-rose-500/25 border-rose-400 text-rose-200'
+                                          : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                    >
+                                      {lvl}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Active Automated Callouts */}
+                            {condEffects.combatCallouts.length > 0 && (
+                              <div className="rounded-lg bg-amber-950/25 border border-amber-500/30 px-2.5 py-2 space-y-1">
+                                {condEffects.combatCallouts.map((line, i) => (
+                                  <div key={i} className="text-[11px] text-amber-200/95 leading-snug">
+                                    • {line}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Compact Class Combat Resources */}
+                          {combatResources.length > 0 && (
+                            <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                              <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>Ресурсы класса (ур. {selectedPlayer.level})</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {combatResources.map((r) => (
+                                  <span
+                                    key={r.id}
+                                    className="px-2 py-1 rounded-md bg-[#131A26] border border-slate-700 text-[11px] text-slate-300"
+                                  >
+                                    {r.name}:{' '}
+                                    <span className="font-mono font-semibold text-amber-300">
+                                      {r.value}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* SUB-TAB 2: ПРОВЕРКИ (Характеристики, Спасброски ДМ, Навыки и Экспертиза, Зрение и чувства) */}
+                    {playerSubTab === 'checks' && (() => {
+                      const condEffects = getActiveConditionEffects(
+                        selectedPlayer.conditions,
+                        selectedPlayer.exhaustionLevel
+                      );
+                      const bgLockedSkillSet = new Set(
+                        getBackgroundLockedSkillIds(selectedPlayer.backgroundId, catalogs)
+                      );
+                      const allowedSkillSet = getHeroAllowedSkillIds(
+                        selectedPlayer.classId,
+                        selectedPlayer.backgroundId,
+                        catalogs
+                      );
+                      const availableSkills = catalogs.skills.filter(
+                        (sk) => !allowedSkillSet || allowedSkillSet.has(sk.id)
+                      );
+                      const unavailableSkills = allowedSkillSet
+                        ? catalogs.skills.filter((sk) => !allowedSkillSet.has(sk.id))
+                        : [];
+
+                      const renderSkillRow = (
+                        sk: (typeof catalogs.skills)[number],
+                        isUnavailable: boolean
+                      ) => {
+                        const isBgLocked = bgLockedSkillSet.has(sk.id);
+                        const skillCalc = computeHeroSkillTotal(selectedPlayer, sk, catalogs);
+                        const isExp = skillCalc.isExpertise;
+                        const active = isBgLocked || skillCalc.isProficient;
+                        const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
+                        const totalMod = skillCalc.total;
+
+                        return (
+                          <div
+                            key={sk.id}
+                            className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
+                              isUnavailable && !active
+                                ? 'text-slate-600 opacity-55'
+                                : isExp
+                                  ? 'bg-sky-500/10 text-slate-100'
+                                  : isBgLocked
+                                    ? 'bg-emerald-500/10 text-slate-100'
+                                    : active
+                                      ? 'bg-amber-500/10 text-slate-100'
+                                      : 'text-slate-400 hover:bg-slate-800/40'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              disabled={isBgLocked || (isUnavailable && !active)}
+                              onClick={() => handleToggleSkill(sk.id)}
+                              title={
+                                isBgLocked
+                                  ? 'Навык предыстории (выдан автоматически, отключить нельзя)'
+                                  : isUnavailable
+                                    ? 'Навык недоступен выбранному классу и предыстории'
+                                    : undefined
+                              }
+                              className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0 disabled:cursor-default"
+                            >
+                              <span
+                                className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                                  isExp
+                                    ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                    : isBgLocked
+                                      ? 'bg-emerald-500 border-emerald-500 text-slate-950'
+                                      : active
+                                        ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                        : skillCalc.hasJackOfAllTrades
+                                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                                          : 'border-slate-700'
+                                }`}
+                              >
+                                {isBgLocked ? (
+                                  <Lock className="w-2.5 h-2.5" />
+                                ) : active ? (
+                                  <Check className="w-2.5 h-2.5" />
+                                ) : null}
+                              </span>
+                              <span className="truncate font-medium">{sk.name}</span>
+                              <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                                {ab?.shortName ?? '—'}
+                              </span>
+                              {isBgLocked && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] text-emerald-300 shrink-0">
+                                  Предыст.
+                                </span>
+                              )}
+                              {skillCalc.hasJackOfAllTrades && (
+                                <span className="px-1 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-mono text-emerald-300 shrink-0">
+                                  ½БМ
+                                </span>
+                              )}
+                              {isUnavailable && !active && (
+                                <span className="text-[10px] text-slate-500 shrink-0">
+                                  Недоступно
+                                </span>
+                              )}
+                            </button>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                disabled={isUnavailable && !isExp}
+                                onClick={() => handleToggleExpertise(sk.id)}
+                                title="Экспертиза (бонус владения ×2)"
+                                className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                                  isExp
+                                    ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
+                                    : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
+                                }`}
+                              >
+                                ×2
+                              </button>
+                              <span
+                                className={`w-8 text-right font-mono tabular-nums font-semibold ${
+                                  isExp
+                                    ? 'text-sky-300'
+                                    : isBgLocked
+                                      ? 'text-emerald-400'
+                                      : active
+                                        ? 'text-amber-400'
+                                        : 'text-slate-400'
+                                }`}
+                              >
+                                {formatModifier(totalMod)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      };
+
+                      const saveIds = selectedClassRef?.savingThrowAbilityIds ?? [];
+
+                      return (
+                        <div className="space-y-4">
+                          {/* Ability Scores Grid */}
+                          <div className="space-y-2">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-xs font-semibold text-slate-200">
+                                Характеристики
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => onNavigate('/catalogs')}
+                                className="text-[11px] text-amber-400 hover:text-amber-300"
+                              >
+                                Справочник →
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              {catalogs.abilities.map((ab) => {
+                                const val = selectedPlayer.abilities[ab.id] ?? 10;
+                                const mod = getAbilityModifier(val, catalogs.abilityModifiers);
+                                return (
+                                  <div
+                                    key={ab.id}
+                                    className="p-2.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-1.5"
+                                  >
+                                    <div className="flex items-baseline justify-between gap-1">
+                                      <span className="text-[11px] font-medium text-slate-300 truncate">
+                                        {ab.name}
+                                      </span>
+                                      <span className="text-[11px] font-mono tabular-nums font-bold text-amber-400">
+                                        {formatModifier(mod)}
+                                      </span>
+                                    </div>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={30}
+                                      value={val}
+                                      onChange={(e) =>
+                                        send({
+                                          type: 'dm:updateStats',
+                                          playerId: selectedPlayer.id,
+                                          abilities: {
+                                            ...selectedPlayer.abilities,
+                                            [ab.id]: Math.max(
+                                              1,
+                                              Math.min(30, Number(e.target.value) || 10)
+                                            ),
+                                          },
+                                        })
+                                      }
+                                      className="w-full px-2 py-1 rounded bg-[#131A26] border border-slate-800 font-mono tabular-nums text-sm font-semibold text-center text-slate-100"
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* DM-Only Saving Throws (with Condition Penalties & Auto-Fail) */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-sky-500/30 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-sky-300 flex items-center gap-1.5">
+                                <Shield className="w-3.5 h-3.5 shrink-0" />
+                                <span>Спасброски</span>
+                              </span>
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/40 text-sky-300">
+                                Только для ДМ
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {catalogs.abilities.map((ab) => {
+                                const isProfSave = saveIds.includes(ab.id);
+                                const score = selectedPlayer.abilities[ab.id] ?? 10;
+                                const saveMod =
+                                  getAbilityModifier(score, catalogs.abilityModifiers) +
+                                  (isProfSave ? profBonus : 0) +
+                                  condEffects.d20Penalty;
+                                const autoFail =
+                                  condEffects.autoFailStrDexSaves &&
+                                  (ab.id === 'str' || ab.id === 'dex');
+                                const dexDisadv =
+                                  condEffects.dexSaveDisadvantage && ab.id === 'dex';
+                                return (
+                                  <div
+                                    key={ab.id}
+                                    className={`px-2 py-1.5 rounded-lg border text-[11px] flex items-center justify-between gap-1 ${
+                                      autoFail
+                                        ? 'bg-rose-950/35 border-rose-500/50 text-rose-200'
+                                        : isProfSave
+                                          ? 'bg-[#131A26] border-sky-500/45 text-slate-100'
+                                          : 'bg-[#131A26]/60 border-slate-800 text-slate-400'
+                                    }`}
+                                  >
+                                    <span className="truncate font-medium">
+                                      {ab.shortName}
+                                      {dexDisadv && !autoFail ? ' (пом.)' : ''}
+                                    </span>
+                                    <span
+                                      className={`font-mono tabular-nums font-bold ${
+                                        autoFail
+                                          ? 'text-rose-300 text-[10px]'
+                                          : isProfSave
+                                            ? 'text-sky-300'
+                                            : 'text-slate-300'
+                                      }`}
+                                    >
+                                      {autoFail ? 'ПРОВАЛ' : formatModifier(saveMod)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Skills & Expertise */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className="text-xs font-semibold text-slate-200">
+                                Навыки и экспертиза ({selectedPlayer.proficientSkillIds.length})
+                              </h3>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                БМ +{profBonus} · ×2 = +{profBonus * 2}
+                              </span>
+                            </div>
+                            <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
+                              {availableSkills.map((sk) => renderSkillRow(sk, false))}
+                              {unavailableSkills.length > 0 && (
+                                <>
+                                  <div className="px-3 py-1.5 bg-[#131A26]/70 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                    Недоступны по классу и предыстории ({unavailableSkills.length})
+                                  </div>
+                                  {unavailableSkills.map((sk) => renderSkillRow(sk, true))}
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Senses & Vision for Hero */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                            <VisionSelector
+                              catalogVisions={catalogs.visions}
+                              value={selectedPlayer.visions ?? []}
+                              onChange={(nextVisions) =>
+                                send({
+                                  type: 'dm:updateStats',
+                                  playerId: selectedPlayer.id,
+                                  visions: nextVisions,
+                                })
+                              }
+                              compact={true}
+                              title="Зрение героя"
+                            />
+                            <label className="block space-y-1 pt-1 border-t border-slate-800/80">
+                              <span className="text-[11px] text-slate-400">
+                                Чувства (дополнительно)
+                              </span>
                               <input
-                                type="number"
-                                value={selectedPlayer.initiative ?? 0}
-                                onChange={(e) =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    initiative: Number(e.target.value) || 0,
-                                  })
-                                }
-                                className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-sky-300"
+                                type="text"
+                                value={sensesDraft}
+                                onChange={(e) => setSensesDraft(e.target.value)}
+                                onBlur={() => {
+                                  if (sensesDraft !== (selectedPlayer.senses ?? '')) {
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      senses: sensesDraft.trim(),
+                                    });
+                                  }
+                                }}
+                                placeholder="Например: острый слух, пасс. Восприятие 14"
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
                               />
                             </label>
-                            <label className="space-y-1">
-                              <span className="text-[10px] text-slate-400">Золото</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* SUB-TAB 3: СНАРЯЖЕНИЕ (Золото, Инвентарь, Владения оружием/доспехами, Личная заметка) */}
+                    {playerSubTab === 'gear' && (() => {
+                      const classDefaultProfSet = new Set(
+                        getClassDefaultProficiencyIds(selectedPlayer.classId, catalogs)
+                      );
+                      return (
+                        <div className="space-y-4">
+                          {/* Gold Quick Editor */}
+                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 flex items-center justify-between gap-3">
+                            <span className="text-xs font-semibold text-slate-200">Золото (зм)</span>
+                            <div className="flex items-center gap-1.5">
+                              {[-10, -1, 1, 10].map((d) => (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  onClick={() =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      gold: Math.max(0, selectedPlayer.gold + d),
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded bg-[#131A26] hover:bg-slate-800 border border-slate-800 font-mono text-[11px] text-slate-300"
+                                >
+                                  {d > 0 ? `+${d}` : d}
+                                </button>
+                              ))}
                               <input
                                 type="number"
                                 min={0}
@@ -2067,427 +2583,400 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   send({
                                     type: 'dm:updateStats',
                                     playerId: selectedPlayer.id,
-                                    gold: Number(e.target.value) || 0,
+                                    gold: Math.max(0, Number(e.target.value) || 0),
                                   })
                                 }
-                                className="w-full px-1.5 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-amber-400"
+                                className="w-20 px-2 py-1 rounded bg-[#131A26] border border-slate-700 font-mono tabular-nums text-xs text-amber-400 text-center font-semibold"
                               />
-                            </label>
-                          </div>
-                          <div className="text-[10px] text-slate-400 truncate">
-                            КЗ: {computePlayerAcDetails(selectedPlayer, catalogs).breakdown}
-                          </div>
-                        </div>
-
-                        {/* Hero Combat Actions (Unarmed + Inventory Weapons) */}
-                        <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                              <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              <span>Действия героя ({heroActions.length})</span>
-                            </span>
-                            <span className="text-[10px] font-mono text-slate-400">
-                              БМ +{profBonus}
-                            </span>
-                          </div>
-                          <div className="divide-y divide-slate-800/80">
-                            {heroActions.map((act) => (
-                              <div
-                                key={act.id}
-                                className={`py-1.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2 text-xs ${
-                                  act.equipped ? 'text-slate-100' : 'text-slate-400 opacity-75'
-                                }`}
-                              >
-                                <div className="min-w-0">
-                                  <div className="font-medium truncate flex items-center gap-1.5">
-                                    <span className="truncate">{act.name}</span>
-                                    {!act.equipped && (
-                                      <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] text-slate-400 shrink-0">
-                                        в рюкзаке
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[10px] text-slate-400 truncate">
-                                    {act.rangeLabel} · {act.hitBreakdown}
-                                  </div>
-                                </div>
-                                <div className="text-right font-mono tabular-nums shrink-0">
-                                  <div className="text-[11px] font-semibold text-amber-300">
-                                    {act.hitFormula}
-                                  </div>
-                                  <div className="text-[10px] text-rose-300">
-                                    {act.damageFormula}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Conditions */}
-                        <div className="space-y-1.5">
-                          <span className="text-xs text-slate-400">Состояния (видны на ТВ)</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {PRESET_CONDITIONS.map((cond) => {
-                              const active = selectedPlayer.conditions.includes(cond);
-                              return (
-                                <button
-                                  key={cond}
-                                  type="button"
-                                  onClick={() => handleToggleCondition(cond)}
-                                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
-                                    active
-                                      ? 'bg-amber-500/20 border-amber-500/70 text-amber-300 font-medium'
-                                      : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  {cond}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* Private Note */}
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-slate-400">
-                              Личная заметка (только на телефоне игрока)
-                            </span>
-                            {noteDraft !== selectedPlayer.privateNote && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    privateNote: noteDraft,
-                                  })
-                                }
-                                className="text-xs text-amber-400 hover:text-amber-300 font-medium"
-                              >
-                                Сохранить
-                              </button>
-                            )}
-                          </div>
-                          <textarea
-                            rows={2}
-                            value={noteDraft}
-                            onChange={(e) => setNoteDraft(e.target.value)}
-                            onBlur={() => {
-                              if (noteDraft !== selectedPlayer.privateNote) {
-                                send({
-                                  type: 'dm:updateStats',
-                                  playerId: selectedPlayer.id,
-                                  privateNote: noteDraft,
-                                });
-                              }
-                            }}
-                            placeholder="Секретная подсказка или наблюдение для этого игрока..."
-                            className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-200 resize-none"
-                          />
-                        </div>
-
-                        {/* Private Inventory Editor */}
-                        <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                          <div className="flex items-baseline justify-between">
-                            <h2 className="text-xs font-semibold text-slate-200">
-                              Инвентарь ({selectedPlayer.inventory.length})
-                            </h2>
-                            <span className="text-[11px] text-slate-400">Скрыто на ТВ</span>
+                            </div>
                           </div>
 
-                          <form
-                            onSubmit={handleAddInventory}
-                            className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2"
-                          >
-                            <div className="flex gap-2">
-                              <select
-                                value={itemCategory}
-                                onChange={(e) => {
-                                  const nextCat = e.target.value as ItemCategory;
-                                  setItemCategory(nextCat);
-                                  setItemCatalogId('');
-                                }}
-                                className="px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-200"
-                              >
-                                <option value="gear">Снаряжение</option>
-                                <option value="weapon">Оружие</option>
-                                <option value="armor">Доспех</option>
-                                <option value="potion">Зелье</option>
-                                <option value="quest">Особое</option>
-                              </select>
+                          {/* Private Inventory Editor */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-baseline justify-between">
+                              <h2 className="text-xs font-semibold text-slate-200">
+                                Инвентарь ({selectedPlayer.inventory.length})
+                              </h2>
+                              <span className="text-[11px] text-slate-400">Скрыто на ТВ</span>
+                            </div>
 
-                              {itemCategory === 'weapon' && (
+                            <form
+                              onSubmit={handleAddInventory}
+                              className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2"
+                            >
+                              <div className="flex gap-2">
                                 <select
-                                  value={itemCatalogId}
+                                  value={itemCategory}
                                   onChange={(e) => {
-                                    const id = e.target.value;
-                                    setItemCatalogId(id);
-                                    const found = catalogs.weapons.find((w) => w.id === id);
-                                    if (found) {
-                                      setItemName(found.name);
-                                      setItemWeaponCat(found.category);
-                                      setItemWeaponRange(found.rangeType);
-                                      setItemDesc(`${found.damage} · ${found.properties}`);
-                                    }
+                                    const nextCat = e.target.value as ItemCategory;
+                                    setItemCategory(nextCat);
+                                    setItemCatalogId('');
                                   }}
-                                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-amber-300"
+                                  className="px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-200"
                                 >
-                                  <option value="">Из справочника оружия...</option>
-                                  {catalogs.weapons.map((w) => (
-                                    <option key={w.id} value={w.id}>
-                                      [{getWeaponCategoryLabel(w.category)} · {getWeaponRangeLabel(w.rangeType)}] {w.name} ({w.damage})
-                                    </option>
-                                  ))}
+                                  <option value="gear">Снаряжение</option>
+                                  <option value="weapon">Оружие</option>
+                                  <option value="armor">Доспех</option>
+                                  <option value="potion">Зелье</option>
+                                  <option value="quest">Особое</option>
                                 </select>
-                              )}
 
-                              {itemCategory === 'armor' && (
-                                <select
-                                  value={itemCatalogId}
-                                  onChange={(e) => {
-                                    const id = e.target.value;
-                                    setItemCatalogId(id);
-                                    const found = catalogs.armors.find((a) => a.id === id);
-                                    if (found) {
-                                      setItemName(found.name);
-                                      setItemArmorCat(found.category);
-                                      setItemDesc(
-                                        `КЗ ${found.armorClass}${found.strengthReq !== '—' ? ` · ${found.strengthReq}` : ''}`
-                                      );
-                                    }
-                                  }}
-                                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-sky-300"
-                                >
-                                  <option value="">Из справочника доспехов и щитов...</option>
-                                  {catalogs.armors.map((a) => (
-                                    <option key={a.id} value={a.id}>
-                                      [{getArmorCategoryLabel(a.category)}] {a.name} (КЗ {a.armorClass})
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                            </div>
+                                {itemCategory === 'weapon' && (
+                                  <select
+                                    value={itemCatalogId}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      setItemCatalogId(id);
+                                      const found = catalogs.weapons.find((w) => w.id === id);
+                                      if (found) {
+                                        setItemName(found.name);
+                                        setItemWeaponCat(found.category);
+                                        setItemWeaponRange(found.rangeType);
+                                        setItemDesc(`${found.damage} · ${found.properties}`);
+                                      }
+                                    }}
+                                    className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-amber-300"
+                                  >
+                                    <option value="">Из справочника оружия...</option>
+                                    {catalogs.weapons.map((w) => (
+                                      <option key={w.id} value={w.id}>
+                                        [{getWeaponCategoryLabel(w.category)} · {getWeaponRangeLabel(w.rangeType)}] {w.name} ({w.damage})
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
 
-                            {itemCategory === 'weapon' && !itemCatalogId && (
-                              <div className="space-y-1.5 text-[11px]">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-slate-400">Категория:</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setItemWeaponCat('simple')}
-                                    className={`px-2 py-0.5 rounded border ${
-                                      itemWeaponCat === 'simple'
-                                        ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
-                                        : 'border-slate-800 text-slate-400'
-                                    }`}
+                                {itemCategory === 'armor' && (
+                                  <select
+                                    value={itemCatalogId}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      setItemCatalogId(id);
+                                      const found = catalogs.armors.find((a) => a.id === id);
+                                      if (found) {
+                                        setItemName(found.name);
+                                        setItemArmorCat(found.category);
+                                        setItemDesc(
+                                          `КЗ ${found.armorClass}${found.strengthReq !== '—' ? ` · ${found.strengthReq}` : ''}`
+                                        );
+                                      }
+                                    }}
+                                    className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-sky-300"
                                   >
-                                    Простое
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setItemWeaponCat('martial')}
-                                    className={`px-2 py-0.5 rounded border ${
-                                      itemWeaponCat === 'martial'
-                                        ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
-                                        : 'border-slate-800 text-slate-400'
-                                    }`}
-                                  >
-                                    Воинское
-                                  </button>
-                                </div>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-slate-400">Дистанция:</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setItemWeaponRange('melee')}
-                                    className={`px-2 py-0.5 rounded border ${
-                                      itemWeaponRange === 'melee'
-                                        ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
-                                        : 'border-slate-800 text-slate-400'
-                                    }`}
-                                  >
-                                    Рукопашное
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setItemWeaponRange('ranged')}
-                                    className={`px-2 py-0.5 rounded border ${
-                                      itemWeaponRange === 'ranged'
-                                        ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
-                                        : 'border-slate-800 text-slate-400'
-                                    }`}
-                                  >
-                                    Дальнобойное
-                                  </button>
-                                </div>
+                                    <option value="">Из справочника доспехов и щитов...</option>
+                                    {catalogs.armors.map((a) => (
+                                      <option key={a.id} value={a.id}>
+                                        [{getArmorCategoryLabel(a.category)}] {a.name} (КЗ {a.armorClass})
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
                               </div>
-                            )}
 
-                            {itemCategory === 'armor' && !itemCatalogId && (
-                              <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-                                <span className="text-slate-400">Тип:</span>
-                                {(
-                                  [
-                                    ['light', 'Лёгкие'],
-                                    ['medium', 'Средние'],
-                                    ['heavy', 'Тяжёлые'],
-                                    ['shield', 'Щит'],
-                                  ] as Array<[ArmorCategory, string]>
-                                ).map(([cat, lbl]) => (
-                                  <button
-                                    key={cat}
-                                    type="button"
-                                    onClick={() => setItemArmorCat(cat)}
-                                    className={`px-2 py-0.5 rounded border ${
-                                      itemArmorCat === cat
-                                        ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
-                                        : 'border-slate-800 text-slate-400'
-                                    }`}
-                                  >
-                                    {lbl}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                placeholder="Название предмета (напр. Ключ от склепа)"
-                                value={itemName}
-                                onChange={(e) => setItemName(e.target.value)}
-                                className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                                required
-                              />
-                              <input
-                                type="number"
-                                min={1}
-                                value={itemQty}
-                                onChange={(e) => setItemQty(Number(e.target.value) || 1)}
-                                className="w-14 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
-                              />
-                            </div>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                placeholder="Описание или заметка"
-                                value={itemDesc}
-                                onChange={(e) => setItemDesc(e.target.value)}
-                                className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                              />
-                              <button
-                                type="submit"
-                                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold whitespace-nowrap"
-                              >
-                                Выдать
-                              </button>
-                            </div>
-                          </form>
-
-                          <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800">
-                            {selectedPlayer.inventory.length === 0 ? (
-                              <div className="p-4 text-xs text-slate-400 text-center">
-                                Инвентарь пуст
-                              </div>
-                            ) : (
-                              selectedPlayer.inventory.map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="px-3 py-2 flex items-center justify-between gap-2"
-                                >
-                                  <div className="min-w-0">
-                                    <div className="text-xs font-medium text-slate-100 truncate">
-                                      {item.name}
-                                      {item.equipped && (
-                                        <span className="ml-1.5 text-[10px] text-amber-400 font-normal">
-                                          · надето
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-[11px] text-slate-400 truncate">
-                                      {item.weaponCategory
-                                        ? (() => {
-                                            const rangeInfo = resolveWeaponReachRange(item, catalogs);
-                                            const rangeText =
-                                              rangeInfo.rangeType === 'ranged' && rangeInfo.maxFt > rangeInfo.normalFt
-                                                ? `${rangeInfo.normalFt}/${rangeInfo.maxFt} фт.`
-                                                : `${rangeInfo.normalFt} фт.`;
-                                            return `${getWeaponCategoryLabel(item.weaponCategory)} · ${getWeaponRangeLabel(rangeInfo.rangeType)} (${rangeText})${item.damage ? ` · ${item.damage}` : ''}`;
-                                          })()
-                                        : item.armorCategory
-                                          ? `${getArmorCategoryLabel(item.armorCategory)}${item.armorClass ? ` · КЗ ${item.armorClass}` : ''}`
-                                          : item.description || ''}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
+                              {itemCategory === 'weapon' && !itemCatalogId && (
+                                <div className="space-y-1.5 text-[11px]">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-slate-400">Категория:</span>
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        if (item.quantity <= 1) {
-                                          send({
-                                            type: 'dm:removeInventoryItem',
-                                            playerId: selectedPlayer.id,
-                                            itemId: item.id,
-                                          });
-                                        } else {
+                                      onClick={() => setItemWeaponCat('simple')}
+                                      className={`px-2 py-0.5 rounded border ${
+                                        itemWeaponCat === 'simple'
+                                          ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
+                                          : 'border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      Простое
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setItemWeaponCat('martial')}
+                                      className={`px-2 py-0.5 rounded border ${
+                                        itemWeaponCat === 'martial'
+                                          ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
+                                          : 'border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      Воинское
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-slate-400">Дистанция:</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setItemWeaponRange('melee')}
+                                      className={`px-2 py-0.5 rounded border ${
+                                        itemWeaponRange === 'melee'
+                                          ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
+                                          : 'border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      Рукопашное
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setItemWeaponRange('ranged')}
+                                      className={`px-2 py-0.5 rounded border ${
+                                        itemWeaponRange === 'ranged'
+                                          ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
+                                          : 'border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      Дальнобойное
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {itemCategory === 'armor' && !itemCatalogId && (
+                                <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                                  <span className="text-slate-400">Тип:</span>
+                                  {(
+                                    [
+                                      ['light', 'Лёгкие'],
+                                      ['medium', 'Средние'],
+                                      ['heavy', 'Тяжёлые'],
+                                      ['shield', 'Щит'],
+                                    ] as Array<[ArmorCategory, string]>
+                                  ).map(([cat, lbl]) => (
+                                    <button
+                                      key={cat}
+                                      type="button"
+                                      onClick={() => setItemArmorCat(cat)}
+                                      className={`px-2 py-0.5 rounded border ${
+                                        itemArmorCat === cat
+                                          ? 'bg-sky-500/20 border-sky-500/70 text-sky-300'
+                                          : 'border-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      {lbl}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Название предмета (напр. Ключ от склепа)"
+                                  value={itemName}
+                                  onChange={(e) => setItemName(e.target.value)}
+                                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                                  required
+                                />
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={itemQty}
+                                  onChange={(e) => setItemQty(Number(e.target.value) || 1)}
+                                  className="w-14 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Описание или заметка"
+                                  value={itemDesc}
+                                  onChange={(e) => setItemDesc(e.target.value)}
+                                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                                />
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold whitespace-nowrap"
+                                >
+                                  Выдать
+                                </button>
+                              </div>
+                            </form>
+
+                            <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800">
+                              {selectedPlayer.inventory.length === 0 ? (
+                                <div className="p-4 text-xs text-slate-400 text-center">
+                                  Инвентарь пуст
+                                </div>
+                              ) : (
+                                selectedPlayer.inventory.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    className="px-3 py-2 flex items-center justify-between gap-2"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-medium text-slate-100 truncate">
+                                        {item.name}
+                                        {item.equipped && (
+                                          <span className="ml-1.5 text-[10px] text-amber-400 font-normal">
+                                            · надето
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-400 truncate">
+                                        {item.weaponCategory
+                                          ? (() => {
+                                              const rangeInfo = resolveWeaponReachRange(item, catalogs);
+                                              const rangeText =
+                                                rangeInfo.rangeType === 'ranged' && rangeInfo.maxFt > rangeInfo.normalFt
+                                                  ? `${rangeInfo.normalFt}/${rangeInfo.maxFt} фт.`
+                                                  : `${rangeInfo.normalFt} фт.`;
+                                              return `${getWeaponCategoryLabel(item.weaponCategory)} · ${getWeaponRangeLabel(rangeInfo.rangeType)} (${rangeText})${item.damage ? ` · ${item.damage}` : ''}`;
+                                            })()
+                                          : item.armorCategory
+                                            ? `${getArmorCategoryLabel(item.armorCategory)}${item.armorClass ? ` · КЗ ${item.armorClass}` : ''}`
+                                            : item.description || ''}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (item.quantity <= 1) {
+                                            send({
+                                              type: 'dm:removeInventoryItem',
+                                              playerId: selectedPlayer.id,
+                                              itemId: item.id,
+                                            });
+                                          } else {
+                                            send({
+                                              type: 'dm:updateInventoryItem',
+                                              playerId: selectedPlayer.id,
+                                              itemId: item.id,
+                                              patch: { quantity: item.quantity - 1 },
+                                            });
+                                          }
+                                        }}
+                                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                                        aria-label="Уменьшить количество"
+                                      >
+                                        <Minus className="w-3.5 h-3.5" />
+                                      </button>
+                                      <span className="w-7 text-center text-xs font-mono tabular-nums text-amber-400">
+                                        {item.quantity}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
                                           send({
                                             type: 'dm:updateInventoryItem',
                                             playerId: selectedPlayer.id,
                                             itemId: item.id,
-                                            patch: { quantity: item.quantity - 1 },
-                                          });
+                                            patch: { quantity: item.quantity + 1 },
+                                          })
                                         }
-                                      }}
-                                      className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
-                                      aria-label="Уменьшить количество"
-                                    >
-                                      <Minus className="w-3.5 h-3.5" />
-                                    </button>
-                                    <span className="w-7 text-center text-xs font-mono tabular-nums text-amber-400">
-                                      {item.quantity}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        send({
-                                          type: 'dm:updateInventoryItem',
-                                          playerId: selectedPlayer.id,
-                                          itemId: item.id,
-                                          patch: { quantity: item.quantity + 1 },
-                                        })
-                                      }
-                                      className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
-                                      aria-label="Увеличить количество"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        send({
-                                          type: 'dm:removeInventoryItem',
-                                          playerId: selectedPlayer.id,
-                                          itemId: item.id,
-                                        })
-                                      }
-                                      className="p-1 ml-1 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
-                                      aria-label="Удалить предмет"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
+                                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                                        aria-label="Увеличить количество"
+                                      >
+                                        <Plus className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          send({
+                                            type: 'dm:removeInventoryItem',
+                                            playerId: selectedPlayer.id,
+                                            itemId: item.id,
+                                          })
+                                        }
+                                        className="p-1 ml-1 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
+                                        aria-label="Удалить предмет"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </div>
-                                </div>
-                              ))
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Proficiencies (Weapon / Armor — right beside Inventory) */}
+                          <div className="space-y-2 pt-2 border-t border-slate-800">
+                            <div className="flex items-baseline justify-between">
+                              <h3 className="text-xs font-semibold text-slate-200">
+                                Владения оружием и доспехами ({selectedPlayer.proficiencyIds.length})
+                              </h3>
+                              <span className="text-[11px] text-slate-400">БМ +{profBonus}</span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1.5">
+                              {catalogs.proficiencies.map((pr) => {
+                                const active = selectedPlayer.proficiencyIds.includes(pr.id);
+                                const fromClass = classDefaultProfSet.has(pr.id);
+                                return (
+                                  <button
+                                    key={pr.id}
+                                    type="button"
+                                    onClick={() => handleToggleProficiency(pr.id)}
+                                    className={`px-3 py-1.5 rounded-lg border text-left flex items-center justify-between gap-2 text-xs transition-colors ${
+                                      active
+                                        ? 'bg-amber-500/15 border-amber-500/60 text-slate-100'
+                                        : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    <span className="truncate font-medium flex items-center gap-1.5 min-w-0">
+                                      <span className="truncate">{pr.name}</span>
+                                      {fromClass && (
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] text-amber-300 shrink-0">
+                                          Класс
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="text-[11px] shrink-0">
+                                      {active ? 'Изучено' : 'Нет'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {selectedClassRef?.weaponProficiencyNote && (
+                              <p className="text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                                {selectedClassRef.weaponProficiencyNote}
+                              </p>
                             )}
                           </div>
-                        </div>
-                      </div>
-                    )}
 
-                    {/* SUB-TAB 2: CHARACTER IDENTITY, XP/LEVEL & ABILITIES */}
-                    {playerSubTab === 'sheet' && (
+                          {/* Private Note */}
+                          <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-slate-400">
+                                Личная заметка (только на телефоне игрока)
+                              </span>
+                              {noteDraft !== selectedPlayer.privateNote && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    send({
+                                      type: 'dm:updateStats',
+                                      playerId: selectedPlayer.id,
+                                      privateNote: noteDraft,
+                                    })
+                                  }
+                                  className="text-xs text-amber-400 hover:text-amber-300 font-medium"
+                                >
+                                  Сохранить
+                                </button>
+                              )}
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value)}
+                              onBlur={() => {
+                                if (noteDraft !== selectedPlayer.privateNote) {
+                                  send({
+                                    type: 'dm:updateStats',
+                                    playerId: selectedPlayer.id,
+                                    privateNote: noteDraft,
+                                  });
+                                }
+                              }}
+                              placeholder="Секретная подсказка или наблюдение для этого игрока..."
+                              className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-200 resize-none"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* SUB-TAB 4: АНКЕТА (Личность, Расположение, Опыт и Уровень, Черты, Умения класса и подкласса) */}
+                    {playerSubTab === 'profile' && (
                       <div className="space-y-4">
                         {/* Identity from Catalogs */}
                         <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-3 text-xs">
@@ -2657,6 +3146,85 @@ export function DmView({ onNavigate }: DmViewProps) {
                           </label>
                         </div>
 
+                        {/* Persisted Character Location & Status Note */}
+                        <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-400 flex items-center gap-1.5">
+                              <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Расположение персонажа</span>
+                            </span>
+                            {selectedPlayer.locationId !== dmState.activeLocationId && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  send({
+                                    type: 'dm:movePlayerToLocation',
+                                    playerId: selectedPlayer.id,
+                                    locationId: dmState.activeLocationId,
+                                  })
+                                }
+                                className="text-[11px] font-medium text-amber-400 hover:text-amber-300"
+                              >
+                                На текущую карту
+                              </button>
+                            )}
+                          </div>
+
+                          <select
+                            value={selectedPlayer.locationId}
+                            onChange={(e) =>
+                              send({
+                                type: 'dm:movePlayerToLocation',
+                                playerId: selectedPlayer.id,
+                                locationId: e.target.value,
+                              })
+                            }
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                          >
+                            {dmState.locations.map((loc) => (
+                              <option key={loc.id} value={loc.id}>
+                                {loc.kind === 'city' ? '[Город] ' : '[Бой] '}
+                                {loc.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={locationNoteDraft}
+                              onChange={(e) => setLocationNoteDraft(e.target.value)}
+                              onBlur={() => {
+                                if (locationNoteDraft.trim() !== (selectedPlayer.locationNote ?? '')) {
+                                  send({
+                                    type: 'dm:updateStats',
+                                    playerId: selectedPlayer.id,
+                                    locationNote: locationNoteDraft.trim(),
+                                  });
+                                }
+                              }}
+                              placeholder="Статус / место (напр. Спит в казармах)"
+                              className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-200 placeholder:text-slate-500"
+                            />
+                            {locationNoteDraft.trim() !== (selectedPlayer.locationNote ?? '') && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  send({
+                                    type: 'dm:updateStats',
+                                    playerId: selectedPlayer.id,
+                                    locationNote: locationNoteDraft.trim(),
+                                  })
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-semibold"
+                                aria-label="Сохранить статус места"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
                         {/* Experience & Derived Level */}
                         <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5 text-xs">
                           <div className="flex items-baseline justify-between gap-2">
@@ -2722,101 +3290,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                           )}
                         </div>
 
-                        {/* Ability Scores Grid */}
-                        <div className="space-y-2">
-                          <div className="flex items-baseline justify-between">
-                            <span className="text-xs font-semibold text-slate-200">
-                              Характеристики
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => onNavigate('/catalogs')}
-                              className="text-[11px] text-amber-400 hover:text-amber-300"
-                            >
-                              Настроить справочник →
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            {catalogs.abilities.map((ab) => {
-                              const val = selectedPlayer.abilities[ab.id] ?? 10;
-                              const mod = getAbilityModifier(val, catalogs.abilityModifiers);
-                              return (
-                                <div
-                                  key={ab.id}
-                                  className="p-2.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-1.5"
-                                >
-                                  <div className="flex items-baseline justify-between gap-1">
-                                    <span className="text-[11px] font-medium text-slate-300 truncate">
-                                      {ab.name}
-                                    </span>
-                                    <span className="text-[11px] font-mono tabular-nums font-bold text-amber-400">
-                                      {formatModifier(mod)}
-                                    </span>
-                                  </div>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={30}
-                                    value={val}
-                                    onChange={(e) =>
-                                      send({
-                                        type: 'dm:updateStats',
-                                        playerId: selectedPlayer.id,
-                                        abilities: {
-                                          ...selectedPlayer.abilities,
-                                          [ab.id]: Math.max(1, Math.min(30, Number(e.target.value) || 10)),
-                                        },
-                                      })
-                                    }
-                                    className="w-full px-2 py-1 rounded bg-[#131A26] border border-slate-800 font-mono tabular-nums text-sm font-semibold text-center text-slate-100"
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* DM-Only Saving Throw Proficiencies */}
-                        {(() => {
-                          const cls = catalogs.classes.find((c) => c.id === selectedPlayer.classId);
-                          const saveIds = cls?.savingThrowAbilityIds ?? [];
-                          if (saveIds.length === 0) return null;
-                          return (
-                            <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-sky-500/30 space-y-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold text-sky-300 flex items-center gap-1.5">
-                                  <Shield className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Владение спасбросками</span>
-                                </span>
-                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/40 text-sky-300">
-                                  Только для ДМ
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {saveIds.map((abId) => {
-                                  const ab = catalogs.abilities.find((a) => a.id === abId);
-                                  if (!ab) return null;
-                                  const score = selectedPlayer.abilities[ab.id] ?? 10;
-                                  const saveMod =
-                                    getAbilityModifier(score, catalogs.abilityModifiers) + profBonus;
-                                  return (
-                                    <span
-                                      key={ab.id}
-                                      className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100 flex items-center gap-1.5"
-                                    >
-                                      <span>{ab.name}</span>
-                                      <span className="font-mono tabular-nums font-bold text-sky-300">
-                                        {formatModifier(saveMod)}
-                                      </span>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Hero Feats (Origin Feat from Background + Any Additional Feats) */}
+                        {/* Hero Feats (with Automation Badges) */}
                         {(() => {
                           const heroFeats = getHeroFeats(selectedPlayer, catalogs);
                           if (heroFeats.length === 0) return null;
@@ -2829,9 +3303,22 @@ export function DmView({ onNavigate }: DmViewProps) {
                               <div className="space-y-2 divide-y divide-slate-800/80">
                                 {heroFeats.map((feat) => (
                                   <div key={feat.id} className="pt-2 first:pt-0 space-y-1">
-                                    <div className="text-xs font-semibold text-slate-100">
-                                      {feat.name}
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-xs font-semibold text-slate-100">
+                                        {feat.name}
+                                      </span>
+                                      {feat.automatedSummary && (
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-medium text-emerald-300">
+                                          <Zap className="w-2.5 h-2.5" />
+                                          <span>Авто</span>
+                                        </span>
+                                      )}
                                     </div>
+                                    {feat.automatedSummary && (
+                                      <div className="text-[10px] text-emerald-300/95">
+                                        {feat.automatedSummary}
+                                      </div>
+                                    )}
                                     <p className="text-[11px] text-slate-400 leading-relaxed">
                                       {feat.description}
                                     </p>
@@ -2842,12 +3329,8 @@ export function DmView({ onNavigate }: DmViewProps) {
                           );
                         })()}
 
-                        {/* Class Scaling Resources & Unlocked Class/Subclass Features */}
+                        {/* Unlocked Class & Subclass Features */}
                         {(() => {
-                          const resources = getClassResourcesAtLevel(
-                            selectedClassRef,
-                            selectedPlayer.level
-                          );
                           const classFeats = getHeroClassFeatures(
                             selectedPlayer.classId,
                             selectedPlayer.level,
@@ -2865,6 +3348,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                               level: f.level,
                               name: f.name,
                               description: f.description,
+                              automatedSummary: f.automatedSummary,
                               isSubclass: false,
                             })),
                             ...subFeats.map((f) => ({
@@ -2872,11 +3356,12 @@ export function DmView({ onNavigate }: DmViewProps) {
                               level: f.level,
                               name: f.name,
                               description: f.description,
+                              automatedSummary: f.automatedSummary,
                               isSubclass: true,
                             })),
                           ].sort((a, b) => a.level - b.level);
 
-                          if (resources.length === 0 && combined.length === 0) return null;
+                          if (combined.length === 0) return null;
                           return (
                             <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
                               <div className="flex items-center justify-between gap-2">
@@ -2889,321 +3374,67 @@ export function DmView({ onNavigate }: DmViewProps) {
                                 </span>
                               </div>
 
-                              {resources.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5">
-                                  {resources.map((r) => (
-                                    <span
-                                      key={r.id}
-                                      className="px-2 py-0.5 rounded-md bg-[#131A26] border border-slate-700 text-[11px] text-slate-300"
-                                    >
-                                      {r.name}:{' '}
-                                      <span className="font-mono font-semibold text-amber-300">
-                                        {r.value}
-                                      </span>
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-
-                              {combined.length > 0 && (
-                                <div className="divide-y divide-slate-800/80">
-                                  {combined.map((feat) => {
-                                    const open = expandedDmFeatureId === feat.id;
-                                    return (
-                                      <div key={feat.id} className="py-1.5 first:pt-0 last:pb-0">
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setExpandedDmFeatureId(open ? null : feat.id)
-                                          }
-                                          className="w-full flex items-center justify-between gap-2 text-left"
-                                        >
-                                          <div className="flex items-center gap-1.5 min-w-0">
-                                            <span
-                                              className={`px-1 py-0.5 rounded font-mono text-[9px] font-semibold shrink-0 ${
-                                                feat.isSubclass
-                                                  ? 'bg-violet-500/20 text-violet-300'
-                                                  : 'bg-amber-500/15 text-amber-300'
-                                              }`}
-                                            >
-                                              Ур.{feat.level}
-                                            </span>
-                                            <span className="text-xs font-medium text-slate-100 truncate">
-                                              {feat.name}
-                                            </span>
-                                          </div>
-                                          <ChevronDown
-                                            className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${
-                                              open ? 'rotate-180' : ''
+                              <div className="divide-y divide-slate-800/80">
+                                {combined.map((feat) => {
+                                  const open = expandedDmFeatureId === feat.id;
+                                  return (
+                                    <div key={feat.id} className="py-1.5 first:pt-0 last:pb-0">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedDmFeatureId(open ? null : feat.id)
+                                        }
+                                        className="w-full flex items-center justify-between gap-2 text-left"
+                                      >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <span
+                                            className={`px-1 py-0.5 rounded font-mono text-[9px] font-semibold shrink-0 ${
+                                              feat.isSubclass
+                                                ? 'bg-violet-500/20 text-violet-300'
+                                                : 'bg-amber-500/15 text-amber-300'
                                             }`}
-                                          />
-                                        </button>
-                                        {open && feat.description && (
-                                          <p className="mt-1.5 text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">
-                                            {feat.description}
-                                          </p>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                                          >
+                                            Ур.{feat.level}
+                                          </span>
+                                          <span className="text-xs font-medium text-slate-100 truncate">
+                                            {feat.name}
+                                          </span>
+                                          {feat.automatedSummary && (
+                                            <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-medium text-emerald-300 shrink-0">
+                                              <Zap className="w-2.5 h-2.5" />
+                                              <span>Авто</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                        <ChevronDown
+                                          className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${
+                                            open ? 'rotate-180' : ''
+                                          }`}
+                                        />
+                                      </button>
+                                      {open && (
+                                        <div className="mt-1.5 space-y-1">
+                                          {feat.automatedSummary && (
+                                            <div className="text-[10px] text-emerald-300 bg-emerald-950/25 border border-emerald-500/25 rounded px-2 py-1">
+                                              Автоэффект: {feat.automatedSummary}
+                                            </div>
+                                          )}
+                                          {feat.description && (
+                                            <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">
+                                              {feat.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           );
                         })()}
                       </div>
                     )}
-
-                    {/* SUB-TAB 3: SKILLS & LEARNED PROFICIENCIES */}
-                    {playerSubTab === 'skills' && (() => {
-                      const selectedClass = catalogs.classes.find(
-                        (c) => c.id === selectedPlayer.classId
-                      );
-                      const classDefaultProfSet = new Set(
-                        getClassDefaultProficiencyIds(selectedPlayer.classId, catalogs)
-                      );
-                      const bgLockedSkillSet = new Set(
-                        getBackgroundLockedSkillIds(selectedPlayer.backgroundId, catalogs)
-                      );
-                      const allowedSkillSet = getHeroAllowedSkillIds(
-                        selectedPlayer.classId,
-                        selectedPlayer.backgroundId,
-                        catalogs
-                      );
-
-                      const availableSkills = catalogs.skills.filter(
-                        (sk) => !allowedSkillSet || allowedSkillSet.has(sk.id)
-                      );
-                      const unavailableSkills = allowedSkillSet
-                        ? catalogs.skills.filter((sk) => !allowedSkillSet.has(sk.id))
-                        : [];
-
-                      const renderSkillRow = (
-                        sk: (typeof catalogs.skills)[number],
-                        isUnavailable: boolean
-                      ) => {
-                        const isBgLocked = bgLockedSkillSet.has(sk.id);
-                        const isExp = (selectedPlayer.expertiseSkillIds ?? []).includes(sk.id);
-                        const active =
-                          isBgLocked ||
-                          isExp ||
-                          selectedPlayer.proficientSkillIds.includes(sk.id);
-                        const ab = catalogs.abilities.find((a) => a.id === sk.abilityId);
-                        const score = selectedPlayer.abilities[sk.abilityId] ?? 10;
-                        const bonusAdd = isExp ? profBonus * 2 : active ? profBonus : 0;
-                        const totalMod =
-                          getAbilityModifier(score, catalogs.abilityModifiers) + bonusAdd;
-
-                        return (
-                          <div
-                            key={sk.id}
-                            className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors ${
-                              isUnavailable && !active
-                                ? 'text-slate-600 opacity-55'
-                                : isExp
-                                  ? 'bg-sky-500/10 text-slate-100'
-                                  : isBgLocked
-                                    ? 'bg-emerald-500/10 text-slate-100'
-                                    : active
-                                      ? 'bg-amber-500/10 text-slate-100'
-                                      : 'text-slate-400 hover:bg-slate-800/40'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              disabled={isBgLocked || (isUnavailable && !active)}
-                              onClick={() => handleToggleSkill(sk.id)}
-                              title={
-                                isBgLocked
-                                  ? 'Навык предыстории (выдан автоматически, отключить нельзя)'
-                                  : isUnavailable
-                                    ? 'Навык недоступен выбранному классу и предыстории'
-                                    : undefined
-                              }
-                              className="flex-1 py-0.5 text-left flex items-center gap-2 min-w-0 disabled:cursor-default"
-                            >
-                              <span
-                                className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                                  isExp
-                                    ? 'bg-sky-400 border-sky-400 text-slate-950'
-                                    : isBgLocked
-                                      ? 'bg-emerald-500 border-emerald-500 text-slate-950'
-                                      : active
-                                        ? 'bg-amber-500 border-amber-500 text-slate-950'
-                                        : 'border-slate-700'
-                                }`}
-                              >
-                                {isBgLocked ? (
-                                  <Lock className="w-2.5 h-2.5" />
-                                ) : active ? (
-                                  <Check className="w-2.5 h-2.5" />
-                                ) : null}
-                              </span>
-                              <span className="truncate font-medium">{sk.name}</span>
-                              <span className="text-[10px] font-mono text-slate-500 shrink-0">
-                                {ab?.shortName ?? '—'}
-                              </span>
-                              {isBgLocked && (
-                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] text-emerald-300 shrink-0">
-                                  Предыстория
-                                </span>
-                              )}
-                              {isUnavailable && !active && (
-                                <span className="text-[10px] text-slate-500 shrink-0">
-                                  Недоступно
-                                </span>
-                              )}
-                            </button>
-
-                            <div className="flex items-center gap-2 shrink-0">
-                              <button
-                                type="button"
-                                disabled={isUnavailable && !isExp}
-                                onClick={() => handleToggleExpertise(sk.id)}
-                                title="Экспертиза (бонус владения ×2)"
-                                className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-                                  isExp
-                                    ? 'bg-sky-500/25 border-sky-400/80 text-sky-300'
-                                    : 'border-slate-800 text-slate-500 hover:text-sky-300 hover:border-slate-700'
-                                }`}
-                              >
-                                ×2
-                              </button>
-                              <span
-                                className={`w-8 text-right font-mono tabular-nums font-semibold ${
-                                  isExp
-                                    ? 'text-sky-300'
-                                    : isBgLocked
-                                      ? 'text-emerald-400'
-                                      : active
-                                        ? 'text-amber-400'
-                                        : 'text-slate-400'
-                                }`}
-                              >
-                                {formatModifier(totalMod)}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      };
-
-                      return (
-                        <div className="space-y-5">
-                          {/* Proficiencies (Weapon / Armor) */}
-                          <div className="space-y-2">
-                            <div className="flex items-baseline justify-between">
-                              <h3 className="text-xs font-semibold text-slate-200">
-                                Изученные владения ({selectedPlayer.proficiencyIds.length})
-                              </h3>
-                              <span className="text-[11px] text-slate-400">
-                                Бонус мастерства +{profBonus}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-1 gap-1.5">
-                              {catalogs.proficiencies.map((pr) => {
-                                const active = selectedPlayer.proficiencyIds.includes(pr.id);
-                                const fromClass = classDefaultProfSet.has(pr.id);
-                                return (
-                                  <button
-                                    key={pr.id}
-                                    type="button"
-                                    onClick={() => handleToggleProficiency(pr.id)}
-                                    className={`px-3 py-2 rounded-lg border text-left flex items-center justify-between gap-2 text-xs transition-colors ${
-                                      active
-                                        ? 'bg-amber-500/15 border-amber-500/60 text-slate-100'
-                                        : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
-                                    }`}
-                                  >
-                                    <span className="truncate font-medium flex items-center gap-1.5 min-w-0">
-                                      <span className="truncate">{pr.name}</span>
-                                      {fromClass && (
-                                        <span className="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] text-amber-300 shrink-0">
-                                          Класс
-                                        </span>
-                                      )}
-                                    </span>
-                                    <span className="text-[11px] shrink-0">
-                                      {active ? 'Изучено' : 'Нет'}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {selectedClass?.weaponProficiencyNote && (
-                              <p className="text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
-                                {selectedClass.weaponProficiencyNote}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Senses & Vision for Hero */}
-                          <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                            <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
-                              <VisionSelector
-                                catalogVisions={catalogs.visions}
-                                value={selectedPlayer.visions ?? []}
-                                onChange={(nextVisions) =>
-                                  send({
-                                    type: 'dm:updateStats',
-                                    playerId: selectedPlayer.id,
-                                    visions: nextVisions,
-                                  })
-                                }
-                                compact={true}
-                                title="Зрение героя"
-                              />
-                              <label className="block space-y-1 pt-1 border-t border-slate-800/80">
-                                <span className="text-[11px] text-slate-400">
-                                  Чувства (дополнительно)
-                                </span>
-                                <input
-                                  type="text"
-                                  value={sensesDraft}
-                                  onChange={(e) => setSensesDraft(e.target.value)}
-                                  onBlur={() => {
-                                    if (sensesDraft !== (selectedPlayer.senses ?? '')) {
-                                      send({
-                                        type: 'dm:updateStats',
-                                        playerId: selectedPlayer.id,
-                                        senses: sensesDraft.trim(),
-                                      });
-                                    }
-                                  }}
-                                  placeholder="Например: острый слух, пасс. Восприятие 14"
-                                  className="w-full px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
-                                />
-                              </label>
-                            </div>
-                          </div>
-
-                          {/* Skills & Expertise */}
-                          <div className="space-y-2 pt-2 border-t border-slate-800">
-                            <div className="flex items-center justify-between gap-2">
-                              <h3 className="text-xs font-semibold text-slate-200">
-                                Навыки (владение и экспертиза ×2)
-                              </h3>
-                              <span className="text-[11px] font-mono text-slate-400">
-                                БМ +{profBonus} · ×2 = +{profBonus * 2}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 leading-relaxed">
-                              Навыки предыстории закреплены. Остальные классовые навыки можно изучать в ходе игры; недоступные классу навыки заблокированы.
-                            </p>
-                            <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
-                              {availableSkills.map((sk) => renderSkillRow(sk, false))}
-                              {unavailableSkills.length > 0 && (
-                                <>
-                                  <div className="px-3 py-1.5 bg-[#131A26]/70 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                                    Недоступны по классу и предыстории ({unavailableSkills.length})
-                                  </div>
-                                  {unavailableSkills.map((sk) => renderSkillRow(sk, true))}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
                   </div>
                 )}
               </>
@@ -3520,8 +3751,8 @@ export function DmView({ onNavigate }: DmViewProps) {
                     <span className="text-[11px] text-slate-500">по инициативе ↓</span>
                   </div>
                   <div className="divide-y divide-slate-800/80 rounded-xl bg-[#0B0F17] border border-slate-800 overflow-hidden">
-                    {[...dmState.tokens]
-                      .sort((a, b) => {
+                    {(() => {
+                      const sortedTokens = [...dmState.tokens].sort((a, b) => {
                         const aIsObj = a.kind === 'object';
                         const bIsObj = b.kind === 'object';
                         if (aIsObj !== bIsObj) return aIsObj ? 1 : -1;
@@ -3535,304 +3766,373 @@ export function DmView({ onNavigate }: DmViewProps) {
                         const aInit = aPlayer?.initiative ?? a.initiative ?? 0;
                         const bInit = bPlayer?.initiative ?? b.initiative ?? 0;
                         return bInit - aInit;
-                      })
-                      .map((tok) => {
-                      const isTurn = dmState.scene.activeTurnTokenId === tok.id;
-                      const linkedPlayer = tok.playerId
-                        ? dmState.players.find((p) => p.id === tok.playerId)
-                        : null;
-                      const linkedMonster = tok.monsterId
-                        ? catalogs.monsters.find((m) => m.id === tok.monsterId)
-                        : null;
-                      const tokInit = linkedPlayer?.initiative ?? tok.initiative ?? 0;
-                      const tokMaxHp = tok.maxHp ?? linkedMonster?.maxHp;
-                      const tokHp = tok.hp ?? tokMaxHp;
-                      const tokAc = tok.ac ?? linkedMonster?.ac;
-                      const isMonsterExpanded = expandedMonsterTokenId === tok.id;
-                      const monsterSkillLabels = linkedMonster
-                        ? catalogs.skills
-                            .filter(
-                              (sk) =>
-                                linkedMonster.proficientSkillIds.includes(sk.id) ||
-                                (linkedMonster.expertiseSkillIds ?? []).includes(sk.id)
-                            )
-                            .map((sk) => {
-                              const isExp = (linkedMonster.expertiseSkillIds ?? []).includes(sk.id);
-                              const abMod = getAbilityModifier(
-                                linkedMonster.abilities?.[sk.abilityId] ?? 10,
-                                catalogs.abilityModifiers
-                              );
-                              const bonus = abMod + (isExp ? 4 : 2);
-                              return `${sk.name} ${formatModifier(bonus)}${isExp ? ' (×2)' : ''}`;
-                            })
-                        : [];
-                      const monsterTraits = linkedMonster?.traits ?? [];
-                      const monsterVisionLabels = linkedMonster
-                        ? formatEntityVisions(linkedMonster.visions, catalogs.visions)
-                        : [];
+                      });
 
-                      return (
-                        <div
-                          key={tok.id}
-                          className={`px-3 py-2.5 space-y-2 text-xs transition-colors ${
-                            isTurn ? 'bg-amber-500/10 border-l-2 border-l-amber-400' : ''
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: tok.color }}
-                              />
-                              <div className="min-w-0">
-                                <div className="font-medium text-slate-100 truncate flex items-center gap-1.5">
-                                  <span className="truncate">{tok.label}</span>
-                                  {linkedMonster && (
-                                    <Skull className="w-3 h-3 text-red-400 shrink-0" />
-                                  )}
-                                </div>
-                                <div className="text-[11px] font-mono tabular-nums text-slate-400">
-                                  ({activeLocation?.kind === 'city' ? (tok.x + 1).toFixed(1) : Math.round(tok.x) + 1},{' '}
-                                  {activeLocation?.kind === 'city' ? (tok.y + 1).toFixed(1) : Math.round(tok.y) + 1}) ·{' '}
-                                  {tok.size}×{tok.size}
-                                  {typeof tokAc === 'number' && (
-                                    <span className="text-sky-400"> · КЗ {tokAc}</span>
-                                  )}
+                      const initCounts = new Map<number, number>();
+                      for (const t of sortedTokens) {
+                        if (t.kind === 'object') continue;
+                        const lp = t.playerId
+                          ? dmState.players.find((p) => p.id === t.playerId)
+                          : null;
+                        const v = lp?.initiative ?? t.initiative ?? 0;
+                        initCounts.set(v, (initCounts.get(v) ?? 0) + 1);
+                      }
+
+                      return sortedTokens.map((tok) => {
+                        const isDead = tok.combatStatus === 'dead';
+                        const isUnconscious =
+                          !isDead &&
+                          (tok.combatStatus === 'unconscious' ||
+                            (tok.conditions ?? []).some((c) =>
+                              c.toLowerCase().includes('бессознат')
+                            ));
+                        const isTurn = !isDead && dmState.scene.activeTurnTokenId === tok.id;
+                        const linkedPlayer = tok.playerId
+                          ? dmState.players.find((p) => p.id === tok.playerId)
+                          : null;
+                        const linkedMonster = tok.monsterId
+                          ? catalogs.monsters.find((m) => m.id === tok.monsterId)
+                          : null;
+                        const tokInit = linkedPlayer?.initiative ?? tok.initiative ?? 0;
+                        const isTied = tok.kind !== 'object' && (initCounts.get(tokInit) ?? 0) > 1;
+                        const tokMaxHp = tok.maxHp ?? linkedMonster?.maxHp;
+                        const tokHp = tok.hp ?? tokMaxHp;
+                        const tokAc = tok.ac ?? linkedMonster?.ac;
+                        const isMonsterExpanded = expandedMonsterTokenId === tok.id;
+                        const monsterSkillLabels = linkedMonster
+                          ? catalogs.skills
+                              .filter(
+                                (sk) =>
+                                  linkedMonster.proficientSkillIds.includes(sk.id) ||
+                                  (linkedMonster.expertiseSkillIds ?? []).includes(sk.id)
+                              )
+                              .map((sk) => {
+                                const isExp = (linkedMonster.expertiseSkillIds ?? []).includes(
+                                  sk.id
+                                );
+                                const abMod = getAbilityModifier(
+                                  linkedMonster.abilities?.[sk.abilityId] ?? 10,
+                                  catalogs.abilityModifiers
+                                );
+                                const bonus = abMod + (isExp ? 4 : 2);
+                                return `${sk.name} ${formatModifier(bonus)}${isExp ? ' (×2)' : ''}`;
+                              })
+                          : [];
+                        const monsterTraits = linkedMonster?.traits ?? [];
+                        const monsterVisionLabels = linkedMonster
+                          ? formatEntityVisions(linkedMonster.visions, catalogs.visions)
+                          : [];
+                        const tokConditions = tok.conditions ?? [];
+
+                        return (
+                          <div
+                            key={tok.id}
+                            className={`px-3 py-2.5 space-y-2 text-xs transition-colors ${
+                              isTurn
+                                ? 'bg-amber-500/10 border-l-2 border-l-amber-400'
+                                : isDead
+                                  ? 'opacity-65 bg-slate-950/60'
+                                  : ''
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: isDead ? '#64748B' : tok.color }}
+                                />
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-100 truncate flex items-center gap-1.5 flex-wrap">
+                                    <span className={isDead ? 'line-through text-slate-400' : 'truncate'}>
+                                      {tok.label}
+                                    </span>
+                                    {linkedMonster && (
+                                      <Skull className="w-3 h-3 text-red-400 shrink-0" />
+                                    )}
+                                    {isDead && (
+                                      <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] text-slate-300 shrink-0">
+                                        Мёртв
+                                      </span>
+                                    )}
+                                    {isUnconscious && (
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[9px] text-amber-300 shrink-0">
+                                        Без сознания
+                                      </span>
+                                    )}
+                                    {isTied && !isDead && (
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/50 text-[9px] font-mono text-amber-300 shrink-0">
+                                        = Ничья
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] font-mono tabular-nums text-slate-400">
+                                    ({activeLocation?.kind === 'city' ? (tok.x + 1).toFixed(1) : Math.round(tok.x) + 1},{' '}
+                                    {activeLocation?.kind === 'city' ? (tok.y + 1).toFixed(1) : Math.round(tok.y) + 1}) ·{' '}
+                                    {tok.size}×{tok.size}
+                                    {typeof tokAc === 'number' && (
+                                      <span className="text-sky-400"> · КЗ {tokAc}</span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
 
-                            <div className="flex items-center gap-1 shrink-0">
-                              {tok.kind !== 'object' && (
-                                <input
-                                  type="number"
-                                  value={tokInit}
-                                  title="Инициатива"
-                                  aria-label={`Инициатива ${tok.label}`}
-                                  onChange={(e) => {
-                                    const nextInit = Number(e.target.value) || 0;
-                                    if (linkedPlayer) {
+                              <div className="flex items-center gap-1 shrink-0">
+                                {tok.kind !== 'object' && (
+                                  <input
+                                    type="number"
+                                    value={tokInit}
+                                    title="Инициатива"
+                                    aria-label={`Инициатива ${tok.label}`}
+                                    onChange={(e) => {
+                                      const nextInit = Number(e.target.value) || 0;
+                                      if (linkedPlayer) {
+                                        send({
+                                          type: 'dm:updateStats',
+                                          playerId: linkedPlayer.id,
+                                          initiative: nextInit,
+                                        });
+                                      } else {
+                                        send({
+                                          type: 'dm:upsertToken',
+                                          token: { ...tok, initiative: nextInit },
+                                        });
+                                      }
+                                    }}
+                                    className="w-11 px-1 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-[11px] text-sky-300 text-center"
+                                  />
+                                )}
+                                {activeLocation?.kind !== 'city' && tok.kind !== 'object' && (
+                                  <button
+                                    type="button"
+                                    disabled={isDead}
+                                    onClick={() =>
                                       send({
-                                        type: 'dm:updateStats',
-                                        playerId: linkedPlayer.id,
-                                        initiative: nextInit,
-                                      });
-                                    } else {
-                                      send({
-                                        type: 'dm:upsertToken',
-                                        token: { ...tok, initiative: nextInit },
-                                      });
+                                        type: 'dm:setScene',
+                                        patch: { activeTurnTokenId: isTurn ? null : tok.id },
+                                      })
                                     }
-                                  }}
-                                  className="w-11 px-1 py-1 rounded bg-[#131A26] border border-slate-800 font-mono text-[11px] text-sky-300 text-center"
-                                />
-                              )}
-                              {activeLocation?.kind !== 'city' && tok.kind !== 'object' && (
+                                    className={`px-2 py-1 rounded border text-[11px] transition-colors disabled:opacity-35 disabled:cursor-not-allowed ${
+                                      isTurn
+                                        ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
+                                        : 'border-slate-800 text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    Ход
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() =>
                                     send({
-                                      type: 'dm:setScene',
-                                      patch: { activeTurnTokenId: isTurn ? null : tok.id },
+                                      type: 'dm:upsertToken',
+                                      token: { ...tok, visibleOnTv: !tok.visibleOnTv },
                                     })
                                   }
-                                  className={`px-2 py-1 rounded border text-[11px] transition-colors ${
-                                    isTurn
-                                      ? 'bg-amber-500/20 border-amber-500/70 text-amber-300'
-                                      : 'border-slate-800 text-slate-400 hover:text-slate-200'
-                                  }`}
+                                  className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                                  title={tok.visibleOnTv ? 'Скрыть на ТВ' : 'Показать на ТВ'}
                                 >
-                                  Ход
+                                  {tok.visibleOnTv ? (
+                                    <Eye className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <EyeOff className="w-3.5 h-3.5 text-slate-600" />
+                                  )}
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  send({
-                                    type: 'dm:upsertToken',
-                                    token: { ...tok, visibleOnTv: !tok.visibleOnTv },
-                                  })
-                                }
-                                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
-                                title={tok.visibleOnTv ? 'Скрыть на ТВ' : 'Показать на ТВ'}
-                              >
-                                {tok.visibleOnTv ? (
-                                  <Eye className="w-3.5 h-3.5" />
-                                ) : (
-                                  <EyeOff className="w-3.5 h-3.5 text-slate-600" />
-                                )}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => send({ type: 'dm:deleteToken', tokenId: tok.id })}
-                                className="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
-                                title="Удалить фишку"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Monster / Enemy HP tracker & Stat-block actions (DM-only, hidden on TV) */}
-                          {tok.kind === 'enemy' && (typeof tokMaxHp === 'number' || linkedMonster) && (
-                            <div className="pt-1.5 border-t border-slate-800/70 space-y-1.5">
-                              <div className="flex items-center justify-between gap-2 text-[11px]">
-                                {typeof tokMaxHp === 'number' && typeof tokHp === 'number' ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-slate-400">HP:</span>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        send({
-                                          type: 'dm:upsertToken',
-                                          token: {
-                                            ...tok,
-                                            hp: Math.max(0, tokHp - 1),
-                                            maxHp: tokMaxHp,
-                                          },
-                                        })
-                                      }
-                                      className="px-1.5 py-0.5 rounded bg-red-950/50 border border-red-900/60 text-red-300 font-mono hover:bg-red-900/50"
-                                    >
-                                      -1
-                                    </button>
-                                    <span
-                                      className={`font-mono tabular-nums font-semibold ${
-                                        tokHp <= 0 ? 'text-red-400 line-through' : 'text-emerald-300'
-                                      }`}
-                                    >
-                                      {tokHp}/{tokMaxHp}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        send({
-                                          type: 'dm:upsertToken',
-                                          token: {
-                                            ...tok,
-                                            hp: Math.min(tokMaxHp, tokHp + 1),
-                                            maxHp: tokMaxHp,
-                                          },
-                                        })
-                                      }
-                                      className="px-1.5 py-0.5 rounded bg-emerald-950/50 border border-emerald-900/60 text-emerald-300 font-mono hover:bg-emerald-900/50"
-                                    >
-                                      +1
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span />
-                                )}
-
-                                {linkedMonster && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setExpandedMonsterTokenId(isMonsterExpanded ? null : tok.id)
-                                    }
-                                    className="text-[11px] text-amber-400 hover:text-amber-300"
-                                  >
-                                    {isMonsterExpanded
-                                      ? 'Скрыть блок'
-                                      : `Статблок (${linkedMonster.actions.length}) · ${linkedMonster.xpReward} XP`}
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => send({ type: 'dm:deleteToken', tokenId: tok.id })}
+                                  className="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
+                                  title="Удалить фишку"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
+                            </div>
 
-                              {linkedMonster && isMonsterExpanded && (
-                                <div className="p-2 rounded-lg bg-[#131A26] border border-slate-800 space-y-1.5 text-[11px]">
-                                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-slate-400 font-mono tabular-nums">
-                                    <span>КЗ {linkedMonster.ac}</span>
-                                    <span>Скор. {linkedMonster.speed} фт.</span>
-                                    <span>Опыт {linkedMonster.xpReward} XP</span>
-                                  </div>
-                                  {(monsterSkillLabels.length > 0 ||
-                                    linkedMonster.resistances ||
-                                    linkedMonster.immunities ||
-                                    monsterVisionLabels.length > 0 ||
-                                    linkedMonster.senses) && (
-                                    <div className="space-y-0.5 pt-1 border-t border-slate-800/80 text-slate-300">
-                                      {monsterSkillLabels.length > 0 && (
-                                        <div>
-                                          <span className="text-slate-500">Навыки: </span>
-                                          <span className="font-mono tabular-nums">
-                                            {monsterSkillLabels.join(', ')}
-                                          </span>
-                                        </div>
-                                      )}
-                                      {linkedMonster.resistances && (
-                                        <div>
-                                          <span className="text-slate-500">Сопротивления: </span>
-                                          <span>{linkedMonster.resistances}</span>
-                                        </div>
-                                      )}
-                                      {linkedMonster.immunities && (
-                                        <div>
-                                          <span className="text-slate-500">Иммунитеты: </span>
-                                          <span>{linkedMonster.immunities}</span>
-                                        </div>
-                                      )}
-                                      {monsterVisionLabels.length > 0 && (
-                                        <div>
-                                          <span className="text-slate-500">Зрение: </span>
-                                          <span className="text-sky-300 font-medium">
-                                            {monsterVisionLabels.join(', ')}
-                                          </span>
-                                        </div>
-                                      )}
-                                      {linkedMonster.senses && (
-                                        <div>
-                                          <span className="text-slate-500">Чувства: </span>
-                                          <span>{linkedMonster.senses}</span>
-                                        </div>
-                                      )}
+                            {/* Monster / Enemy HP tracker, Statuses & Stat-block actions */}
+                            {tok.kind === 'enemy' && (typeof tokMaxHp === 'number' || linkedMonster) && (
+                              <div className="pt-1.5 border-t border-slate-800/70 space-y-1.5">
+                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                  {typeof tokMaxHp === 'number' && typeof tokHp === 'number' ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-slate-400">HP:</span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          send({
+                                            type: 'dm:upsertToken',
+                                            token: {
+                                              ...tok,
+                                              hp: Math.max(0, tokHp - 1),
+                                              maxHp: tokMaxHp,
+                                            },
+                                          })
+                                        }
+                                        className="px-1.5 py-0.5 rounded bg-red-950/50 border border-red-900/60 text-red-300 font-mono hover:bg-red-900/50"
+                                      >
+                                        -1
+                                      </button>
+                                      <span
+                                        className={`font-mono tabular-nums font-semibold ${
+                                          tokHp <= 0 ? 'text-red-400 line-through' : 'text-emerald-300'
+                                        }`}
+                                      >
+                                        {tokHp}/{tokMaxHp}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          send({
+                                            type: 'dm:upsertToken',
+                                            token: {
+                                              ...tok,
+                                              hp: Math.min(tokMaxHp, tokHp + 1),
+                                              maxHp: tokMaxHp,
+                                            },
+                                          })
+                                        }
+                                        className="px-1.5 py-0.5 rounded bg-emerald-950/50 border border-emerald-900/60 text-emerald-300 font-mono hover:bg-emerald-900/50"
+                                      >
+                                        +1
+                                      </button>
                                     </div>
+                                  ) : (
+                                    <span />
                                   )}
-                                  {monsterTraits.length > 0 && (
-                                    <div className="space-y-1 pt-1 border-t border-slate-800/80">
-                                      <div className="text-[10px] font-semibold text-slate-500">
-                                        Особенности
-                                      </div>
-                                      {monsterTraits.map((trt) => (
-                                        <div key={trt.id} className="text-slate-300 leading-snug">
-                                          <span className="font-semibold text-sky-300">
-                                            {trt.name}.{' '}
-                                          </span>
-                                          <span>{trt.description}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {linkedMonster.actions.length > 0 && (
-                                    <div className="space-y-1 pt-1 border-t border-slate-800/80">
-                                      <div className="text-[10px] font-semibold text-slate-500">
-                                        Действия
-                                      </div>
-                                      {linkedMonster.actions.map((act) => {
-                                        const reachStr = formatWeaponReachRange(act.attackType, act);
-                                        return (
-                                          <div key={act.id} className="text-slate-300 leading-snug">
-                                            <span className="font-semibold text-amber-300">
-                                              {act.name}.{' '}
-                                            </span>
-                                            {reachStr && (
-                                              <span className="inline-block mr-1 px-1 rounded bg-rose-500/15 border border-rose-500/30 text-[10px] font-mono text-rose-300">
-                                                {reachStr}
-                                              </span>
-                                            )}
-                                            <span>{act.description}</span>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
+
+                                  {linkedMonster && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedMonsterTokenId(isMonsterExpanded ? null : tok.id)
+                                      }
+                                      className="text-[11px] text-amber-400 hover:text-amber-300"
+                                    >
+                                      {isMonsterExpanded
+                                        ? 'Скрыть блок'
+                                        : `Статблок (${linkedMonster.actions.length}) · ${linkedMonster.xpReward} XP`}
+                                    </button>
                                   )}
                                 </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                                {/* Compact Monster Conditions Strip */}
+                                {!isDead && (
+                                  <div className="flex flex-wrap gap-1 pt-1">
+                                    {catalogs.conditions.map((cond) => {
+                                      const active = tokConditions.includes(cond.name);
+                                      return (
+                                        <button
+                                          key={cond.id}
+                                          type="button"
+                                          onClick={() => handleToggleTokenCondition(tok, cond.name)}
+                                          title={cond.automatedSummary || cond.description}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                            active
+                                              ? 'bg-amber-500/20 border-amber-500/70 text-amber-200 font-medium'
+                                              : 'bg-[#131A26] border-slate-800/80 text-slate-500 hover:text-slate-300'
+                                          }`}
+                                        >
+                                          {cond.name}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {linkedMonster && isMonsterExpanded && (
+                                  <div className="p-2 rounded-lg bg-[#131A26] border border-slate-800 space-y-1.5 text-[11px]">
+                                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-slate-400 font-mono tabular-nums">
+                                      <span>КЗ {linkedMonster.ac}</span>
+                                      <span>Скор. {linkedMonster.speed} фт.</span>
+                                      <span>Опыт {linkedMonster.xpReward} XP</span>
+                                    </div>
+                                    {(monsterSkillLabels.length > 0 ||
+                                      linkedMonster.resistances ||
+                                      linkedMonster.immunities ||
+                                      monsterVisionLabels.length > 0 ||
+                                      linkedMonster.senses) && (
+                                      <div className="space-y-0.5 pt-1 border-t border-slate-800/80 text-slate-300">
+                                        {monsterSkillLabels.length > 0 && (
+                                          <div>
+                                            <span className="text-slate-500">Навыки: </span>
+                                            <span className="font-mono tabular-nums">
+                                              {monsterSkillLabels.join(', ')}
+                                            </span>
+                                          </div>
+                                        )}
+                                        {linkedMonster.resistances && (
+                                          <div>
+                                            <span className="text-slate-500">Сопротивления: </span>
+                                            <span>{linkedMonster.resistances}</span>
+                                          </div>
+                                        )}
+                                        {linkedMonster.immunities && (
+                                          <div>
+                                            <span className="text-slate-500">Иммунитеты: </span>
+                                            <span>{linkedMonster.immunities}</span>
+                                          </div>
+                                        )}
+                                        {monsterVisionLabels.length > 0 && (
+                                          <div>
+                                            <span className="text-slate-500">Зрение: </span>
+                                            <span className="text-sky-300 font-medium">
+                                              {monsterVisionLabels.join(', ')}
+                                            </span>
+                                          </div>
+                                        )}
+                                        {linkedMonster.senses && (
+                                          <div>
+                                            <span className="text-slate-500">Чувства: </span>
+                                            <span>{linkedMonster.senses}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                    {monsterTraits.length > 0 && (
+                                      <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                                        <div className="text-[10px] font-semibold text-slate-500">
+                                          Особенности
+                                        </div>
+                                        {monsterTraits.map((trt) => (
+                                          <div key={trt.id} className="text-slate-300 leading-snug">
+                                            <span className="font-semibold text-sky-300">
+                                              {trt.name}.{' '}
+                                            </span>
+                                            <span>{trt.description}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {linkedMonster.actions.length > 0 && (
+                                      <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                                        <div className="text-[10px] font-semibold text-slate-500">
+                                          Действия
+                                        </div>
+                                        {linkedMonster.actions.map((act) => {
+                                          const reachStr = formatWeaponReachRange(act.attackType, act);
+                                          return (
+                                            <div key={act.id} className="text-slate-300 leading-snug">
+                                              <span className="font-semibold text-amber-300">
+                                                {act.name}.{' '}
+                                              </span>
+                                              {reachStr && (
+                                                <span className="inline-block mr-1 px-1 rounded bg-rose-500/15 border border-rose-500/30 text-[10px] font-mono text-rose-300">
+                                                  {reachStr}
+                                                </span>
+                                              )}
+                                              <span>{act.description}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
 
@@ -3910,6 +4210,319 @@ export function DmView({ onNavigate }: DmViewProps) {
           onMinimize={() => setActiveCreationRequestId(null)}
         />
       )}
+
+      {/* BLOCKING INITIATIVE ROLL MODAL (Interrupts DM & TV when entering combat on a tactical map) */}
+      {dmState.scene.initiativeSession?.active && (() => {
+        const session = dmState.scene.initiativeSession;
+        const entries = session.entries;
+        const filledCount = entries.filter((e) => e.total !== null).length;
+        const allFilled = entries.length > 0 && filledCount === entries.length;
+        const hasMonsters = entries.some((e) => e.kind !== 'player');
+        const totalCounts = new Map<number, number>();
+        for (const e of entries) {
+          if (e.total !== null) {
+            totalCounts.set(e.total, (totalCounts.get(e.total) ?? 0) + 1);
+          }
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-[#131A26] border border-amber-500/50 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="px-5 py-4 border-b border-slate-800 bg-[#0D1320] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center shrink-0">
+                    <Dices className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-base font-bold text-slate-100">
+                      Бросок инициативы — Начало боя
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Введите результат 1к20 (бонус прибавится сам) или итоговое число · Экран ТВ обновляется сразу
+                    </p>
+                  </div>
+                </div>
+                <span className="font-mono tabular-nums text-xs font-semibold px-2.5 py-1 rounded-lg bg-[#0B0F17] border border-slate-700 text-amber-300 shrink-0">
+                  {filledCount} / {entries.length}
+                </span>
+              </div>
+
+              {hasMonsters && (
+                <div className="px-5 py-2.5 border-b border-slate-800/80 bg-[#0B0F17]/70 flex items-center justify-between gap-3">
+                  <span className="text-xs text-slate-400">
+                    Бросить 1к20 + мод. ЛОВ автоматически за всех монстров и НИП:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => send({ type: 'dm:autoRollMonstersInitiative' })}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-500/45 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Dices className="w-3.5 h-3.5" />
+                    <span>Бросить за монстров</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="p-4 sm:p-5 overflow-y-auto space-y-2">
+                {entries.map((entry) => {
+                  const isTied = entry.total !== null && (totalCounts.get(entry.total) ?? 0) > 1;
+                  const tokObj = dmState.tokens.find((t) => t.id === entry.tokenId);
+                  const plObj = entry.playerId
+                    ? dmState.players.find((p) => p.id === entry.playerId)
+                    : null;
+                  const entryCondEffects = getActiveConditionEffects(
+                    plObj ? plObj.conditions : tokObj?.conditions ?? [],
+                    plObj?.exhaustionLevel ?? 0
+                  );
+
+                  return (
+                    <div
+                      key={entry.tokenId}
+                      className={`p-3 rounded-xl border flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 transition-colors ${
+                        isTied
+                          ? 'bg-amber-950/20 border-amber-500/50'
+                          : entry.total !== null
+                            ? 'bg-[#0B0F17] border-emerald-500/30'
+                            : 'bg-[#0B0F17] border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: entry.color }}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-100 flex items-center gap-1.5 flex-wrap">
+                            <span className="truncate">{entry.label}</span>
+                            <span className="text-[10px] font-normal text-slate-400">
+                              {entry.kind === 'player'
+                                ? 'Герой'
+                                : entry.kind === 'enemy'
+                                  ? 'Монстр'
+                                  : 'НИП'}
+                            </span>
+                            {isTied && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/60 text-[10px] font-mono text-amber-300">
+                                Ничья
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                            Бонус: {entry.bonusBreakdown}
+                            {entryCondEffects.initiativeAdvantage && (
+                              <span className="ml-1.5 text-emerald-300 font-sans">
+                                · Преимущество (Невидимый)
+                              </span>
+                            )}
+                            {entryCondEffects.initiativeDisadvantage && (
+                              <span className="ml-1.5 text-rose-300 font-sans">
+                                · Помеха (Недееспособный)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const roll = Math.floor(Math.random() * 20) + 1;
+                            send({
+                              type: 'dm:setInitiativeEntry',
+                              tokenId: entry.tokenId,
+                              roll,
+                              total: roll + entry.initiativeBonus,
+                            });
+                          }}
+                          className="px-2 py-1.5 rounded-lg bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-xs text-amber-300 flex items-center gap-1 transition-colors"
+                          title="Бросить 1к20"
+                        >
+                          <Dices className="w-3.5 h-3.5" />
+                          <span className="font-mono text-[11px]">1к20</span>
+                        </button>
+
+                        <label className="flex flex-col items-center">
+                          <span className="text-[9px] text-slate-500 mb-0.5">Кубик</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            placeholder="1-20"
+                            value={entry.roll ?? ''}
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              if (raw === '') {
+                                send({
+                                  type: 'dm:setInitiativeEntry',
+                                  tokenId: entry.tokenId,
+                                  roll: null,
+                                  total: null,
+                                });
+                                return;
+                              }
+                              const roll = Number(raw);
+                              if (!Number.isFinite(roll)) return;
+                              send({
+                                type: 'dm:setInitiativeEntry',
+                                tokenId: entry.tokenId,
+                                roll,
+                                total: roll + entry.initiativeBonus,
+                              });
+                            }}
+                            className="w-14 px-2 py-1 rounded-lg bg-[#131A26] border border-slate-700 font-mono tabular-nums text-xs text-slate-200 text-center"
+                          />
+                        </label>
+
+                        <span className="text-slate-500 font-mono text-xs pt-3">=</span>
+
+                        <label className="flex flex-col items-center">
+                          <span className="text-[9px] text-amber-400 mb-0.5">Итог</span>
+                          <input
+                            type="number"
+                            placeholder="—"
+                            value={entry.total ?? ''}
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              if (raw === '') {
+                                send({
+                                  type: 'dm:setInitiativeEntry',
+                                  tokenId: entry.tokenId,
+                                  roll: null,
+                                  total: null,
+                                });
+                                return;
+                              }
+                              const total = Number(raw);
+                              if (!Number.isFinite(total)) return;
+                              send({
+                                type: 'dm:setInitiativeEntry',
+                                tokenId: entry.tokenId,
+                                roll: null,
+                                total,
+                              });
+                            }}
+                            className="w-16 px-2 py-1 rounded-lg bg-[#131A26] border border-amber-500/50 font-mono tabular-nums text-sm font-bold text-amber-300 text-center"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="px-5 py-3.5 border-t border-slate-800 bg-[#0D1320] flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => send({ type: 'dm:cancelInitiativeRoll' })}
+                  className="px-3.5 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-xs text-slate-300 transition-colors"
+                >
+                  Пропустить
+                </button>
+                <button
+                  type="button"
+                  disabled={!allFilled}
+                  onClick={() => send({ type: 'dm:completeInitiativeRoll' })}
+                  className="px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 text-xs font-bold flex items-center gap-2 transition-colors"
+                >
+                  <Swords className="w-4 h-4" />
+                  <span>
+                    {allFilled
+                      ? 'Начать бой'
+                      : `Заполните все поля (${filledCount}/${entries.length})`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* MONSTER 0-HP CHOICE MODAL (Strictly for Monsters kind === 'enemy', NEVER for Heroes) */}
+      {(() => {
+        const pendingMonster = dmState.tokens.find(
+          (t) => t.kind === 'enemy' && t.pendingZeroHpChoice
+        );
+        if (!pendingMonster) return null;
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-2xl bg-[#131A26] border border-rose-500/50 shadow-2xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-800 bg-[#0D1320] flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-rose-500/70 bg-[#0B0F17] flex items-center justify-center shrink-0">
+                  {pendingMonster.portraitUrl ? (
+                    <img
+                      src={pendingMonster.portraitUrl}
+                      alt={pendingMonster.label}
+                      className="w-full h-full object-cover object-top"
+                    />
+                  ) : (
+                    <Skull className="w-5 h-5 text-rose-400" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">
+                    0 хитов у монстра
+                  </div>
+                  <h3 className="text-base font-bold text-slate-100 truncate">
+                    {pendingMonster.label}
+                  </h3>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-3">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Хиты этого монстра опустились до 0. Выберите его судьбу — отображение на ТВ и тактической карте обновится сразу:
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    send({
+                      type: 'dm:resolveMonsterZeroHp',
+                      tokenId: pendingMonster.id,
+                      outcome: 'dead',
+                    })
+                  }
+                  className="w-full p-3.5 rounded-xl bg-red-950/35 hover:bg-red-950/55 border border-red-500/50 text-left flex items-start gap-3 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-red-500/15 border border-red-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                    <Skull className="w-5 h-5 text-red-400" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-red-200">Монстр умер</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                      Портрет заменится на иконку черепа, карточка станет серой, а ход будет автоматически пропускаться.
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    send({
+                      type: 'dm:resolveMonsterZeroHp',
+                      tokenId: pendingMonster.id,
+                      outcome: 'unconscious',
+                    })
+                  }
+                  className="w-full p-3.5 rounded-xl bg-amber-950/25 hover:bg-amber-950/45 border border-amber-500/50 text-left flex items-start gap-3 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-amber-500/15 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                    <Sparkles className="w-5 h-5 text-amber-300" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-amber-200">Монстр без сознания</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                      Получит статус «Бессознательный» и вращающиеся звёздочки над головой. Не пропускается в очереди ходов.
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
