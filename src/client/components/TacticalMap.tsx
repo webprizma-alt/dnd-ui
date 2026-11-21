@@ -30,6 +30,11 @@ export interface DmTacticalOverlay {
   attackIncludesSelf?: boolean;
 }
 
+export interface TimeOfDayTint {
+  overlayCss: string;
+  filterCss?: string;
+}
+
 interface TacticalMapProps {
   map: MapConfig;
   tokens: MapToken[];
@@ -41,6 +46,7 @@ interface TacticalMapProps {
   selectedTokenId?: string | null;
   selectedHotspotId?: string | null;
   dmOverlay?: DmTacticalOverlay | null;
+  timeOfDayTint?: TimeOfDayTint | null;
   onSelectToken?: (tokenId: string) => void;
   onMoveToken?: (tokenId: string, x: number, y: number) => void;
   onHotspotClick?: (hotspot: LocationHotspot) => void;
@@ -114,6 +120,7 @@ export function TacticalMap({
   selectedTokenId,
   selectedHotspotId,
   dmOverlay = null,
+  timeOfDayTint = null,
   onSelectToken,
   onMoveToken,
   onHotspotClick,
@@ -365,7 +372,12 @@ export function TacticalMap({
             }}
             onError={() => setImgFailed(true)}
             draggable={false}
-            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none transition-[filter] duration-1000"
+            style={
+              timeOfDayTint?.filterCss && timeOfDayTint.filterCss !== 'none'
+                ? { filter: timeOfDayTint.filterCss }
+                : undefined
+            }
           />
         ) : (
           <div
@@ -388,6 +400,15 @@ export function TacticalMap({
 
         {/* Subtle Dark Contrast Vignette */}
         <div className="absolute inset-0 bg-slate-950/15 pointer-events-none" />
+
+        {/* Dynamic Day/Night Atmospheric Tint Overlay (always beneath grid, hotspots & tokens) */}
+        {timeOfDayTint && timeOfDayTint.overlayCss !== 'transparent' && (
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 pointer-events-none transition-colors duration-1000 z-[2]"
+            style={{ backgroundColor: timeOfDayTint.overlayCss }}
+          />
+        )}
 
         {/* DM-Only Tactical Vision & Attack Reach/Range Overlay */}
         {isTactical && dmOverlay && (() => {

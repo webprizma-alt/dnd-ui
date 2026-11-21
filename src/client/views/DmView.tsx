@@ -9,6 +9,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Compass,
   Crosshair,
   Dices,
@@ -16,6 +17,7 @@ import {
   EyeOff,
   GitBranch,
   Grid3X3,
+  HeartPulse,
   ImagePlus,
   Layers,
   Lock,
@@ -23,50 +25,67 @@ import {
   MapPin,
   Minus,
   Moon,
+  Music,
+  Pause,
   Play,
   Plus,
   RotateCcw,
+  Scale,
   Send,
   Shield,
   Skull,
   SlidersHorizontal,
   Sparkles,
   Sun,
+  Sunrise,
   Sunset,
   Swords,
   Trash2,
   UserPlus,
   Users,
+  Volume2,
+  VolumeX,
   X,
   Zap,
 } from 'lucide-react';
 import {
   computeEffectiveVisionRanges,
+  computeEquippedHandsUsage,
   computeHeroActions,
+  computeHeroEncumbrance,
   computeHeroSkillTotal,
   computePlayerAcDetails,
   computePlayerEffectiveSpeed,
   computePlayerInitiativeDetails,
   formatEntityVisions,
+  formatGameClock,
   formatModifier,
+  formatWeaponPropertiesSummary,
   formatWeaponReachRange,
+  formatWeightLb,
   getAbilityModifier,
   getActiveConditionEffects,
+  getAmmoCapacityForPlayer,
   getArmorCategoryLabel,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
   getClassHitDieInfo,
   getClassProficiencyBonus,
   getClassResourcesAtLevel,
+  getGearKindLabel,
   getHeroAllowedSkillIds,
   getHeroClassFeatures,
   getHeroFeats,
   getHeroLevelUpChecklist,
   getHeroSubclassFeatures,
+  getInventoryItemUnitWeightLb,
   getMapLightingDescription,
   getNextLevelThreshold,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
+  getWeaponRequiredHands,
+  resolveEffectiveMapLighting,
+  resolveGearCatalogItem,
   resolveMonsterActionRange,
   resolveWeaponReachRange,
 } from '../../shared/catalogDefaults';
@@ -97,14 +116,17 @@ type PlayerSubTab = 'combat' | 'checks' | 'gear' | 'profile';
 const PRESET_COLORS = ['#F59E0B', '#10B981', '#38BDF8', '#A855F7', '#EC4899', '#EF4444'];
 
 export function DmView({ onNavigate }: DmViewProps) {
-  const { status, dmState, send } = useGameSocket({ role: 'dm' });
+  const { status, dmState, errorNotice, clearError, send } = useGameSocket({ role: 'dm' });
   const [activeTab, setActiveTab] = useState<DmTab>('players');
   const [playerSubTab, setPlayerSubTab] = useState<PlayerSubTab>('combat');
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>('');
+  const [expandedDmActionPropKey, setExpandedDmActionPropKey] = useState<string | null>(null);
   const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
   const [activeCreationRequestId, setActiveCreationRequestId] = useState<string | null>(null);
   const [uploadingMap, setUploadingMap] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadingSplashAudio, setUploadingSplashAudio] = useState(false);
+  const [splashAudioError, setSplashAudioError] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
   // Add Player Form
@@ -121,11 +143,16 @@ export function DmView({ onNavigate }: DmViewProps) {
   const [itemName, setItemName] = useState('');
   const [itemCategory, setItemCategory] = useState<ItemCategory>('gear');
   const [itemQty, setItemQty] = useState(1);
+  const [itemWeight, setItemWeight] = useState('');
   const [itemDesc, setItemDesc] = useState('');
   const [itemCatalogId, setItemCatalogId] = useState('');
   const [itemWeaponCat, setItemWeaponCat] = useState<WeaponCategory>('simple');
   const [itemWeaponRange, setItemWeaponRange] = useState<WeaponRangeType>('melee');
   const [itemArmorCat, setItemArmorCat] = useState<ArmorCategory>('light');
+
+  // In-game Clock UI State
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
+  const [clockPopoverOpen, setClockPopoverOpen] = useState(false);
 
   // Local Drafts for Name, Private Note, Location Note, Senses, Campaign Title & Hotspots
   const [nameDraft, setNameDraft] = useState('');
@@ -163,6 +190,7 @@ export function DmView({ onNavigate }: DmViewProps) {
   const [expandedMonsterTokenId, setExpandedMonsterTokenId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const splashAudioInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!dmState) return;
@@ -208,6 +236,17 @@ export function DmView({ onNavigate }: DmViewProps) {
   useEffect(() => {
     setActiveHotspotPopover(null);
   }, [dmState?.activeLocationId]);
+
+  useEffect(() => {
+    if (!errorNotice) return;
+    const timer = window.setTimeout(() => clearError(), 6500);
+    return () => window.clearTimeout(timer);
+  }, [errorNotice, clearError]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setClockNowMs(Date.now()), 2000);
+    return () => window.clearInterval(id);
+  }, []);
 
   if (!dmState) {
     return (
@@ -260,6 +299,44 @@ export function DmView({ onNavigate }: DmViewProps) {
     } finally {
       setUploadingMap(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleUploadSplashAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSplashAudioError(null);
+
+    if (!file.name.toLowerCase().endsWith('.mp3') && file.type && !file.type.includes('mpeg') && !file.type.includes('mp3')) {
+      setSplashAudioError('Поддерживаются только аудиофайлы в формате MP3');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setSplashAudioError('Файл слишком большой (максимум 25 МБ)');
+      e.target.value = '';
+      return;
+    }
+
+    setUploadingSplashAudio(true);
+    try {
+      const res = await fetch(
+        `/api/audio/upload?target=splash&filename=${encodeURIComponent(file.name)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'audio/mpeg' },
+          body: file,
+        }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || 'Ошибка загрузки MP3');
+      }
+    } catch (err) {
+      setSplashAudioError(err instanceof Error ? err.message : 'Ошибка загрузки MP3');
+    } finally {
+      setUploadingSplashAudio(false);
+      if (splashAudioInputRef.current) splashAudioInputRef.current.value = '';
     }
   };
 
@@ -325,6 +402,10 @@ export function DmView({ onNavigate }: DmViewProps) {
       itemCategory === 'armor' && itemCatalogId
         ? catalogs.armors.find((a) => a.id === itemCatalogId)
         : undefined;
+    const selectedGear =
+      itemCategory === 'gear' && itemCatalogId
+        ? catalogs.gearItems.find((g) => g.id === itemCatalogId)
+        : undefined;
 
     send({
       type: 'dm:addInventoryItem',
@@ -335,7 +416,7 @@ export function DmView({ onNavigate }: DmViewProps) {
         quantity: Math.max(1, itemQty),
         description: itemDesc.trim(),
         equipped: false,
-        catalogItemId: selectedWeapon?.id ?? selectedArmor?.id,
+        catalogItemId: selectedWeapon?.id ?? selectedArmor?.id ?? selectedGear?.id,
         weaponCategory:
           itemCategory === 'weapon' ? (selectedWeapon?.category ?? itemWeaponCat) : undefined,
         weaponRangeType:
@@ -343,10 +424,18 @@ export function DmView({ onNavigate }: DmViewProps) {
         reachFt: itemCategory === 'weapon' ? selectedWeapon?.reachFt : undefined,
         rangeNormalFt: itemCategory === 'weapon' ? selectedWeapon?.rangeNormalFt : undefined,
         rangeMaxFt: itemCategory === 'weapon' ? selectedWeapon?.rangeMaxFt : undefined,
+        versatileDamage: itemCategory === 'weapon' ? selectedWeapon?.versatileDamage : undefined,
+        thrownNormalFt: itemCategory === 'weapon' ? selectedWeapon?.thrownNormalFt : undefined,
+        thrownMaxFt: itemCategory === 'weapon' ? selectedWeapon?.thrownMaxFt : undefined,
+        propertyIds: itemCategory === 'weapon' ? selectedWeapon?.propertyIds : undefined,
+        masteryId: itemCategory === 'weapon' ? selectedWeapon?.masteryId : undefined,
+        ammoItemId: itemCategory === 'weapon' ? selectedWeapon?.ammoItemId : undefined,
         armorCategory:
           itemCategory === 'armor' ? (selectedArmor?.category ?? itemArmorCat) : undefined,
         damage: selectedWeapon?.damage,
-        properties: selectedWeapon?.properties,
+        properties: selectedWeapon
+          ? formatWeaponPropertiesSummary(selectedWeapon, catalogs)
+          : undefined,
         mastery: selectedWeapon?.mastery,
         armorClass: selectedArmor?.armorClass,
         acBase: selectedArmor?.acBase,
@@ -354,12 +443,19 @@ export function DmView({ onNavigate }: DmViewProps) {
         acMaxBonus: selectedArmor?.acMaxBonus,
         strengthReq: selectedArmor?.strengthReq,
         stealth: selectedArmor?.stealth,
-        weight: selectedWeapon?.weight ?? selectedArmor?.weight,
-        price: selectedWeapon?.price ?? selectedArmor?.price,
+        gearKind: selectedGear?.kind,
+        packQuantity: selectedGear?.packQuantity,
+        weight:
+          itemWeight.trim() ||
+          selectedWeapon?.weight ||
+          selectedArmor?.weight ||
+          selectedGear?.weight,
+        price: selectedWeapon?.price ?? selectedArmor?.price ?? selectedGear?.price,
       },
     });
     setItemName('');
     setItemQty(1);
+    setItemWeight('');
     setItemDesc('');
     setItemCatalogId('');
   };
@@ -582,7 +678,292 @@ export function DmView({ onNavigate }: DmViewProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {/* In-Game Clock Widget & Controls Popover */}
+          {(() => {
+            const formattedClock = formatGameClock(dmState.gameClock, clockNowMs);
+            const ClockIcon =
+              formattedClock.phaseIcon === 'moon'
+                ? Moon
+                : formattedClock.phaseIcon === 'sunrise'
+                  ? Sunrise
+                  : formattedClock.phaseIcon === 'sunset'
+                    ? Sunset
+                    : Sun;
+            const currentScale = dmState.gameClock?.timeScale ?? 6;
+            return (
+              <div className="relative flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setClockPopoverOpen((prev) => !prev)}
+                  title="Настройки игрового времени и смены дня и ночи"
+                  className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                    clockPopoverOpen
+                      ? 'bg-amber-500/15 border-amber-500/60 text-amber-200'
+                      : 'bg-[#131A26] hover:bg-slate-800 border-slate-700 text-slate-200'
+                  }`}
+                >
+                  <ClockIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="font-mono tabular-nums font-bold">{formattedClock.timeText}</span>
+                  <span className="hidden xl:inline text-[11px] text-slate-400">
+                    · {formattedClock.dayText} · {formattedClock.phaseLabel}
+                  </span>
+                  {formattedClock.paused && (
+                    <span className="px-1 py-0.5 rounded bg-amber-500/20 text-[9px] font-semibold text-amber-300">
+                      Пауза
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    send({
+                      type: 'dm:updateGameClock',
+                      paused: !formattedClock.paused,
+                    })
+                  }
+                  title={formattedClock.paused ? 'Возобновить ход времени' : 'Поставить время на паузу'}
+                  className={`p-2 rounded-lg border transition-colors ${
+                    formattedClock.paused
+                      ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 hover:bg-amber-500/30'
+                      : 'bg-[#131A26] border-slate-700 text-slate-300 hover:text-slate-100 hover:bg-slate-800'
+                  }`}
+                >
+                  {formattedClock.paused ? (
+                    <Play className="w-3.5 h-3.5" />
+                  ) : (
+                    <Pause className="w-3.5 h-3.5" />
+                  )}
+                </button>
+
+                {clockPopoverOpen && (
+                  <div className="absolute right-0 top-full mt-2 z-50 w-80 rounded-2xl bg-[#131A26] border border-slate-700 shadow-2xl p-4 space-y-3.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-400" />
+                        <span className="font-semibold text-slate-100">Игровое время</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setClockPopoverOpen(false)}
+                        className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                        aria-label="Закрыть"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <ClockIcon className="w-6 h-6 text-amber-400 shrink-0" />
+                        <div>
+                          <div className="text-lg font-mono tabular-nums font-bold text-slate-100 leading-tight">
+                            {formattedClock.timeText}
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {formattedClock.dayText} · {formattedClock.phaseLabel}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          send({ type: 'dm:updateGameClock', paused: !formattedClock.paused })
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-colors ${
+                          formattedClock.paused
+                            ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                            : 'bg-amber-500/20 border border-amber-500/50 text-amber-200 hover:bg-amber-500/30'
+                        }`}
+                      >
+                        {formattedClock.paused ? (
+                          <>
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Идёт</span>
+                          </>
+                        ) : (
+                          <>
+                            <Pause className="w-3.5 h-3.5" />
+                            <span>Пауза</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Quick Time Advance */}
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] text-slate-400">Перемотать вперёд</div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { label: '+15м', mins: 15 },
+                          { label: '+1ч', mins: 60 },
+                          { label: '+4ч', mins: 240 },
+                          { label: '+8ч', mins: 480 },
+                        ].map((step) => (
+                          <button
+                            key={step.mins}
+                            type="button"
+                            onClick={() =>
+                              send({ type: 'dm:updateGameClock', addMinutes: step.mins })
+                            }
+                            className="py-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-slate-800 font-mono text-[11px] text-slate-200 transition-colors"
+                          >
+                            {step.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Time-of-Day Presets */}
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] text-slate-400">Выставить время суток</div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[
+                          { label: 'Рассвет 05:30', min: 5 * 60 + 30 },
+                          { label: 'Утро 09:00', min: 9 * 60 },
+                          { label: 'Полдень 12:00', min: 12 * 60 },
+                          { label: 'Вечер 18:00', min: 18 * 60 },
+                          { label: 'Закат 19:00', min: 19 * 60 },
+                          { label: 'Ночь 22:00', min: 22 * 60 },
+                        ].map((preset) => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() =>
+                              send({ type: 'dm:updateGameClock', setMinuteOfDay: preset.min })
+                            }
+                            className="px-2 py-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-slate-800 text-[11px] text-slate-200 transition-colors"
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Exact Time & Day Picker */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                      <label className="space-y-1">
+                        <span className="text-[10px] text-slate-400">Точное время</span>
+                        <input
+                          type="time"
+                          value={formattedClock.timeText}
+                          onChange={(e) => {
+                            const [hh, mm] = e.target.value.split(':').map(Number);
+                            if (Number.isFinite(hh) && Number.isFinite(mm)) {
+                              send({
+                                type: 'dm:updateGameClock',
+                                setMinuteOfDay: hh * 60 + mm,
+                              });
+                            }
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-700 font-mono text-xs text-slate-100"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[10px] text-slate-400">День кампании</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={formattedClock.day}
+                          onChange={(e) =>
+                            send({
+                              type: 'dm:updateGameClock',
+                              setDay: Math.max(1, Number(e.target.value) || 1),
+                            })
+                          }
+                          className="w-full px-2 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-700 font-mono text-xs text-slate-100"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Time Scale Selector */}
+                    <div className="space-y-1.5 pt-1 border-t border-slate-800">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Скорость хода времени</span>
+                        <span className="font-mono text-amber-300">×{currentScale}</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[
+                          { label: '4ч/сут', scale: 6, title: '24 игровых часа = 4 реальных часа (по умолч.)' },
+                          { label: '2ч/сут', scale: 12, title: '24 игровых часа = 2 реальных часа' },
+                          { label: '1ч/сут', scale: 24, title: '24 игровых часа = 1 реальный час' },
+                          { label: '1:1', scale: 1, title: 'Реальное время' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.scale}
+                            type="button"
+                            title={opt.title}
+                            onClick={() =>
+                              send({ type: 'dm:updateGameClock', timeScale: opt.scale })
+                            }
+                            className={`py-1 rounded border text-[10px] font-mono transition-colors ${
+                              Math.abs(currentScale - opt.scale) < 0.01
+                                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 font-semibold'
+                                : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {(() => {
+            const isAudioMuted = Boolean(dmState.tvDisplay.audioMuted);
+            const activeTrackUrl =
+              dmState.tvDisplay.phase === 'title_splash'
+                ? dmState.tvDisplay.splashAudioUrl
+                : activeLocation?.ambientAudioUrl;
+            const activeTrackName =
+              dmState.tvDisplay.phase === 'title_splash'
+                ? dmState.tvDisplay.splashAudioName
+                : activeLocation?.ambientAudioName;
+            const hasTrack = Boolean(activeTrackUrl);
+            return (
+              <button
+                type="button"
+                onClick={() => send({ type: 'dm:setAudioMuted', muted: !isAudioMuted })}
+                title={
+                  isAudioMuted
+                    ? 'Звук на ТВ отключён — нажмите, чтобы включить'
+                    : hasTrack
+                      ? `Звук на ТВ включён (${activeTrackName || 'MP3'}) — нажмите, чтобы выключить`
+                      : 'Звук на ТВ включён (для текущей сцены аудио не загружено) — нажмите, чтобы заглушить'
+                }
+                aria-pressed={isAudioMuted}
+                className={`px-3 py-2 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                  isAudioMuted
+                    ? 'bg-rose-500/20 border-rose-500/60 text-rose-200 hover:bg-rose-500/30'
+                    : hasTrack
+                      ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200 hover:bg-emerald-500/25'
+                      : 'bg-[#131A26] hover:bg-slate-800 border-slate-700 text-slate-200'
+                }`}
+              >
+                {isAudioMuted ? (
+                  <VolumeX className="w-4 h-4 text-rose-400 shrink-0" />
+                ) : (
+                  <Volume2
+                    className={`w-4 h-4 shrink-0 ${hasTrack ? 'text-emerald-400' : 'text-slate-400'}`}
+                  />
+                )}
+                <span className="hidden sm:inline">{isAudioMuted ? 'Звук выкл' : 'Звук ТВ'}</span>
+              </button>
+            );
+          })()}
+
+          <input
+            ref={splashAudioInputRef}
+            type="file"
+            accept=".mp3,audio/mpeg"
+            onChange={handleUploadSplashAudio}
+            className="hidden"
+          />
+
           <input
             ref={fileInputRef}
             type="file"
@@ -632,6 +1013,28 @@ export function DmView({ onNavigate }: DmViewProps) {
           </a>
         </div>
       </header>
+
+      {/* DM Validation / Action Blocked Notification Toast */}
+      {errorNotice && (
+        <div
+          role="alert"
+          className="fixed top-16 right-4 z-50 w-[calc(100%-2rem)] max-w-md rounded-2xl bg-red-950/95 border border-red-500/70 px-4 py-3 shadow-2xl flex items-start gap-3"
+        >
+          <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="text-xs font-semibold text-red-200">Ограничение правил</div>
+            <p className="text-xs text-red-100 leading-relaxed">{errorNotice.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={clearError}
+            className="p-1 rounded-lg text-red-300 hover:text-white hover:bg-red-900/60 shrink-0"
+            aria-label="Закрыть уведомление"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Main Split Workspace */}
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
@@ -707,14 +1110,61 @@ export function DmView({ onNavigate }: DmViewProps) {
                   )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => send({ type: 'dm:startGame' })}
-                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 shadow-md"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Начать игру</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0B0F17]/80 border border-amber-500/35 text-[11px] text-slate-200">
+                  <Music
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      dmState.tvDisplay.splashAudioUrl ? 'text-emerald-400' : 'text-slate-500'
+                    }`}
+                  />
+                  {dmState.tvDisplay.splashAudioUrl ? (
+                    <>
+                      <span
+                        className="max-w-[140px] truncate text-emerald-200"
+                        title={dmState.tvDisplay.splashAudioName || 'Аудио заставки'}
+                      >
+                        {dmState.tvDisplay.splashAudioName || 'Заставка.mp3'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => splashAudioInputRef.current?.click()}
+                        disabled={uploadingSplashAudio}
+                        className="text-amber-300 hover:text-amber-200 underline underline-offset-2 ml-1"
+                      >
+                        {uploadingSplashAudio ? '...' : 'заменить'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => send({ type: 'dm:clearSplashAudio' })}
+                        title="Удалить аудио заставки"
+                        className="p-0.5 rounded hover:bg-rose-500/20 text-slate-400 hover:text-rose-300"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => splashAudioInputRef.current?.click()}
+                      disabled={uploadingSplashAudio}
+                      className="text-amber-200 hover:text-amber-100 font-medium"
+                    >
+                      {uploadingSplashAudio ? 'Загрузка MP3...' : '+ MP3 заставки'}
+                    </button>
+                  )}
+                </div>
+                {splashAudioError && (
+                  <span className="text-[11px] text-rose-300">{splashAudioError}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => send({ type: 'dm:startGame' })}
+                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 shadow-md"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Начать игру</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -836,38 +1286,90 @@ export function DmView({ onNavigate }: DmViewProps) {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Per-location Day/Night Cycle Toggle */}
+              {activeLocation && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    send({
+                      type: 'dm:upsertLocation',
+                      location: {
+                        id: activeLocation.id,
+                        name: activeLocation.name,
+                        kind: activeLocation.kind,
+                        affectedByTimeOfDay: !activeLocation.affectedByTimeOfDay,
+                      },
+                    })
+                  }
+                  title="Привязать освещение и оттенок карты к игровому времени суток (день/ночь)"
+                  className={`px-2.5 py-1 rounded border text-[11px] font-medium flex items-center gap-1.5 transition-colors ${
+                    activeLocation.affectedByTimeOfDay
+                      ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
+                      : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>{activeLocation.affectedByTimeOfDay ? 'День/Ночь: Авто' : 'День/Ночь: Выкл'}</span>
+                </button>
+              )}
+
               {/* Map Lighting Selector (all map types) */}
-              <div className="inline-flex items-center rounded border border-slate-800 bg-[#131A26] p-0.5">
-                {(
-                  [
-                    { id: 'bright', label: 'Яркий', Icon: Sun, activeClass: 'bg-amber-500/20 text-amber-300' },
-                    { id: 'dim', label: 'Полумрак', Icon: Sunset, activeClass: 'bg-sky-500/20 text-sky-300' },
-                    { id: 'darkness', label: 'Темнота', Icon: Moon, activeClass: 'bg-indigo-500/30 text-indigo-200' },
-                  ] as Array<{ id: MapLighting; label: string; Icon: React.ComponentType<{ className?: string }>; activeClass: string }>
-                ).map(({ id, label, Icon, activeClass }) => {
-                  const isActive = (dmState.map.lighting ?? 'bright') === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      title={getMapLightingDescription(id)}
-                      onClick={() =>
-                        send({
-                          type: 'dm:updateMap',
-                          locationId: dmState.activeLocationId,
-                          patch: { lighting: id },
-                        })
-                      }
-                      className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
-                        isActive ? activeClass : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              {(() => {
+                const effLighting = resolveEffectiveMapLighting(
+                  dmState.map.lighting,
+                  activeLocation?.affectedByTimeOfDay,
+                  dmState.gameClock,
+                  clockNowMs
+                );
+                return (
+                  <div className="inline-flex items-center rounded border border-slate-800 bg-[#131A26] p-0.5">
+                    {(
+                      [
+                        { id: 'bright', label: 'Яркий', Icon: Sun, activeClass: 'bg-amber-500/20 text-amber-300' },
+                        { id: 'dim', label: 'Полумрак', Icon: Sunset, activeClass: 'bg-sky-500/20 text-sky-300' },
+                        { id: 'darkness', label: 'Темнота', Icon: Moon, activeClass: 'bg-indigo-500/30 text-indigo-200' },
+                      ] as Array<{ id: MapLighting; label: string; Icon: React.ComponentType<{ className?: string }>; activeClass: string }>
+                    ).map(({ id, label, Icon, activeClass }) => {
+                      const isActive = effLighting === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          title={
+                            activeLocation?.affectedByTimeOfDay
+                              ? `Сейчас задаётся игровым временем (${getMapLightingDescription(id)}). Отключите «День/Ночь: Авто» для ручного выбора.`
+                              : getMapLightingDescription(id)
+                          }
+                          onClick={() => {
+                            if (activeLocation?.affectedByTimeOfDay) {
+                              send({
+                                type: 'dm:upsertLocation',
+                                location: {
+                                  id: activeLocation.id,
+                                  name: activeLocation.name,
+                                  kind: activeLocation.kind,
+                                  affectedByTimeOfDay: false,
+                                },
+                              });
+                            }
+                            send({
+                              type: 'dm:updateMap',
+                              locationId: dmState.activeLocationId,
+                              patch: { lighting: id },
+                            });
+                          }}
+                          className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+                            isActive ? activeClass : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <Icon className="w-3 h-3" />
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* DM-only Tactical Vision & Reach Overlay Toggle */}
               {activeLocation?.kind === 'tactical' && (
@@ -1023,11 +1525,23 @@ export function DmView({ onNavigate }: DmViewProps) {
               ? turnPlayer.conditions
               : turnToken?.conditions ?? [];
 
+            const formattedClockForMap = formatGameClock(dmState.gameClock, clockNowMs);
+            const effectiveMapLighting = resolveEffectiveMapLighting(
+              dmState.map.lighting,
+              activeLocation?.affectedByTimeOfDay,
+              dmState.gameClock,
+              clockNowMs
+            );
+            const turnPlayerEncumbrance = turnPlayer
+              ? computeHeroEncumbrance(turnPlayer, catalogs)
+              : null;
+            const turnPlayerDeathSaves = turnPlayer?.deathSaves ?? null;
+
             const effectiveVision = turnToken
               ? computeEffectiveVisionRanges(
                   visionEntries,
                   catalogs.visions,
-                  dmState.map.lighting ?? 'bright',
+                  effectiveMapLighting,
                   activeTurnConditions
                 )
               : null;
@@ -1063,6 +1577,20 @@ export function DmView({ onNavigate }: DmViewProps) {
                             <Eye className="w-3 h-3 shrink-0" />
                             <span>{effectiveVision.summary}</span>
                           </span>
+                          {turnPlayerEncumbrance && turnPlayerEncumbrance.hasStrDexConDisadvantage && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 border border-rose-400/70 text-rose-200 font-semibold">
+                              <AlertTriangle className="w-3 h-3 text-rose-300 shrink-0" />
+                              <span>
+                                ПОМЕХА (СИЛ/ЛОВ/ТЕЛ) · {turnPlayerEncumbrance.conditionName}
+                              </span>
+                            </span>
+                          )}
+                          {turnPlayerEncumbrance && turnPlayerEncumbrance.tier === 'light' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/50 text-amber-200">
+                              <Scale className="w-3 h-3 shrink-0" />
+                              <span>Слегка перегружен (−10 фт.)</span>
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -1140,6 +1668,63 @@ export function DmView({ onNavigate }: DmViewProps) {
                   </div>
                 )}
 
+                {/* Active-Turn Quick Death Saving Throw Bar for Dying Hero */}
+                {isTacticalLoc && turnPlayer && turnPlayerDeathSaves?.status === 'dying' && (
+                  <div className="shrink-0 px-4 py-2 border-b border-red-500/50 bg-red-950/55 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <HeartPulse className="w-4 h-4 text-red-400 shrink-0" />
+                      <span className="font-semibold text-red-200">
+                        Спасбросок от смерти — {turnPlayer.name}:
+                      </span>
+                      <span className="font-mono text-[11px] text-emerald-300">
+                        Успехи {turnPlayerDeathSaves.successes}/3
+                      </span>
+                      <span className="text-slate-500">·</span>
+                      <span className="font-mono text-[11px] text-red-300">
+                        Провалы {turnPlayerDeathSaves.failures}/3
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          send({ type: 'dm:recordDeathSave', playerId: turnPlayer.id, outcome: 'success' })
+                        }
+                        className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors"
+                      >
+                        Успех (10+)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          send({ type: 'dm:recordDeathSave', playerId: turnPlayer.id, outcome: 'failure' })
+                        }
+                        className="px-2 py-1 rounded bg-red-700/80 hover:bg-red-600 text-white text-[11px] font-semibold transition-colors"
+                      >
+                        Провал (2–9)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          send({ type: 'dm:recordDeathSave', playerId: turnPlayer.id, outcome: 'nat20' })
+                        }
+                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold transition-colors"
+                      >
+                        20! (1 HP)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          send({ type: 'dm:recordDeathSave', playerId: turnPlayer.id, outcome: 'nat1' })
+                        }
+                        className="px-2 py-1 rounded bg-rose-900 hover:bg-rose-800 border border-rose-500/60 text-rose-100 text-[11px] font-semibold transition-colors"
+                      >
+                        1! (2 пров.)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Interactive Map Canvas + Hotspot Action Popover */}
                 <div className="relative flex-1 min-h-0 p-4 flex items-center justify-center">
                   <TacticalMap
@@ -1155,6 +1740,14 @@ export function DmView({ onNavigate }: DmViewProps) {
                     interactive={true}
                     selectedTokenId={selectedTokenId}
                     dmOverlay={dmOverlay}
+                    timeOfDayTint={
+                      activeLocation?.affectedByTimeOfDay
+                        ? {
+                            overlayCss: formattedClockForMap.overlayCss,
+                            filterCss: formattedClockForMap.filterCss,
+                          }
+                        : null
+                    }
                     onSelectToken={(id) => {
                       setSelectedTokenId(id);
                       const tok = dmState.tokens.find((t) => t.id === id);
@@ -1921,6 +2514,16 @@ export function DmView({ onNavigate }: DmViewProps) {
                       const acDetails = computePlayerAcDetails(selectedPlayer, catalogs);
                       const speedDetails = computePlayerEffectiveSpeed(selectedPlayer, catalogs);
                       const initDetails = computePlayerInitiativeDetails(selectedPlayer, catalogs);
+                      const encumbrance = computeHeroEncumbrance(selectedPlayer, catalogs);
+                      const deathSaves = selectedPlayer.deathSaves ?? {
+                        successes: 0,
+                        failures: 0,
+                        status: 'none' as const,
+                      };
+                      const isSelectedTurn = Boolean(
+                        dmState.tokens.find((t) => t.playerId === selectedPlayer.id)?.id ===
+                          dmState.scene.activeTurnTokenId
+                      );
                       const condEffects = getActiveConditionEffects(
                         selectedPlayer.conditions,
                         selectedPlayer.exhaustionLevel
@@ -1932,6 +2535,37 @@ export function DmView({ onNavigate }: DmViewProps) {
 
                       return (
                         <div className="space-y-4">
+                          {/* Encumbrance Disadvantage Callout in Combat Tab */}
+                          {encumbrance.tier !== 'none' && (
+                            <div
+                              className={`p-3 rounded-xl border text-xs space-y-1 ${
+                                encumbrance.hasStrDexConDisadvantage
+                                  ? isSelectedTurn
+                                    ? 'bg-rose-950/70 border-rose-400'
+                                    : 'bg-rose-950/35 border-rose-500/50'
+                                  : 'bg-amber-950/25 border-amber-500/45'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-rose-200 flex items-center gap-1.5">
+                                  <Scale className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span>
+                                    {encumbrance.conditionName}
+                                    {isSelectedTurn && encumbrance.hasStrDexConDisadvantage
+                                      ? ' · ХОД ГЕРОЯ!'
+                                      : ''}
+                                  </span>
+                                </span>
+                                <span className="font-mono text-[11px] text-slate-200">
+                                  {formatWeightLb(encumbrance.totalWeightLb)} / {encumbrance.maxCarryLb} фнт.
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-200 leading-snug">
+                                {encumbrance.summary}
+                              </p>
+                            </div>
+                          )}
+
                           {/* HP & Key Combat Numbers */}
                           <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
                             <div className="flex items-center justify-between text-xs">
@@ -2066,60 +2700,448 @@ export function DmView({ onNavigate }: DmViewProps) {
                             </div>
                           </div>
 
-                          {/* Hero Combat Actions (Unambiguous Formula Display) */}
-                          <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                                <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                <span>Действия героя ({heroActions.length})</span>
-                              </span>
-                              <span className="text-[10px] font-mono text-slate-400">
-                                БМ +{profBonus}
-                              </span>
-                            </div>
-                            <div className="divide-y divide-slate-800/80">
-                              {heroActions.map((act) => (
-                                <div
-                                  key={act.id}
-                                  className={`py-2 first:pt-0 last:pb-0 space-y-1 text-xs ${
-                                    act.equipped ? 'text-slate-100' : 'text-slate-400 opacity-75'
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <div className="font-medium truncate flex items-center gap-1.5">
-                                        <span className="truncate">{act.name}</span>
-                                        <span className="px-1 py-0.5 rounded bg-slate-800/90 font-mono text-[9px] text-slate-300 shrink-0">
-                                          {act.rangeLabel}
-                                        </span>
-                                        {!act.equipped && (
-                                          <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] text-slate-400 shrink-0">
-                                            в рюкзаке
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                        Бонус: {act.hitBreakdown}
-                                      </div>
-                                    </div>
-                                    <div className="text-right font-mono tabular-nums shrink-0">
-                                      <div className="text-xs font-bold text-amber-300">
-                                        {act.hitFormula}
-                                      </div>
-                                      <div className="text-[11px] text-rose-300">
-                                        {act.damageFormula}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {act.bonusNote && (
-                                    <div className="text-[10px] text-emerald-300 bg-emerald-950/25 border border-emerald-500/25 rounded px-2 py-0.5">
-                                      {act.bonusNote}
-                                    </div>
+                          {/* Hero Death Saving Throws Panel (0 HP / Dying / Stabilized / Dead) */}
+                          {(selectedPlayer.hp <= 0 || deathSaves.status !== 'none') && (
+                            <div
+                              className={`p-3 rounded-xl border space-y-2.5 text-xs ${
+                                deathSaves.status === 'dead'
+                                  ? 'bg-red-950/60 border-red-500/70'
+                                  : deathSaves.status === 'stabilized'
+                                    ? 'bg-emerald-950/30 border-emerald-500/50'
+                                    : 'bg-red-950/40 border-red-500/60'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-slate-100 flex items-center gap-1.5">
+                                  {deathSaves.status === 'dead' ? (
+                                    <Skull className="w-4 h-4 text-red-400 shrink-0" />
+                                  ) : (
+                                    <HeartPulse className="w-4 h-4 text-red-400 shrink-0" />
                                   )}
+                                  <span>
+                                    {deathSaves.status === 'dead'
+                                      ? 'Герой погиб'
+                                      : deathSaves.status === 'stabilized'
+                                        ? 'Стабилизирован (0 HP)'
+                                        : 'Спасброски от смерти (0 HP)'}
+                                  </span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    send({
+                                      type: 'dm:recordDeathSave',
+                                      playerId: selectedPlayer.id,
+                                      outcome: 'reset',
+                                    })
+                                  }
+                                  className="px-2 py-0.5 rounded bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-300"
+                                >
+                                  Сброс
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="px-2.5 py-1.5 rounded-lg bg-[#0B0F17]/80 border border-emerald-500/30 flex items-center justify-between">
+                                  <span className="text-[11px] text-emerald-300">Успехи</span>
+                                  <div className="flex items-center gap-1">
+                                    {[0, 1, 2].map((idx) => (
+                                      <span
+                                        key={idx}
+                                        className={`w-3 h-3 rounded-full border ${
+                                          idx < deathSaves.successes
+                                            ? 'bg-emerald-400 border-emerald-300'
+                                            : 'bg-slate-900 border-slate-600'
+                                        }`}
+                                      />
+                                    ))}
+                                  </div>
                                 </div>
-                              ))}
+                                <div className="px-2.5 py-1.5 rounded-lg bg-[#0B0F17]/80 border border-red-500/35 flex items-center justify-between">
+                                  <span className="text-[11px] text-red-300">Провалы</span>
+                                  <div className="flex items-center gap-1">
+                                    {[0, 1, 2].map((idx) => (
+                                      <span
+                                        key={idx}
+                                        className={`w-3 h-3 rounded-full border ${
+                                          idx < deathSaves.failures
+                                            ? 'bg-red-500 border-red-300'
+                                            : 'bg-slate-900 border-slate-600'
+                                        }`}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {deathSaves.status !== 'dead' && (
+                                <div className="space-y-1.5">
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'success',
+                                        })
+                                      }
+                                      className="py-1.5 px-2 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors"
+                                    >
+                                      +1 Успех (10–19)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'failure',
+                                        })
+                                      }
+                                      className="py-1.5 px-2 rounded-lg bg-red-700/80 hover:bg-red-600 text-white text-[11px] font-semibold transition-colors"
+                                    >
+                                      +1 Провал (2–9)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'nat20',
+                                        })
+                                      }
+                                      className="py-1.5 px-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold transition-colors"
+                                    >
+                                      Нат. 20 (1 HP!)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'nat1',
+                                        })
+                                      }
+                                      className="py-1.5 px-2 rounded-lg bg-rose-950 hover:bg-rose-900 border border-rose-500/60 text-rose-200 text-[11px] font-semibold transition-colors"
+                                    >
+                                      Нат. 1 (+2 пров.)
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'damage_1',
+                                        })
+                                      }
+                                      className="py-1 px-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-red-900/60 text-red-300 text-[10px] font-medium"
+                                      title="Получен урон при 0 HP (+1 провал)"
+                                    >
+                                      Урон (+1 пр.)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'damage_2',
+                                        })
+                                      }
+                                      className="py-1 px-1.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-red-900/60 text-red-300 text-[10px] font-medium"
+                                      title="Критический удар в упор при 0 HP (+2 провала)"
+                                    >
+                                      Крит (+2 пр.)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        send({
+                                          type: 'dm:recordDeathSave',
+                                          playerId: selectedPlayer.id,
+                                          outcome: 'stabilize',
+                                        })
+                                      }
+                                      className="py-1 px-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-600/50 text-emerald-300 text-[10px] font-medium"
+                                      title="Успешная проверка Медицины СЛ 10 или заклинание Стабилизации"
+                                    >
+                                      Стабилизир.
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="text-[10px] text-slate-400 leading-snug">
+                                При восстановлении HP &gt; 0 спасброски сбрасываются автоматически.
+                              </div>
                             </div>
-                          </div>
+                          )}
+
+                          {/* Hero Combat Actions (Unambiguous Formula Display) */}
+                          {(() => {
+                            const combatHandsUsage = computeEquippedHandsUsage(
+                              selectedPlayer.inventory,
+                              catalogs
+                            );
+                            return (
+                              <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                    <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                    <span>Действия героя ({heroActions.length})</span>
+                                    {encumbrance.hasStrDexConDisadvantage && (
+                                      <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-[9px] font-semibold text-rose-300">
+                                        Помеха
+                                      </span>
+                                    )}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                                        combatHandsUsage.usedHands >= 2
+                                          ? 'bg-amber-500/15 border-amber-500/45 text-amber-200'
+                                          : 'bg-[#131A26] border-slate-800 text-slate-300'
+                                      }`}
+                                    >
+                                      Руки: {combatHandsUsage.usedHands}/2
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      БМ +{profBonus}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="divide-y divide-slate-800/80">
+                                  {heroActions.map((act) => {
+                                    const expandedProp = act.resolvedProperties?.find(
+                                      (p) => `${act.id}:${p.id}` === expandedDmActionPropKey
+                                    );
+                                    return (
+                                      <div
+                                        key={act.id}
+                                        className={`py-2.5 first:pt-0 last:pb-0 space-y-1.5 text-xs ${
+                                          act.equipped
+                                            ? 'text-slate-100'
+                                            : 'text-slate-400 opacity-75'
+                                        }`}
+                                      >
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="min-w-0">
+                                            <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                                              <span className="truncate">{act.name}</span>
+                                              <span className="px-1 py-0.5 rounded bg-slate-800/90 font-mono text-[9px] text-slate-300 shrink-0">
+                                                {act.rangeLabel}
+                                              </span>
+                                              {act.handsRequired && (
+                                                <span className="px-1 py-0.5 rounded bg-slate-800/80 font-mono text-[9px] text-slate-300 shrink-0">
+                                                  {act.handsRequired === 2 ? '2 руки' : '1 рука'}
+                                                </span>
+                                              )}
+                                              {act.kind === 'bonus_light' && (
+                                                <span className="px-1 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-[9px] font-semibold text-amber-200 shrink-0">
+                                                  {act.name.includes('Быстрое')
+                                                    ? 'Часть Атаки'
+                                                    : 'Бонусное'}
+                                                </span>
+                                              )}
+                                              {act.heavyDisadvantage && (
+                                                <span className="px-1 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-[9px] font-semibold text-rose-300 shrink-0">
+                                                  Помеха (СИЛ&lt;13)
+                                                </span>
+                                              )}
+                                              {!act.equipped && (
+                                                <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] text-slate-400 shrink-0">
+                                                  в рюкзаке
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                              Бонус: {act.hitBreakdown}
+                                            </div>
+                                          </div>
+                                          <div className="text-right font-mono tabular-nums shrink-0">
+                                            <div className="text-xs font-bold text-amber-300">
+                                              {act.hitFormula}
+                                            </div>
+                                            <div className="text-[11px] text-rose-300">
+                                              {act.damageFormula}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {act.equipped && act.versatileAttack && (
+                                          <div className="rounded bg-sky-950/25 border border-sky-500/30 px-2 py-1 flex items-center justify-between gap-2 text-[10px]">
+                                            <span className="text-sky-200">
+                                              Универсальное (2 руки):{' '}
+                                              <span className="text-slate-400">
+                                                {act.versatileAttack.availableNow
+                                                  ? '2-я рука свободна'
+                                                  : '2-я рука занята'}
+                                              </span>
+                                            </span>
+                                            <span className="font-mono font-semibold text-sky-300 shrink-0">
+                                              {act.versatileAttack.damageFormula}
+                                            </span>
+                                          </div>
+                                        )}
+
+                                        {act.equipped && act.thrownAttack && (
+                                          <div className="rounded bg-amber-950/20 border border-amber-500/25 px-2 py-1 flex items-center justify-between gap-2 text-[10px]">
+                                            <span className="text-amber-200">
+                                              Метание ({act.thrownAttack.normalFt}/
+                                              {act.thrownAttack.maxFt} фт., помеха &gt;
+                                              {act.thrownAttack.normalFt})
+                                            </span>
+                                            <span className="font-mono text-amber-300 shrink-0">
+                                              {act.thrownAttack.hitFormula} ·{' '}
+                                              {act.thrownAttack.damageFormula}
+                                            </span>
+                                          </div>
+                                        )}
+
+                                        {act.equipped && act.ammoStatus && (
+                                          <div
+                                            className={`rounded border px-2 py-1 flex items-center justify-between gap-2 text-[10px] ${
+                                              act.ammoStatus.currentQty > 0 &&
+                                              act.ammoStatus.hasContainer
+                                                ? 'bg-[#131A26] border-sky-500/30 text-slate-200'
+                                                : 'bg-rose-950/30 border-rose-500/50 text-rose-200'
+                                            }`}
+                                          >
+                                            <span className="truncate">
+                                              {act.ammoStatus.ammoName}:{' '}
+                                              <span className="font-mono font-bold text-sky-300">
+                                                {act.ammoStatus.currentQty}/
+                                                {act.ammoStatus.maxCapacity}
+                                              </span>
+                                              {act.ammoStatus.containerName
+                                                ? ` (${act.ammoStatus.containerName})`
+                                                : ''}
+                                            </span>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              <button
+                                                type="button"
+                                                disabled={act.ammoStatus.currentQty <= 0}
+                                                onClick={() =>
+                                                  send({
+                                                    type: 'player:spendAmmo',
+                                                    playerId: selectedPlayer.id,
+                                                    ammoItemId: act.ammoStatus!.ammoItemId,
+                                                    delta: -1,
+                                                  })
+                                                }
+                                                className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 disabled:opacity-40 border border-rose-500/40 text-rose-200 font-semibold"
+                                              >
+                                                −1
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={
+                                                  act.ammoStatus.currentQty >=
+                                                  act.ammoStatus.maxCapacity
+                                                }
+                                                onClick={() =>
+                                                  send({
+                                                    type: 'player:spendAmmo',
+                                                    playerId: selectedPlayer.id,
+                                                    ammoItemId: act.ammoStatus!.ammoItemId,
+                                                    delta: 1,
+                                                  })
+                                                }
+                                                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 font-mono"
+                                              >
+                                                +1
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {act.equipped && act.loadingNote && (
+                                          <div className="text-[10px] text-amber-200/90 bg-amber-950/20 border border-amber-500/25 rounded px-2 py-0.5">
+                                            Перезарядка: не более 1 выстрела за действие/бон./реакцию
+                                          </div>
+                                        )}
+
+                                        {act.bonusNote && (
+                                          <div className="text-[10px] text-emerald-300 bg-emerald-950/25 border border-emerald-500/25 rounded px-2 py-0.5">
+                                            {act.bonusNote}
+                                          </div>
+                                        )}
+
+                                        {/* Active Weapon Mastery — ONLY when equipped AND hero has «Оружейное мастерство» */}
+                                        {act.activeMastery && (
+                                          <div className="rounded-lg bg-violet-950/35 border border-violet-500/45 px-2.5 py-1.5 space-y-0.5">
+                                            <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-violet-200">
+                                              <span className="flex items-center gap-1">
+                                                <Sparkles className="w-3 h-3 text-violet-400 shrink-0" />
+                                                <span>Мастерство: {act.activeMastery.name}</span>
+                                              </span>
+                                              {act.activeMastery.saveDc !== undefined && (
+                                                <span className="px-1.5 py-0.5 rounded bg-violet-500/20 font-mono text-[10px] text-violet-100">
+                                                  Сл {act.activeMastery.saveDc}
+                                                </span>
+                                              )}
+                                            </div>
+                                            {act.activeMastery.computedHint && (
+                                              <div className="text-[10px] text-amber-200/95 leading-snug">
+                                                {act.activeMastery.computedHint}
+                                              </div>
+                                            )}
+                                            <p className="text-[10px] text-slate-300 leading-snug">
+                                              {act.activeMastery.description}
+                                            </p>
+                                          </div>
+                                        )}
+
+                                        {act.resolvedProperties &&
+                                          act.resolvedProperties.length > 0 && (
+                                            <div className="space-y-1">
+                                              <div className="flex flex-wrap gap-1">
+                                                {act.resolvedProperties.map((prop) => {
+                                                  const key = `${act.id}:${prop.id}`;
+                                                  const isOpen = expandedDmActionPropKey === key;
+                                                  return (
+                                                    <button
+                                                      key={prop.id}
+                                                      type="button"
+                                                      title={prop.description}
+                                                      onClick={() =>
+                                                        setExpandedDmActionPropKey(
+                                                          isOpen ? null : key
+                                                        )
+                                                      }
+                                                      className={`px-1.5 py-0.5 rounded text-[9px] border transition-colors ${
+                                                        isOpen
+                                                          ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                                                          : 'bg-[#131A26] border-slate-800 text-slate-300 hover:border-slate-600'
+                                                      }`}
+                                                    >
+                                                      {prop.name}
+                                                    </button>
+                                                  );
+                                                })}
+                                              </div>
+                                              {expandedProp && (
+                                                <div className="rounded bg-[#131A26] border border-slate-700/80 px-2 py-1.5 text-[10px] text-slate-300 leading-snug">
+                                                  <span className="font-semibold text-amber-200">
+                                                    {expandedProp.name}:{' '}
+                                                  </span>
+                                                  {expandedProp.description}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
 
                           {/* Conditions from Catalog (Synced to Player Phone + Automated Effects) */}
                           <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
@@ -2553,6 +3575,22 @@ export function DmView({ onNavigate }: DmViewProps) {
                       const classDefaultProfSet = new Set(
                         getClassDefaultProficiencyIds(selectedPlayer.classId, catalogs)
                       );
+                      const gearEncumbrance = computeHeroEncumbrance(selectedPlayer, catalogs);
+                      const gearWeightPct = Math.min(
+                        100,
+                        Math.round(
+                          (gearEncumbrance.totalWeightLb / Math.max(1, gearEncumbrance.maxCarryLb)) *
+                            100
+                        )
+                      );
+                      const gearBarColor =
+                        gearEncumbrance.tier === 'max'
+                          ? 'bg-red-500'
+                          : gearEncumbrance.tier === 'heavy'
+                            ? 'bg-rose-500'
+                            : gearEncumbrance.tier === 'light'
+                              ? 'bg-amber-400'
+                              : 'bg-emerald-500';
                       return (
                         <div className="space-y-4">
                           {/* Gold Quick Editor */}
@@ -2591,6 +3629,103 @@ export function DmView({ onNavigate }: DmViewProps) {
                             </div>
                           </div>
 
+                          {/* Hero Weight Limit & Encumbrance Panel */}
+                          <div
+                            className={`p-3 rounded-xl border space-y-2 ${
+                              gearEncumbrance.tier === 'max'
+                                ? 'bg-red-950/30 border-red-500/60'
+                                : gearEncumbrance.tier === 'heavy'
+                                  ? 'bg-rose-950/25 border-rose-500/50'
+                                  : gearEncumbrance.tier === 'light'
+                                    ? 'bg-amber-950/20 border-amber-500/50'
+                                    : 'bg-[#0B0F17] border-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                <Scale className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>Лимит веса (СИЛ {gearEncumbrance.strScore} × 15)</span>
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {gearEncumbrance.conditionName && (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                                      gearEncumbrance.tier === 'light'
+                                        ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                                        : 'bg-red-500/20 border-red-400/60 text-red-200'
+                                    }`}
+                                  >
+                                    {gearEncumbrance.conditionName}
+                                  </span>
+                                )}
+                                <span className="font-mono tabular-nums text-xs font-bold text-slate-100">
+                                  {formatWeightLb(gearEncumbrance.totalWeightLb)} /{' '}
+                                  {gearEncumbrance.maxCarryLb} фнт.
+                                </span>
+                              </div>
+                            </div>
+                            <div className="relative h-2 rounded-full bg-slate-800 overflow-hidden">
+                              <div
+                                className={`h-full transition-all duration-200 ${gearBarColor}`}
+                                style={{ width: `${gearWeightPct}%` }}
+                              />
+                              <span className="absolute top-0 bottom-0 left-1/3 w-px bg-slate-950/80" />
+                              <span className="absolute top-0 bottom-0 left-2/3 w-px bg-slate-950/80" />
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                              <span>×5: {gearEncumbrance.lightThresholdLb}</span>
+                              <span>×10: {gearEncumbrance.heavyThresholdLb}</span>
+                              <span>×15: {gearEncumbrance.maxCarryLb} фнт.</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 leading-snug">
+                              {gearEncumbrance.summary}
+                            </p>
+                          </div>
+
+                          {/* Hands Usage Summary Bar */}
+                          {(() => {
+                            const gearHands = computeEquippedHandsUsage(
+                              selectedPlayer.inventory,
+                              catalogs
+                            );
+                            return (
+                              <div className="p-2.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-1.5">
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                                    <Swords className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                    <span>Занятость рук</span>
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold border ${
+                                      gearHands.usedHands >= 2
+                                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                                        : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                    }`}
+                                  >
+                                    {gearHands.usedHands} / 2 рук
+                                  </span>
+                                </div>
+                                {gearHands.slots.length === 0 ? (
+                                  <div className="text-[11px] text-slate-400">Обе руки свободны</div>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1">
+                                    {gearHands.slots.map((s) => (
+                                      <span
+                                        key={s.itemId}
+                                        className="px-2 py-0.5 rounded bg-[#131A26] border border-slate-700/80 text-[11px] text-slate-200"
+                                      >
+                                        {s.name}{' '}
+                                        <span className="text-[10px] font-mono text-amber-300">
+                                          ({s.hands === 2 ? '2р' : '1р'})
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                           {/* Private Inventory Editor */}
                           <div className="space-y-2.5">
                             <div className="flex items-baseline justify-between">
@@ -2614,12 +3749,42 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   }}
                                   className="px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-200"
                                 >
-                                  <option value="gear">Снаряжение</option>
+                                  <option value="gear">Вещи / Снаряжение</option>
                                   <option value="weapon">Оружие</option>
                                   <option value="armor">Доспех</option>
                                   <option value="potion">Зелье</option>
                                   <option value="quest">Особое</option>
                                 </select>
+
+                                {itemCategory === 'gear' && (
+                                  <select
+                                    value={itemCatalogId}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      setItemCatalogId(id);
+                                      const found = catalogs.gearItems.find((g) => g.id === id);
+                                      if (found) {
+                                        setItemName(found.name);
+                                        setItemQty(found.packQuantity ?? 1);
+                                        setItemWeight(found.weight || '');
+                                        setItemDesc(found.description || '');
+                                      }
+                                    }}
+                                    className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-emerald-300"
+                                  >
+                                    <option value="">Из справочника вещей...</option>
+                                    {catalogs.gearItems.map((g) => (
+                                      <option key={g.id} value={g.id}>
+                                        [{getGearKindLabel(g.kind)}] {g.name}
+                                        {g.kind === 'ammunition' && g.packQuantity
+                                          ? ` (${g.packQuantity} шт.)`
+                                          : g.kind === 'container' && g.capacity
+                                            ? ` (до ${g.capacity} шт.)`
+                                            : ''}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
 
                                 {itemCategory === 'weapon' && (
                                   <select
@@ -2632,7 +3797,10 @@ export function DmView({ onNavigate }: DmViewProps) {
                                         setItemName(found.name);
                                         setItemWeaponCat(found.category);
                                         setItemWeaponRange(found.rangeType);
-                                        setItemDesc(`${found.damage} · ${found.properties}`);
+                                        setItemWeight(found.weight || '');
+                                        setItemDesc(
+                                          `${found.damage} · ${formatWeaponPropertiesSummary(found, catalogs)}`
+                                        );
                                       }
                                     }}
                                     className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-amber-300"
@@ -2656,6 +3824,7 @@ export function DmView({ onNavigate }: DmViewProps) {
                                       if (found) {
                                         setItemName(found.name);
                                         setItemArmorCat(found.category);
+                                        setItemWeight(found.weight || '');
                                         setItemDesc(
                                           `КЗ ${found.armorClass}${found.strengthReq !== '—' ? ` · ${found.strengthReq}` : ''}`
                                         );
@@ -2761,15 +3930,24 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   placeholder="Название предмета (напр. Ключ от склепа)"
                                   value={itemName}
                                   onChange={(e) => setItemName(e.target.value)}
-                                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                                  className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
                                   required
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Вес (фнт.)"
+                                  value={itemWeight}
+                                  onChange={(e) => setItemWeight(e.target.value)}
+                                  title="Вес 1 шт. в фунтах (например: 2 или 0,5)"
+                                  className="w-20 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-200 text-center"
                                 />
                                 <input
                                   type="number"
                                   min={1}
                                   value={itemQty}
                                   onChange={(e) => setItemQty(Number(e.target.value) || 1)}
-                                  className="w-14 px-2 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
+                                  title="Количество"
+                                  className="w-12 px-1.5 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100 text-center"
                                 />
                               </div>
                               <div className="flex gap-2">
@@ -2795,94 +3973,167 @@ export function DmView({ onNavigate }: DmViewProps) {
                                   Инвентарь пуст
                                 </div>
                               ) : (
-                                selectedPlayer.inventory.map((item) => (
-                                  <div
-                                    key={item.id}
-                                    className="px-3 py-2 flex items-center justify-between gap-2"
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="text-xs font-medium text-slate-100 truncate">
-                                        {item.name}
-                                        {item.equipped && (
-                                          <span className="ml-1.5 text-[10px] text-amber-400 font-normal">
-                                            · надето
-                                          </span>
+                                selectedPlayer.inventory.map((item) => {
+                                  const gearRef =
+                                    item.category === 'gear'
+                                      ? resolveGearCatalogItem(item, catalogs)
+                                      : undefined;
+                                  const wpnHands =
+                                    item.category === 'weapon'
+                                      ? getWeaponRequiredHands(item, catalogs)
+                                      : null;
+                                  const ammoCap =
+                                    gearRef?.kind === 'ammunition'
+                                      ? getAmmoCapacityForPlayer(
+                                          selectedPlayer.inventory,
+                                          gearRef,
+                                          catalogs
+                                        )
+                                      : null;
+                                  return (
+                                    <div
+                                      key={item.id}
+                                      className="px-3 py-2 flex items-center justify-between gap-2"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="text-xs font-medium text-slate-100 flex items-center gap-1.5 flex-wrap">
+                                          <span className="truncate">{item.name}</span>
+                                          {wpnHands && (
+                                            <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] font-mono text-slate-300">
+                                              {wpnHands === 2 ? '2р' : '1р'}
+                                            </span>
+                                          )}
+                                          {item.category === 'armor' &&
+                                            item.armorCategory === 'shield' && (
+                                              <span className="px-1 py-0.5 rounded bg-slate-800 text-[9px] font-mono text-sky-300">
+                                                1р
+                                              </span>
+                                            )}
+                                          {item.equipped && (
+                                            <span className="text-[10px] text-amber-400 font-normal">
+                                              · надето
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[11px] text-slate-400 truncate">
+                                          {item.weaponCategory
+                                            ? (() => {
+                                                const rangeInfo = resolveWeaponReachRange(
+                                                  item,
+                                                  catalogs
+                                                );
+                                                const rangeText =
+                                                  rangeInfo.rangeType === 'ranged' &&
+                                                  rangeInfo.maxFt > rangeInfo.normalFt
+                                                    ? `${rangeInfo.normalFt}/${rangeInfo.maxFt} фт.`
+                                                    : `${rangeInfo.normalFt} фт.`;
+                                                return `${getWeaponCategoryLabel(item.weaponCategory)} · ${getWeaponRangeLabel(rangeInfo.rangeType)} (${rangeText})${item.damage ? ` · ${item.damage}` : ''}`;
+                                              })()
+                                            : item.armorCategory
+                                              ? `${getArmorCategoryLabel(item.armorCategory)}${item.armorClass ? ` · КЗ ${item.armorClass}` : ''}`
+                                              : ammoCap
+                                                ? `${ammoCap.currentQty}${Number.isFinite(ammoCap.maxCapacity) ? `/${ammoCap.maxCapacity}` : ''} шт.${ammoCap.containerRef ? ` · ${ammoCap.containerRef.name}` : ''}`
+                                                : gearRef?.kind === 'container'
+                                                  ? `Вмещает до ${(gearRef.capacity ?? 20) * Math.max(1, item.quantity)} шт.`
+                                                  : item.description || ''}
+                                          {(() => {
+                                            const uLb = getInventoryItemUnitWeightLb(
+                                              item,
+                                              catalogs
+                                            );
+                                            if (uLb <= 0) return null;
+                                            const totLb =
+                                              Math.round(uLb * Math.max(0, item.quantity) * 100) /
+                                              100;
+                                            return (
+                                              <span className="ml-1.5 font-mono text-slate-500">
+                                                · {formatWeightLb(totLb)} фнт.
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {(item.category === 'weapon' ||
+                                          item.category === 'armor') && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              send({
+                                                type: 'dm:updateInventoryItem',
+                                                playerId: selectedPlayer.id,
+                                                itemId: item.id,
+                                                patch: { equipped: !item.equipped },
+                                              })
+                                            }
+                                            className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                              item.equipped
+                                                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                                                : 'bg-[#131A26] border-slate-700 text-slate-300 hover:text-slate-100'
+                                            }`}
+                                          >
+                                            {item.equipped ? 'Снять' : 'Надеть'}
+                                          </button>
                                         )}
-                                      </div>
-                                      <div className="text-[11px] text-slate-400 truncate">
-                                        {item.weaponCategory
-                                          ? (() => {
-                                              const rangeInfo = resolveWeaponReachRange(item, catalogs);
-                                              const rangeText =
-                                                rangeInfo.rangeType === 'ranged' && rangeInfo.maxFt > rangeInfo.normalFt
-                                                  ? `${rangeInfo.normalFt}/${rangeInfo.maxFt} фт.`
-                                                  : `${rangeInfo.normalFt} фт.`;
-                                              return `${getWeaponCategoryLabel(item.weaponCategory)} · ${getWeaponRangeLabel(rangeInfo.rangeType)} (${rangeText})${item.damage ? ` · ${item.damage}` : ''}`;
-                                            })()
-                                          : item.armorCategory
-                                            ? `${getArmorCategoryLabel(item.armorCategory)}${item.armorClass ? ` · КЗ ${item.armorClass}` : ''}`
-                                            : item.description || ''}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (item.quantity <= 1) {
-                                            send({
-                                              type: 'dm:removeInventoryItem',
-                                              playerId: selectedPlayer.id,
-                                              itemId: item.id,
-                                            });
-                                          } else {
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (item.quantity <= 1) {
+                                              send({
+                                                type: 'dm:removeInventoryItem',
+                                                playerId: selectedPlayer.id,
+                                                itemId: item.id,
+                                              });
+                                            } else {
+                                              send({
+                                                type: 'dm:updateInventoryItem',
+                                                playerId: selectedPlayer.id,
+                                                itemId: item.id,
+                                                patch: { quantity: item.quantity - 1 },
+                                              });
+                                            }
+                                          }}
+                                          className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                                          aria-label="Уменьшить количество"
+                                        >
+                                          <Minus className="w-3.5 h-3.5" />
+                                        </button>
+                                        <span className="w-7 text-center text-xs font-mono tabular-nums text-amber-400">
+                                          {item.quantity}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
                                             send({
                                               type: 'dm:updateInventoryItem',
                                               playerId: selectedPlayer.id,
                                               itemId: item.id,
-                                              patch: { quantity: item.quantity - 1 },
-                                            });
+                                              patch: { quantity: item.quantity + 1 },
+                                            })
                                           }
-                                        }}
-                                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
-                                        aria-label="Уменьшить количество"
-                                      >
-                                        <Minus className="w-3.5 h-3.5" />
-                                      </button>
-                                      <span className="w-7 text-center text-xs font-mono tabular-nums text-amber-400">
-                                        {item.quantity}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          send({
-                                            type: 'dm:updateInventoryItem',
-                                            playerId: selectedPlayer.id,
-                                            itemId: item.id,
-                                            patch: { quantity: item.quantity + 1 },
-                                          })
-                                        }
-                                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
-                                        aria-label="Увеличить количество"
-                                      >
-                                        <Plus className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          send({
-                                            type: 'dm:removeInventoryItem',
-                                            playerId: selectedPlayer.id,
-                                            itemId: item.id,
-                                          })
-                                        }
-                                        className="p-1 ml-1 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
-                                        aria-label="Удалить предмет"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
+                                          className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                                          aria-label="Увеличить количество"
+                                        >
+                                          <Plus className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            send({
+                                              type: 'dm:removeInventoryItem',
+                                              playerId: selectedPlayer.id,
+                                              itemId: item.id,
+                                            })
+                                          }
+                                          className="p-1 ml-1 rounded hover:bg-slate-800 text-slate-500 hover:text-red-400"
+                                          aria-label="Удалить предмет"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
-                                ))
+                                  );
+                                })
                               )}
                             </div>
                           </div>
@@ -3480,6 +4731,123 @@ export function DmView({ onNavigate }: DmViewProps) {
                   </div>
                 </div>
 
+                {/* TV Audio Controls (Splash + Active Location Status + Mute) */}
+                <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                      <Music className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Звук на ТВ (MP3)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        send({
+                          type: 'dm:setAudioMuted',
+                          muted: !dmState.tvDisplay.audioMuted,
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium flex items-center gap-1.5 transition-colors ${
+                        dmState.tvDisplay.audioMuted
+                          ? 'bg-rose-500/20 border-rose-500/60 text-rose-200 hover:bg-rose-500/30'
+                          : 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200 hover:bg-emerald-500/25'
+                      }`}
+                    >
+                      {dmState.tvDisplay.audioMuted ? (
+                        <>
+                          <VolumeX className="w-3.5 h-3.5" />
+                          <span>Отключён</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>Включён</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Active location ambient summary */}
+                  <div className="p-2.5 rounded-lg bg-[#131A26] border border-slate-800 flex items-center justify-between gap-2 text-[11px]">
+                    <div className="min-w-0">
+                      <div className="text-slate-400">
+                        Текущая локация: <span className="text-slate-200">{activeLocation?.name}</span>
+                      </div>
+                      <div
+                        className={`truncate font-medium ${
+                          activeLocation?.ambientAudioUrl ? 'text-emerald-300' : 'text-slate-500'
+                        }`}
+                      >
+                        {activeLocation?.ambientAudioUrl
+                          ? activeLocation.ambientAudioName || 'Фоновый трек загружен'
+                          : 'Аудио не загружено'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('/locations')}
+                      className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 shrink-0 transition-colors"
+                    >
+                      Настроить
+                    </button>
+                  </div>
+
+                  {/* Initial Splash Screen Audio */}
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-slate-300">
+                        Аудио начальной заставки (MP3)
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => splashAudioInputRef.current?.click()}
+                          disabled={uploadingSplashAudio}
+                          className="px-2.5 py-1 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-[11px] font-medium text-amber-200 transition-colors"
+                        >
+                          {uploadingSplashAudio
+                            ? 'Загрузка...'
+                            : dmState.tvDisplay.splashAudioUrl
+                              ? 'Заменить'
+                              : 'Загрузить MP3'}
+                        </button>
+                        {dmState.tvDisplay.splashAudioUrl && (
+                          <button
+                            type="button"
+                            onClick={() => send({ type: 'dm:clearSplashAudio' })}
+                            title="Удалить аудио начальной заставки"
+                            className="p-1 rounded-md bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {dmState.tvDisplay.splashAudioUrl ? (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] text-emerald-300 truncate">
+                          {dmState.tvDisplay.splashAudioName || 'Аудио заставки.mp3'}
+                        </div>
+                        <audio
+                          controls
+                          loop
+                          preload="none"
+                          src={dmState.tvDisplay.splashAudioUrl}
+                          className="w-full h-8"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-500">
+                        Загрузите MP3-файл, чтобы музыка зацикленно играла на ТВ во время титульной заставки.
+                      </p>
+                    )}
+
+                    {splashAudioError && (
+                      <p className="text-[11px] text-rose-400">{splashAudioError}</p>
+                    )}
+                  </div>
+                </div>
+
                 <form
                   onSubmit={handleSendEvent}
                   className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-3"
@@ -3854,11 +5222,30 @@ export function DmView({ onNavigate }: DmViewProps) {
                                         Мёртв
                                       </span>
                                     )}
-                                    {isUnconscious && (
-                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[9px] text-amber-300 shrink-0">
-                                        Без сознания
+                                    {linkedPlayer?.deathSaves?.status === 'dying' && (
+                                      <span className="px-1.5 py-0.5 rounded bg-red-500/20 border border-red-400/60 text-[9px] font-mono text-red-200 shrink-0">
+                                        Умирает {linkedPlayer.deathSaves.successes}/{linkedPlayer.deathSaves.failures}
                                       </span>
                                     )}
+                                    {linkedPlayer?.deathSaves?.status === 'stabilized' && (
+                                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/50 text-[9px] text-emerald-300 shrink-0">
+                                        Стабилиз.
+                                      </span>
+                                    )}
+                                    {isUnconscious &&
+                                      linkedPlayer?.deathSaves?.status !== 'dying' &&
+                                      linkedPlayer?.deathSaves?.status !== 'stabilized' && (
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[9px] text-amber-300 shrink-0">
+                                          Без сознания
+                                        </span>
+                                      )}
+                                    {linkedPlayer &&
+                                      computeHeroEncumbrance(linkedPlayer, catalogs)
+                                        .hasStrDexConDisadvantage && (
+                                        <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-400/60 text-[9px] font-semibold text-rose-200 shrink-0">
+                                          Помеха (вес)
+                                        </span>
+                                      )}
                                     {isTied && !isDead && (
                                       <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/50 text-[9px] font-mono text-amber-300 shrink-0">
                                         = Ничья

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Compass,
@@ -6,12 +6,19 @@ import {
   Dices,
   Footprints,
   MapPin,
+  Moon,
+  Pause,
   QrCode,
   Shield,
   Skull,
+  Sun,
+  Sunrise,
+  Sunset,
   Swords,
+  Volume2,
   X,
 } from 'lucide-react';
+import { formatGameClock } from '../../shared/catalogDefaults';
 import { TacticalMap } from '../components/TacticalMap';
 import { useGameSocket } from '../useGameSocket';
 import type { MonsterCombatStatus } from '../../shared/types';
@@ -32,6 +39,97 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
   const { tvState } = useGameSocket({ role: 'tv' });
   const [showQr, setShowQr] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const loadedAudioUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 3000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Determine which looping MP3 track should play on TV right now
+  const activeAudioUrl = useMemo(() => {
+    if (!tvState) return null;
+    if (tvState.tvDisplay.phase === 'title_splash') {
+      return tvState.tvDisplay.splashAudioUrl || null;
+    }
+    // Play the opened location's ambient audio immediately (both during traveling staging before DM reveals/starts and during live)
+    return tvState.locationAmbientAudioUrl || null;
+  }, [
+    tvState?.tvDisplay.phase,
+    tvState?.tvDisplay.splashAudioUrl,
+    tvState?.locationAmbientAudioUrl,
+  ]);
+
+  const isAudioMuted = Boolean(tvState?.tvDisplay.audioMuted);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (!activeAudioUrl) {
+      audio.pause();
+      if (loadedAudioUrlRef.current) {
+        audio.removeAttribute('src');
+        audio.load();
+        loadedAudioUrlRef.current = null;
+      }
+      setAutoplayBlocked(false);
+      return;
+    }
+
+    if (loadedAudioUrlRef.current !== activeAudioUrl) {
+      loadedAudioUrlRef.current = activeAudioUrl;
+      audio.src = activeAudioUrl;
+      audio.loop = true;
+      audio.currentTime = 0;
+    }
+
+    audio.loop = true;
+    audio.muted = isAudioMuted;
+
+    if (isAudioMuted) {
+      audio.pause();
+      setAutoplayBlocked(false);
+      return;
+    }
+
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+      playPromise
+        .then(() => {
+          setAutoplayBlocked(false);
+        })
+        .catch(() => {
+          setAutoplayBlocked(true);
+        });
+    }
+  }, [activeAudioUrl, isAudioMuted]);
+
+  // Automatically unlock audio on any TV pointer/key interaction if browser blocked autoplay
+  useEffect(() => {
+    if (!autoplayBlocked || !activeAudioUrl || isAudioMuted) return;
+    const unlock = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.muted = false;
+      audio.loop = true;
+      audio
+        .play()
+        .then(() => setAutoplayBlocked(false))
+        .catch(() => {
+          // Keep prompt visible until a valid gesture succeeds
+        });
+    };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [autoplayBlocked, activeAudioUrl, isAudioMuted]);
 
   const playUrl = useMemo(() => {
     if (typeof window === 'undefined') return '/play';
@@ -64,8 +162,23 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
     );
   }
 
-  const { scene, map, tokens, hotspots, players, tvDisplay, locationKind, activeLocationId } = tvState;
+  const {
+    scene,
+    map,
+    tokens,
+    hotspots,
+    players,
+    tvDisplay,
+    locationKind,
+    activeLocationId,
+    gameClock,
+    locationAffectedByTimeOfDay,
+  } = tvState;
   const isCityMap = locationKind === 'city';
+  const clockInfo = formatGameClock(gameClock, nowMs);
+  const timeOfDayTint = locationAffectedByTimeOfDay
+    ? { overlayCss: clockInfo.overlayCss, filterCss: clockInfo.filterCss }
+    : null;
   const initiativeSession =
     tvDisplay.phase === 'live' && scene.initiativeSession?.active ? scene.initiativeSession : null;
 
@@ -83,6 +196,7 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
           portraitUrl: string | null;
           combatStatus: MonsterCombatStatus;
           conditions: string[];
+          deathSaves?: { successes: number; failures: number; status: string };
         }> = [];
         const coveredPlayerIds = new Set<string>();
 
@@ -92,6 +206,14 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
             const pl = players.find((p) => p.id === tok.playerId);
             coveredPlayerIds.add(tok.playerId);
             const playerConds = pl?.conditions ?? tok.conditions ?? [];
+            const playerCombatStatus: MonsterCombatStatus =
+              pl?.deathSaves?.status === 'dead' || tok.combatStatus === 'dead'
+                ? 'dead'
+                : (pl && pl.hp <= 0) ||
+                    tok.combatStatus === 'unconscious' ||
+                    playerConds.some((c) => c.toLowerCase().includes('бессознат'))
+                  ? 'unconscious'
+                  : 'alive';
             entries.push({
               key: tok.id,
               tokenId: tok.id,
@@ -99,10 +221,11 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               color: pl?.color ?? tok.color,
               kind: 'player',
               initiative: pl?.initiative ?? tok.initiative ?? 0,
-              isTurn: scene.activeTurnTokenId === tok.id,
+              isTurn: playerCombatStatus !== 'dead' && scene.activeTurnTokenId === tok.id,
               portraitUrl: pl?.portraitUrl ?? tok.portraitUrl ?? null,
-              combatStatus: 'alive',
+              combatStatus: playerCombatStatus,
               conditions: playerConds,
+              deathSaves: pl?.deathSaves,
             });
           } else {
             entries.push({
@@ -123,6 +246,13 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
         // Include any hero located on this tactical map even if their token was temporarily hidden/removed
         for (const pl of players) {
           if (pl.locationId === activeLocationId && !coveredPlayerIds.has(pl.id)) {
+            const playerConds = pl.conditions ?? [];
+            const playerCombatStatus: MonsterCombatStatus =
+              pl.deathSaves?.status === 'dead'
+                ? 'dead'
+                : pl.hp <= 0 || playerConds.some((c) => c.toLowerCase().includes('бессознат'))
+                  ? 'unconscious'
+                  : 'alive';
             entries.push({
               key: `player-${pl.id}`,
               tokenId: null,
@@ -132,8 +262,9 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               initiative: pl.initiative ?? 0,
               isTurn: false,
               portraitUrl: pl.portraitUrl ?? null,
-              combatStatus: 'alive',
-              conditions: pl.conditions ?? [],
+              combatStatus: playerCombatStatus,
+              conditions: playerConds,
+              deathSaves: pl.deathSaves,
             });
           }
         }
@@ -314,7 +445,30 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
               hotspots={hotspots}
               activeTurnTokenId={isCityMap ? null : scene.activeTurnTokenId}
               interactive={false}
+              timeOfDayTint={timeOfDayTint}
             />
+
+            {/* Compact In-Game Clock Badge (top-right, live phase) */}
+            <div className="fixed top-3 right-3 z-25 pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0B0F17]/82 backdrop-blur-md border border-slate-700/75 shadow-lg text-xs text-slate-200">
+              {clockInfo.phaseIcon === 'sun' ? (
+                <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              ) : clockInfo.phaseIcon === 'sunrise' ? (
+                <Sunrise className="w-3.5 h-3.5 text-orange-300 shrink-0" />
+              ) : clockInfo.phaseIcon === 'sunset' ? (
+                <Sunset className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              ) : (
+                <Moon className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+              )}
+              <span className="font-mono tabular-nums font-semibold text-slate-100">
+                {clockInfo.timeText}
+              </span>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-300">{clockInfo.dayText}</span>
+              <span className="text-slate-500">({clockInfo.phaseLabel})</span>
+              {clockInfo.paused && (
+                <Pause className="w-3 h-3 text-amber-400 shrink-0" aria-label="Пауза" />
+              )}
+            </div>
 
             {/* Public Event Banner Overlay */}
             {scene.activeEvent && (
@@ -689,8 +843,39 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
                             }`}
                           />
 
-                          {/* Bottom Name Scrim (ONLY name — zero HP, levels, or AC) */}
+                          {/* Bottom Name Scrim (ONLY name + optional dying save pips — zero HP, levels, or AC) */}
                           <div className="absolute inset-x-0 bottom-0 pt-7 pb-1.5 px-2 bg-gradient-to-t from-[#05080F] via-[#05080F]/92 to-transparent text-center">
+                            {entry.deathSaves?.status === 'dying' && (
+                              <div
+                                className="mb-1 flex items-center justify-center gap-2"
+                                aria-label={`Спасброски от смерти: ${entry.deathSaves.successes} успехов, ${entry.deathSaves.failures} провалов`}
+                              >
+                                <span className="flex items-center gap-0.5">
+                                  {[0, 1, 2].map((i) => (
+                                    <span
+                                      key={i}
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        i < (entry.deathSaves?.successes ?? 0)
+                                          ? 'bg-emerald-400'
+                                          : 'bg-slate-600/80'
+                                      }`}
+                                    />
+                                  ))}
+                                </span>
+                                <span className="flex items-center gap-0.5">
+                                  {[0, 1, 2].map((i) => (
+                                    <span
+                                      key={i}
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        i < (entry.deathSaves?.failures ?? 0)
+                                          ? 'bg-red-500'
+                                          : 'bg-slate-600/80'
+                                      }`}
+                                    />
+                                  ))}
+                                </span>
+                              </div>
+                            )}
                             <div
                               className={`text-xs sm:text-[13px] leading-tight truncate drop-shadow ${
                                 isDead
@@ -717,6 +902,30 @@ export function TvView({ onNavigate: _onNavigate }: TvViewProps) {
             })}
           </div>
         </div>
+      )}
+
+      {/* Hidden Looping Ambient Audio Player */}
+      <audio ref={audioRef} loop preload="auto" className="hidden" />
+
+      {/* One-tap Autoplay Unlock Prompt (shown ONLY if browser blocked initial sound playback) */}
+      {autoplayBlocked && activeAudioUrl && !isAudioMuted && (
+        <button
+          type="button"
+          onClick={() => {
+            const audio = audioRef.current;
+            if (!audio) return;
+            audio.muted = false;
+            audio.loop = true;
+            audio
+              .play()
+              .then(() => setAutoplayBlocked(false))
+              .catch(() => {});
+          }}
+          className="fixed top-3 left-3 z-40 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-xl flex items-center gap-2 transition-colors"
+        >
+          <Volume2 className="w-4 h-4 shrink-0" />
+          <span>Включить звук на ТВ</span>
+        </button>
       )}
 
       {/* Bottom-Right Compact QR Button (replaces old "Порядок ходов" and stays available on City & Title screens) */}

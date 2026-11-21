@@ -199,20 +199,65 @@ export interface EntityVisionEntry {
   rangeFt: number | null;
 }
 
+export interface WeaponPropertyRef {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface WeaponMasteryRef {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export type GearItemKind = 'ammunition' | 'container' | 'equipment';
+
+export interface GearItemRef {
+  id: string;
+  name: string;
+  kind: GearItemKind;
+  price: string;
+  weight: string;
+  /** Pack quantity corresponding to the listed weight/price (e.g. 20 arrows weigh 1 lb) */
+  packQuantity?: number;
+  /** For ammunition: required container gear item ID (e.g. gear-quiver) */
+  containerId?: string | null;
+  /** For ammunition: compatible weapon IDs */
+  compatibleWeaponIds?: string[];
+  /** For container: max ammunition quantity held per 1 container */
+  capacity?: number;
+  /** For container: ammunition gear item ID stored inside */
+  storedAmmoId?: string | null;
+  description: string;
+}
+
 export interface WeaponRef {
   id: string;
   category: WeaponCategory;
   rangeType: WeaponRangeType;
   name: string;
   damage: string;
+  /** Optional two-handed damage dice when weapon has the Versatile property (e.g. "1к8" or "1к10") */
+  versatileDamage?: string;
   /** Melee reach in feet (e.g. 5 or 10) */
   reachFt?: number;
   /** Ranged normal distance in feet (e.g. 80 or 150) */
   rangeNormalFt?: number;
   /** Ranged maximum distance in feet (e.g. 320 or 600) */
   rangeMaxFt?: number;
+  /** Thrown normal distance in feet for melee weapons with Thrown property (default 20) */
+  thrownNormalFt?: number;
+  /** Thrown max distance in feet for melee weapons with Thrown property (default 60) */
+  thrownMaxFt?: number;
+  /** Linked weapon property IDs from catalogs.weaponProperties */
+  propertyIds?: string[];
   properties: string;
+  /** Linked weapon mastery ID from catalogs.weaponMasteries */
+  masteryId?: string | null;
   mastery: string;
+  /** Linked ammunition item ID from catalogs.gearItems (for weapons with Ammunition property) */
+  ammoItemId?: string | null;
   weight: string;
   price: string;
 }
@@ -280,8 +325,11 @@ export interface GameCatalogs {
   proficiencies: ProficiencyRef[];
   visions: VisionRef[];
   conditions: ConditionRef[];
+  weaponProperties: WeaponPropertyRef[];
+  weaponMasteries: WeaponMasteryRef[];
   weapons: WeaponRef[];
   armors: ArmorRef[];
+  gearItems: GearItemRef[];
   monsters: MonsterRef[];
 }
 
@@ -300,6 +348,14 @@ export interface InventoryItem {
   reachFt?: number;
   rangeNormalFt?: number;
   rangeMaxFt?: number;
+  thrownNormalFt?: number;
+  thrownMaxFt?: number;
+  versatileDamage?: string;
+  propertyIds?: string[];
+  masteryId?: string | null;
+  ammoItemId?: string | null;
+  gearKind?: GearItemKind;
+  packQuantity?: number;
   armorCategory?: ArmorCategory;
   damage?: string;
   properties?: string;
@@ -365,6 +421,11 @@ export interface GameLocation {
   kind: LocationKind;
   description: string;
   parentLocationId: string | null;
+  /** Whether the in-game clock dynamically tints this map and drives its lighting */
+  affectedByTimeOfDay?: boolean;
+  /** Optional looping MP3 ambient track played on TV when this location opens */
+  ambientAudioUrl?: string | null;
+  ambientAudioName?: string | null;
   /** Coordinates on the World Mind-Map canvas */
   graphX: number;
   graphY: number;
@@ -374,12 +435,37 @@ export interface GameLocation {
   tokens: MapToken[];
 }
 
+export type DeathSaveStatus = 'none' | 'dying' | 'stabilized' | 'dead';
+
+export interface DeathSavesState {
+  successes: number;
+  failures: number;
+  status: DeathSaveStatus;
+  /** Round number when the most recent turn death save was rolled */
+  lastRollRound?: number;
+}
+
+export interface GameClockState {
+  /** Total elapsed in-game minutes since Day 1 00:00 at anchorRealMs */
+  anchorGameMinutes: number;
+  /** Real-world epoch ms when anchorGameMinutes was captured */
+  anchorRealMs: number;
+  /** In-game minutes per 1 real minute (6 = 24 in-game hours per 4 real hours) */
+  timeScale: number;
+  paused: boolean;
+}
+
 export interface TvDisplayState {
   phase: TvPhase;
   campaignTitle: string;
   campaignSubtitle: string;
   titleCrestUrl: string;
   travelBackdropUrl: string;
+  /** Optional looping MP3 track played on TV during the initial title splash screen */
+  splashAudioUrl?: string | null;
+  splashAudioName?: string | null;
+  /** DM-controlled global mute switch for TV background audio */
+  audioMuted?: boolean;
   fromLocationName?: string;
   toLocationId?: string;
   toLocationName?: string;
@@ -407,6 +493,7 @@ export interface PublicPlayerInfo {
   initiative: number;
   speed?: number;
   exhaustionLevel?: number;
+  deathSaves?: DeathSavesState;
   conditions: string[];
   isConnected: boolean;
   /** Persisted location & position of this hero */
@@ -488,6 +575,7 @@ export interface FullGameState {
   catalogs: GameCatalogs;
   locations: GameLocation[];
   activeLocationId: string;
+  gameClock: GameClockState;
   tvDisplay: TvDisplayState;
   scene: SceneState;
   /** Synchronized mirror of the active location's map */
@@ -503,6 +591,10 @@ export interface TvGameState {
   updatedAt: number;
   activeLocationId: string;
   locationKind: LocationKind;
+  locationAffectedByTimeOfDay: boolean;
+  locationAmbientAudioUrl?: string | null;
+  locationAmbientAudioName?: string | null;
+  gameClock: GameClockState;
   tvDisplay: TvDisplayState;
   scene: SceneState;
   map: MapConfig;
@@ -517,6 +609,8 @@ export interface PlayerGameState {
   updatedAt: number;
   activeLocationId: string;
   locationKind: LocationKind;
+  locationAffectedByTimeOfDay: boolean;
+  gameClock: GameClockState;
   tvDisplay: TvDisplayState;
   catalogs: GameCatalogs;
   accounts: UserAccount[];
@@ -546,6 +640,9 @@ export type ClientMessage =
   | { type: 'dm:startGame' }
   | { type: 'dm:showTitleSplash' }
   | { type: 'dm:updateCampaignTitle'; campaignTitle: string; campaignSubtitle?: string }
+  | { type: 'dm:setAudioMuted'; muted: boolean }
+  | { type: 'dm:clearLocationAudio'; locationId: string }
+  | { type: 'dm:clearSplashAudio' }
   | {
       type: 'dm:beginLocationTransition';
       targetLocationId: string;
@@ -561,6 +658,9 @@ export type ClientMessage =
         kind: LocationKind;
         description?: string;
         parentLocationId?: string | null;
+        affectedByTimeOfDay?: boolean;
+        ambientAudioUrl?: string | null;
+        ambientAudioName?: string | null;
         graphX?: number;
         graphY?: number;
         map?: Partial<MapConfig>;
@@ -660,6 +760,27 @@ export type ClientMessage =
   | { type: 'dm:completeInitiativeRoll' }
   | { type: 'dm:cancelInitiativeRoll' }
   | { type: 'dm:resolveMonsterZeroHp'; tokenId: string; outcome: 'dead' | 'unconscious' }
+  | {
+      type: 'dm:recordDeathSave';
+      playerId: string;
+      outcome:
+        | 'success'
+        | 'failure'
+        | 'nat1'
+        | 'nat20'
+        | 'damage_1'
+        | 'damage_2'
+        | 'stabilize'
+        | 'reset';
+    }
+  | {
+      type: 'dm:updateGameClock';
+      setMinuteOfDay?: number;
+      setDay?: number;
+      addMinutes?: number;
+      paused?: boolean;
+      timeScale?: number;
+    }
   | { type: 'dm:setTokenConditions'; tokenId: string; conditions: string[] }
   | {
       type: 'dm:triggerEvent';
@@ -686,14 +807,23 @@ export type ClientMessage =
   | { type: 'dm:upsertCatalogItem'; catalog: 'proficiencies'; item: ProficiencyRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'visions'; item: VisionRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'conditions'; item: ConditionRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'weaponProperties'; item: WeaponPropertyRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'weaponMasteries'; item: WeaponMasteryRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'weapons'; item: WeaponRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'armors'; item: ArmorRef }
+  | { type: 'dm:upsertCatalogItem'; catalog: 'gearItems'; item: GearItemRef }
   | { type: 'dm:upsertCatalogItem'; catalog: 'monsters'; item: MonsterRef }
   | { type: 'dm:deleteCatalogItem'; catalog: CatalogKey; itemId: string }
   | { type: 'dm:resetCatalogs' }
   | { type: 'dm:resetSession' }
   | { type: 'player:toggleEquip'; playerId: string; itemId: string }
-  | { type: 'player:useConsumable'; playerId: string; itemId: string };
+  | { type: 'player:useConsumable'; playerId: string; itemId: string }
+  | {
+      type: 'player:spendAmmo';
+      playerId: string;
+      ammoItemId: string;
+      delta?: number;
+    };
 
 export type ServerMessage =
   | { type: 'tv:state'; payload: TvGameState }

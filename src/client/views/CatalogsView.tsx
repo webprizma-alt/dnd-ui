@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Award,
+  Backpack,
   BookOpen,
   Calculator,
   Check,
@@ -27,6 +28,7 @@ import {
   Star,
   Sword,
   Swords,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -38,10 +40,12 @@ import {
   formatArmorClassFormula,
   formatEntityVisions,
   formatModifier,
+  formatWeaponPropertiesSummary,
   formatWeaponReachRange,
   getAbilityModifier,
   getArmorCategoryLabel,
   getClassHitDieInfo,
+  getGearKindLabel,
   getVisionBehaviorLabel,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
@@ -61,6 +65,8 @@ import type {
   ConditionRef,
   EntityVisionEntry,
   FeatRef,
+  GearItemKind,
+  GearItemRef,
   LevelThresholdRef,
   MonsterActionRef,
   MonsterRef,
@@ -73,6 +79,8 @@ import type {
   VisionBehavior,
   VisionRef,
   WeaponCategory,
+  WeaponMasteryRef,
+  WeaponPropertyRef,
   WeaponRangeType,
   WeaponRef,
 } from '../../shared/types';
@@ -177,9 +185,21 @@ const SECTIONS: CatalogSectionMeta[] = [
     icon: AlertTriangle,
   },
   {
+    key: 'weaponProperties',
+    label: 'Свойства оружия',
+    subtitle: 'Универсальное, Лёгкое, Метательное, Фехтовальное, Двуручное, Тяжёлое, Досягаемость, Боеприпас, Перезарядка.',
+    icon: Tag,
+  },
+  {
+    key: 'weaponMasteries',
+    label: 'Мастерство оружия',
+    subtitle: 'Оружейные мастерства (Опрокидывание, Ослабление, Замедление, Быстрое и др.) для героев с умением «Оружейное мастерство».',
+    icon: Zap,
+  },
+  {
     key: 'weapons',
     label: 'Оружие',
-    subtitle: 'Простое и воинское, рукопашное и дальнобойное оружие: урон, свойства, мастерство, вес и цена.',
+    subtitle: 'Простое и воинское, рукопашное и дальнобойное оружие: урон, свойства, мастерство, боеприпасы, вес и цена.',
     icon: Sword,
   },
   {
@@ -187,6 +207,12 @@ const SECTIONS: CatalogSectionMeta[] = [
     label: 'Доспехи и щиты',
     subtitle: 'Лёгкие, средние, тяжёлые доспехи и щиты с конструктором формулы Класса Защиты (КЗ).',
     icon: ShieldCheck,
+  },
+  {
+    key: 'gearItems',
+    label: 'Вещи',
+    subtitle: 'Боеприпасы (Стрелы, Болты), контейнеры (Колчан, Футляр) с лимитами вместимости и предметы снаряжения.',
+    icon: Backpack,
   },
   {
     key: 'monsters',
@@ -269,13 +295,30 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
   const [weaponReachDraft, setWeaponReachDraft] = useState<number>(5);
   const [weaponRangeNormalDraft, setWeaponRangeNormalDraft] = useState<number>(80);
   const [weaponRangeMaxDraft, setWeaponRangeMaxDraft] = useState<number>(320);
+  const [weaponThrownNormalDraft, setWeaponThrownNormalDraft] = useState<number>(20);
+  const [weaponThrownMaxDraft, setWeaponThrownMaxDraft] = useState<number>(60);
   const [weaponDamageDraft, setWeaponDamageDraft] = useState('');
+  const [weaponVersatileDamageDraft, setWeaponVersatileDamageDraft] = useState('');
+  const [weaponPropertyIdsDraft, setWeaponPropertyIdsDraft] = useState<string[]>([]);
   const [weaponPropsDraft, setWeaponPropsDraft] = useState('');
+  const [weaponMasteryIdDraft, setWeaponMasteryIdDraft] = useState<string>('');
   const [weaponMasteryDraft, setWeaponMasteryDraft] = useState('');
+  const [weaponAmmoItemIdDraft, setWeaponAmmoItemIdDraft] = useState<string>('');
   const [weaponWeightDraft, setWeaponWeightDraft] = useState('');
   const [weaponPriceDraft, setWeaponPriceDraft] = useState('');
   const [weaponFilter, setWeaponFilter] = useState<'all' | WeaponCategory>('all');
   const [weaponRangeFilter, setWeaponRangeFilter] = useState<'all' | WeaponRangeType>('all');
+
+  // Gear item form drafts & filter
+  const [gearKindDraft, setGearKindDraft] = useState<GearItemKind>('equipment');
+  const [gearPriceDraft, setGearPriceDraft] = useState('');
+  const [gearWeightDraft, setGearWeightDraft] = useState('');
+  const [gearPackQtyDraft, setGearPackQtyDraft] = useState<number>(20);
+  const [gearContainerIdDraft, setGearContainerIdDraft] = useState<string>('');
+  const [gearCompatibleWeaponsDraft, setGearCompatibleWeaponsDraft] = useState<string[]>([]);
+  const [gearCapacityDraft, setGearCapacityDraft] = useState<number>(20);
+  const [gearStoredAmmoIdDraft, setGearStoredAmmoIdDraft] = useState<string>('');
+  const [gearFilter, setGearFilter] = useState<'all' | GearItemKind>('all');
 
   // Armor form drafts (structured AC constructor) & filter
   const [armorCategoryDraft, setArmorCategoryDraft] = useState<ArmorCategory>('light');
@@ -383,11 +426,25 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
     setWeaponReachDraft(5);
     setWeaponRangeNormalDraft(80);
     setWeaponRangeMaxDraft(320);
+    setWeaponThrownNormalDraft(20);
+    setWeaponThrownMaxDraft(60);
     setWeaponDamageDraft('');
+    setWeaponVersatileDamageDraft('');
+    setWeaponPropertyIdsDraft([]);
     setWeaponPropsDraft('');
+    setWeaponMasteryIdDraft('');
     setWeaponMasteryDraft('');
+    setWeaponAmmoItemIdDraft('');
     setWeaponWeightDraft('');
     setWeaponPriceDraft('');
+    setGearKindDraft('equipment');
+    setGearPriceDraft('');
+    setGearWeightDraft('');
+    setGearPackQtyDraft(20);
+    setGearContainerIdDraft('');
+    setGearCompatibleWeaponsDraft([]);
+    setGearCapacityDraft(20);
+    setGearStoredAmmoIdDraft('');
     setArmorCategoryDraft('light');
     setArmorAcBaseDraft(11);
     setArmorAcAbilityDraft('dex');
@@ -590,6 +647,29 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setEditingId(cond.id);
       setNameDraft(cond.name);
       setDescDraft(cond.description);
+    } else if (activeSection === 'weaponProperties') {
+      const prop = item as WeaponPropertyRef;
+      setEditingId(prop.id);
+      setNameDraft(prop.name);
+      setDescDraft(prop.description);
+    } else if (activeSection === 'weaponMasteries') {
+      const mst = item as WeaponMasteryRef;
+      setEditingId(mst.id);
+      setNameDraft(mst.name);
+      setDescDraft(mst.description);
+    } else if (activeSection === 'gearItems') {
+      const g = item as GearItemRef;
+      setEditingId(g.id);
+      setNameDraft(g.name);
+      setGearKindDraft(g.kind || 'equipment');
+      setGearPriceDraft(g.price || '');
+      setGearWeightDraft(g.weight || '');
+      setGearPackQtyDraft(g.packQuantity ?? 20);
+      setGearContainerIdDraft(g.containerId ?? '');
+      setGearCompatibleWeaponsDraft([...(g.compatibleWeaponIds ?? [])]);
+      setGearCapacityDraft(g.capacity ?? 20);
+      setGearStoredAmmoIdDraft(g.storedAmmoId ?? '');
+      setDescDraft(g.description || '');
     } else if (activeSection === 'weapons') {
       const wp = item as WeaponRef;
       setEditingId(wp.id);
@@ -599,9 +679,15 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
       setWeaponReachDraft(wp.reachFt ?? 5);
       setWeaponRangeNormalDraft(wp.rangeNormalFt ?? 80);
       setWeaponRangeMaxDraft(wp.rangeMaxFt ?? 320);
+      setWeaponThrownNormalDraft(wp.thrownNormalFt ?? 20);
+      setWeaponThrownMaxDraft(wp.thrownMaxFt ?? 60);
       setWeaponDamageDraft(wp.damage);
+      setWeaponVersatileDamageDraft(wp.versatileDamage ?? '');
+      setWeaponPropertyIdsDraft([...(wp.propertyIds ?? [])]);
       setWeaponPropsDraft(wp.properties);
+      setWeaponMasteryIdDraft(wp.masteryId ?? '');
       setWeaponMasteryDraft(wp.mastery);
+      setWeaponAmmoItemIdDraft(wp.ammoItemId ?? '');
       setWeaponWeightDraft(wp.weight);
       setWeaponPriceDraft(wp.price);
     } else if (activeSection === 'armors') {
@@ -874,9 +960,56 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           automatedSummary: existing?.automatedSummary,
         },
       });
+    } else if (activeSection === 'weaponProperties') {
+      if (!nameDraft.trim()) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'weaponProperties',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+        },
+      });
+    } else if (activeSection === 'weaponMasteries') {
+      if (!nameDraft.trim()) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'weaponMasteries',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          description: descDraft.trim(),
+        },
+      });
+    } else if (activeSection === 'gearItems') {
+      if (!nameDraft.trim()) return;
+      send({
+        type: 'dm:upsertCatalogItem',
+        catalog: 'gearItems',
+        item: {
+          id: editingId ?? '',
+          name: nameDraft.trim(),
+          kind: gearKindDraft,
+          price: gearPriceDraft.trim() || '—',
+          weight: gearWeightDraft.trim() || '—',
+          packQuantity:
+            gearKindDraft === 'ammunition' ? Math.max(1, Math.round(gearPackQtyDraft || 20)) : undefined,
+          containerId: gearKindDraft === 'ammunition' ? gearContainerIdDraft || null : null,
+          compatibleWeaponIds:
+            gearKindDraft === 'ammunition' ? [...gearCompatibleWeaponsDraft] : undefined,
+          capacity:
+            gearKindDraft === 'container' ? Math.max(1, Math.round(gearCapacityDraft || 20)) : undefined,
+          storedAmmoId: gearKindDraft === 'container' ? gearStoredAmmoIdDraft || null : null,
+          description: descDraft.trim(),
+        },
+      });
     } else if (activeSection === 'weapons') {
       if (!nameDraft.trim()) return;
-      const safeReach = Math.max(0, Math.round(Number.isFinite(weaponReachDraft) ? weaponReachDraft : 5));
+      const safeReach = Math.max(
+        0,
+        Math.round(Number.isFinite(weaponReachDraft) ? weaponReachDraft : 5)
+      );
       const safeNormal = Math.max(
         0,
         Math.round(Number.isFinite(weaponRangeNormalDraft) ? weaponRangeNormalDraft : 80)
@@ -885,6 +1018,37 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
         safeNormal,
         Math.round(Number.isFinite(weaponRangeMaxDraft) ? weaponRangeMaxDraft : safeNormal * 4)
       );
+      const safeThrownNormal = Math.max(
+        5,
+        Math.round(Number.isFinite(weaponThrownNormalDraft) ? weaponThrownNormalDraft : 20)
+      );
+      const safeThrownMax = Math.max(
+        safeThrownNormal,
+        Math.round(Number.isFinite(weaponThrownMaxDraft) ? weaponThrownMaxDraft : 60)
+      );
+      const hasVersatile = weaponPropertyIdsDraft.includes('prop-versatile');
+      const hasThrown = weaponPropertyIdsDraft.includes('prop-thrown');
+      const hasAmmo = weaponPropertyIdsDraft.includes('prop-ammunition');
+      const selectedMastery = weaponMasteryIdDraft
+        ? catalogs.weaponMasteries.find((m) => m.id === weaponMasteryIdDraft) ?? null
+        : null;
+      const formattedProps =
+        weaponPropertyIdsDraft.length > 0
+          ? formatWeaponPropertiesSummary(
+              {
+                propertyIds: weaponPropertyIdsDraft,
+                properties: weaponPropsDraft.trim(),
+                versatileDamage: hasVersatile ? weaponVersatileDamageDraft.trim() || '1к8' : undefined,
+                rangeType: weaponRangeDraft,
+                rangeNormalFt: weaponRangeDraft === 'ranged' ? safeNormal : undefined,
+                rangeMaxFt: weaponRangeDraft === 'ranged' ? safeMax : undefined,
+                thrownNormalFt: hasThrown ? safeThrownNormal : undefined,
+                thrownMaxFt: hasThrown ? safeThrownMax : undefined,
+              },
+              catalogs
+            )
+          : weaponPropsDraft.trim() || '—';
+
       send({
         type: 'dm:upsertCatalogItem',
         catalog: 'weapons',
@@ -894,11 +1058,17 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
           rangeType: weaponRangeDraft,
           name: nameDraft.trim(),
           damage: weaponDamageDraft.trim() || '—',
+          versatileDamage: hasVersatile ? weaponVersatileDamageDraft.trim() || '1к8' : undefined,
           reachFt: weaponRangeDraft === 'melee' ? safeReach : undefined,
           rangeNormalFt: weaponRangeDraft === 'ranged' ? safeNormal : undefined,
           rangeMaxFt: weaponRangeDraft === 'ranged' ? safeMax : undefined,
-          properties: weaponPropsDraft.trim() || '—',
-          mastery: weaponMasteryDraft.trim() || '—',
+          thrownNormalFt: hasThrown ? safeThrownNormal : undefined,
+          thrownMaxFt: hasThrown ? safeThrownMax : undefined,
+          propertyIds: [...weaponPropertyIdsDraft],
+          properties: formattedProps,
+          masteryId: selectedMastery?.id ?? null,
+          mastery: selectedMastery?.name ?? (weaponMasteryDraft.trim() || '—'),
+          ammoItemId: hasAmmo ? weaponAmmoItemIdDraft || null : null,
           weight: weaponWeightDraft.trim() || '—',
           price: weaponPriceDraft.trim() || '—',
         },
@@ -2307,6 +2477,207 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
+              {(activeSection === 'weaponProperties' || activeSection === 'weaponMasteries') && (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder={
+                        activeSection === 'weaponProperties'
+                          ? 'Название свойства (напр. Универсальное)'
+                          : 'Название мастерства (напр. Опрокидывание)'
+                      }
+                      className="sm:col-span-9 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-3 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Подробное описание правил..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
+              {activeSection === 'gearItems' && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-xs text-slate-400">Тип вещи:</span>
+                    <div className="inline-flex flex-wrap p-1 rounded-lg bg-[#0B0F17] border border-slate-800">
+                      {(
+                        [
+                          ['ammunition', 'Боеприпас'],
+                          ['container', 'Контейнер'],
+                          ['equipment', 'Предмет снаряжения'],
+                        ] as Array<[GearItemKind, string]>
+                      ).map(([k, label]) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setGearKindDraft(k)}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            gearKindDraft === k
+                              ? 'bg-amber-500 text-slate-950 font-semibold'
+                              : 'text-slate-300 hover:text-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-12 gap-3">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="Название (напр. Стрелы, Колчан)"
+                      className="sm:col-span-5 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
+                      required
+                    />
+                    <input
+                      type="text"
+                      value={gearPriceDraft}
+                      onChange={(e) => setGearPriceDraft(e.target.value)}
+                      placeholder="Стоимость (напр. 1 ЗМ)"
+                      className="sm:col-span-2 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-amber-300"
+                    />
+                    <input
+                      type="text"
+                      value={gearWeightDraft}
+                      onChange={(e) => setGearWeightDraft(e.target.value)}
+                      placeholder="Вес (напр. 1 фнт.)"
+                      className="sm:col-span-3 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100"
+                    />
+                    <button
+                      type="submit"
+                      className="sm:col-span-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
+                    </button>
+                  </div>
+
+                  {gearKindDraft === 'ammunition' && (
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-3">
+                      <div className="grid sm:grid-cols-12 gap-3">
+                        <label className="sm:col-span-4 space-y-1">
+                          <span className="text-[11px] text-slate-400">Количество в упаковке (за указанный вес)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000}
+                            value={gearPackQtyDraft}
+                            onChange={(e) => setGearPackQtyDraft(Math.max(1, Number(e.target.value) || 20))}
+                            className="w-full px-3 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100"
+                          />
+                        </label>
+                        <label className="sm:col-span-8 space-y-1">
+                          <span className="text-[11px] text-slate-400">Контейнер для хранения</span>
+                          <select
+                            value={gearContainerIdDraft}
+                            onChange={(e) => setGearContainerIdDraft(e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                          >
+                            <option value="">Без обязательного контейнера</option>
+                            {catalogs.gearItems
+                              .filter((g) => g.kind === 'container' && g.id !== editingId)
+                              .map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name} (до {c.capacity ?? 20} шт.)
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] text-slate-400">Подходящее оружие:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {catalogs.weapons
+                            .filter((w) => w.rangeType === 'ranged')
+                            .map((w) => {
+                              const active = gearCompatibleWeaponsDraft.includes(w.id);
+                              return (
+                                <button
+                                  key={w.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setGearCompatibleWeaponsDraft((prev) =>
+                                      prev.includes(w.id)
+                                        ? prev.filter((id) => id !== w.id)
+                                        : [...prev, w.id]
+                                    )
+                                  }
+                                  className={`px-2.5 py-1 rounded-md text-[11px] border transition-colors ${
+                                    active
+                                      ? 'bg-amber-500/20 border-amber-500/60 text-amber-200 font-medium'
+                                      : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  {w.name}
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {gearKindDraft === 'container' && (
+                    <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 grid sm:grid-cols-12 gap-3">
+                      <label className="sm:col-span-4 space-y-1">
+                        <span className="text-[11px] text-slate-400">Вместимость (шт.)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          value={gearCapacityDraft}
+                          onChange={(e) => setGearCapacityDraft(Math.max(1, Number(e.target.value) || 20))}
+                          className="w-full px-3 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs font-mono text-slate-100"
+                        />
+                      </label>
+                      <label className="sm:col-span-8 space-y-1">
+                        <span className="text-[11px] text-slate-400">Хранимые боеприпасы</span>
+                        <select
+                          value={gearStoredAmmoIdDraft}
+                          onChange={(e) => setGearStoredAmmoIdDraft(e.target.value)}
+                          className="w-full px-3 py-1.5 rounded-lg bg-[#131A26] border border-slate-800 text-xs text-slate-100"
+                        >
+                          <option value="">Любые / не привязано</option>
+                          {catalogs.gearItems
+                            .filter((g) => g.kind === 'ammunition' && g.id !== editingId)
+                            .map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+
+                  <textarea
+                    rows={2}
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="Описание предмета..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100 resize-y"
+                  />
+                </div>
+              )}
+
               {activeSection === 'weapons' && (
                 <div className="space-y-3">
                   {/* Dual Toggles: Простое/Воинское & Рукопашное/Дальнобойное */}
@@ -2434,40 +2805,148 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                       placeholder="Урон (напр. 1к8 рубящий)"
                       className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
                     />
-                    <input
-                      type="text"
-                      value={weaponMasteryDraft}
-                      onChange={(e) => setWeaponMasteryDraft(e.target.value)}
-                      placeholder="Мастерство (напр. Ослабление)"
+                    <select
+                      value={weaponMasteryIdDraft}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setWeaponMasteryIdDraft(nextId);
+                        const found = catalogs.weaponMasteries.find((m) => m.id === nextId);
+                        setWeaponMasteryDraft(found?.name ?? '');
+                      }}
                       className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
-                    />
+                    >
+                      <option value="">Мастерство: не выбрано</option>
+                      {catalogs.weaponMasteries.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          Мастерство: {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Linked Weapon Properties selector */}
+                  <div className="p-3 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-slate-300">
+                        Свойства оружия (из справочника):
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Выбрано: {weaponPropertyIdsDraft.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {catalogs.weaponProperties.map((prop) => {
+                        const selected = weaponPropertyIdsDraft.includes(prop.id);
+                        return (
+                          <button
+                            key={prop.id}
+                            type="button"
+                            title={prop.description}
+                            onClick={() =>
+                              setWeaponPropertyIdsDraft((prev) =>
+                                prev.includes(prop.id)
+                                  ? prev.filter((id) => id !== prop.id)
+                                  : [...prev, prop.id]
+                              )
+                            }
+                            className={`px-2.5 py-1 rounded-md text-[11px] border transition-colors ${
+                              selected
+                                ? 'bg-amber-500/20 border-amber-500/60 text-amber-200 font-medium'
+                                : 'bg-[#131A26] border-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {prop.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Conditional inputs for Versatile / Thrown / Ammunition */}
+                    {(weaponPropertyIdsDraft.includes('prop-versatile') ||
+                      weaponPropertyIdsDraft.includes('prop-thrown') ||
+                      weaponPropertyIdsDraft.includes('prop-ammunition')) && (
+                      <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-3">
+                        {weaponPropertyIdsDraft.includes('prop-versatile') && (
+                          <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                            <span>Урон двумя руками:</span>
+                            <input
+                              type="text"
+                              value={weaponVersatileDamageDraft}
+                              onChange={(e) => setWeaponVersatileDamageDraft(e.target.value)}
+                              placeholder="1к8 или 1к10"
+                              className="w-24 px-2 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs font-mono text-amber-200"
+                            />
+                          </label>
+                        )}
+                        {weaponPropertyIdsDraft.includes('prop-thrown') && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-300">
+                            <span>Метание (фт.):</span>
+                            <input
+                              type="number"
+                              min={5}
+                              max={500}
+                              step={5}
+                              value={weaponThrownNormalDraft}
+                              onChange={(e) =>
+                                setWeaponThrownNormalDraft(Math.max(5, Number(e.target.value) || 20))
+                              }
+                              className="w-16 px-2 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs font-mono text-slate-100 text-center"
+                            />
+                            <span className="text-slate-500">/</span>
+                            <input
+                              type="number"
+                              min={5}
+                              max={1000}
+                              step={5}
+                              value={weaponThrownMaxDraft}
+                              onChange={(e) =>
+                                setWeaponThrownMaxDraft(Math.max(5, Number(e.target.value) || 60))
+                              }
+                              className="w-16 px-2 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs font-mono text-slate-100 text-center"
+                            />
+                          </div>
+                        )}
+                        {weaponPropertyIdsDraft.includes('prop-ammunition') && (
+                          <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                            <span>Боеприпас:</span>
+                            <select
+                              value={weaponAmmoItemIdDraft}
+                              onChange={(e) => setWeaponAmmoItemIdDraft(e.target.value)}
+                              className="px-2.5 py-1 rounded-lg bg-[#131A26] border border-slate-700 text-xs text-slate-100"
+                            >
+                              <option value="">Выберите боеприпас...</option>
+                              {catalogs.gearItems
+                                .filter((g) => g.kind === 'ammunition')
+                                .map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.name}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid sm:grid-cols-12 gap-3">
                     <input
                       type="text"
-                      value={weaponPropsDraft}
-                      onChange={(e) => setWeaponPropsDraft(e.target.value)}
-                      placeholder="Свойства (напр. Универсальное (1к10), Лёгкое)"
-                      className="sm:col-span-6 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-100"
-                    />
-                    <input
-                      type="text"
                       value={weaponWeightDraft}
                       onChange={(e) => setWeaponWeightDraft(e.target.value)}
                       placeholder="Вес (напр. 3 фнт.)"
-                      className="sm:col-span-2 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100"
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-slate-100"
                     />
                     <input
                       type="text"
                       value={weaponPriceDraft}
                       onChange={(e) => setWeaponPriceDraft(e.target.value)}
                       placeholder="Цена (напр. 15 зм)"
-                      className="sm:col-span-2 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-amber-300"
+                      className="sm:col-span-4 px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono text-amber-300"
                     />
                     <button
                       type="submit"
-                      className="sm:col-span-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                      className="sm:col-span-4 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
                     >
                       {editingId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                       <span>{editingId ? 'Сохранить' : 'Добавить'}</span>
@@ -4189,6 +4668,230 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                 </div>
               )}
 
+              {activeSection === 'weaponProperties' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.weaponProperties
+                    .filter(
+                      (p) =>
+                        !q ||
+                        p.name.toLowerCase().includes(q) ||
+                        p.description.toLowerCase().includes(q)
+                    )
+                    .map((prop) => {
+                      const linkedCount = catalogs.weapons.filter((w) =>
+                        w.propertyIds?.includes(prop.id)
+                      ).length;
+                      return (
+                        <div
+                          key={prop.id}
+                          className="p-4 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                        >
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-amber-300">{prop.name}</span>
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-slate-400">
+                                оружий: {linkedCount}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                              {prop.description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(prop)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                              aria-label="Редактировать"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(prop.id)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                              aria-label="Удалить"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {activeSection === 'weaponMasteries' && (
+                <div className="divide-y divide-slate-800/80">
+                  {catalogs.weaponMasteries
+                    .filter(
+                      (m) =>
+                        !q ||
+                        m.name.toLowerCase().includes(q) ||
+                        m.description.toLowerCase().includes(q)
+                    )
+                    .map((mst) => {
+                      const linkedWeapons = catalogs.weapons.filter((w) => w.masteryId === mst.id);
+                      return (
+                        <div
+                          key={mst.id}
+                          className="p-4 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                        >
+                          <div className="space-y-1.5 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-violet-300">{mst.name}</span>
+                              {linkedWeapons.length > 0 && (
+                                <span className="text-[11px] text-slate-400">
+                                  ({linkedWeapons.map((w) => w.name).join(', ')})
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                              {mst.description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(mst)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                              aria-label="Редактировать"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(mst.id)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                              aria-label="Удалить"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {activeSection === 'gearItems' && (
+                <div>
+                  <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/40 flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        ['all', 'Все'],
+                        ['ammunition', 'Боеприпасы'],
+                        ['container', 'Контейнеры'],
+                        ['equipment', 'Снаряжение'],
+                      ] as Array<['all' | GearItemKind, string]>
+                    ).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setGearFilter(key)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                          gearFilter === key
+                            ? 'bg-slate-800 text-amber-400'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="divide-y divide-slate-800/80">
+                    {catalogs.gearItems
+                      .filter(
+                        (g) =>
+                          (gearFilter === 'all' || g.kind === gearFilter) &&
+                          (!q ||
+                            g.name.toLowerCase().includes(q) ||
+                            g.description.toLowerCase().includes(q))
+                      )
+                      .map((g) => {
+                        const containerRef = g.containerId
+                          ? catalogs.gearItems.find((x) => x.id === g.containerId)
+                          : null;
+                        const storedAmmoRef = g.storedAmmoId
+                          ? catalogs.gearItems.find((x) => x.id === g.storedAmmoId)
+                          : null;
+                        const compatNames = (g.compatibleWeaponIds ?? [])
+                          .map((id) => catalogs.weapons.find((w) => w.id === id)?.name)
+                          .filter(Boolean);
+                        return (
+                          <div
+                            key={g.id}
+                            className="p-4 flex items-start justify-between gap-4 hover:bg-slate-800/30 transition-colors"
+                          >
+                            <div className="space-y-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-slate-100">{g.name}</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                                    g.kind === 'ammunition'
+                                      ? 'bg-amber-500/20 text-amber-300'
+                                      : g.kind === 'container'
+                                        ? 'bg-sky-500/20 text-sky-300'
+                                        : 'bg-slate-800 text-slate-300'
+                                  }`}
+                                >
+                                  {getGearKindLabel(g.kind)}
+                                </span>
+                                <span className="text-[11px] font-mono text-amber-300">{g.price}</span>
+                                <span className="text-[11px] font-mono text-slate-400">{g.weight}</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                                {g.kind === 'ammunition' && (
+                                  <>
+                                    <span>Упаковка: {g.packQuantity ?? 20} шт.</span>
+                                    {containerRef && (
+                                      <span className="text-sky-300">
+                                        Контейнер: {containerRef.name}
+                                      </span>
+                                    )}
+                                    {compatNames.length > 0 && (
+                                      <span className="text-emerald-300">
+                                        Оружие: {compatNames.join(', ')}
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                                {g.kind === 'container' && (
+                                  <span className="text-sky-300">
+                                    Вместимость: до {g.capacity ?? 20}
+                                    {storedAmmoRef ? ` (${storedAmmoRef.name})` : ' шт.'}
+                                  </span>
+                                )}
+                              </div>
+                              {g.description && (
+                                <p className="text-xs text-slate-300 leading-relaxed">{g.description}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(g)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                                aria-label="Редактировать"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(g.id)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                                aria-label="Удалить"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
               {activeSection === 'weapons' && (
                 <div>
                   <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0B0F17]/40 flex flex-wrap items-center justify-between gap-2">
@@ -4258,7 +4961,8 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                           .filter(
                             (w) =>
                               (weaponFilter === 'all' || w.category === weaponFilter) &&
-                              (weaponRangeFilter === 'all' || (w.rangeType || 'melee') === weaponRangeFilter) &&
+                              (weaponRangeFilter === 'all' ||
+                                (w.rangeType || 'melee') === weaponRangeFilter) &&
                               (!q ||
                                 w.name.toLowerCase().includes(q) ||
                                 w.damage.toLowerCase().includes(q) ||
@@ -4267,10 +4971,21 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                           )
                           .map((wp) => {
                             const reachLabel = formatWeaponReachRange(wp.rangeType || 'melee', wp);
+                            const ammoRef = wp.ammoItemId
+                              ? catalogs.gearItems.find((g) => g.id === wp.ammoItemId)
+                              : null;
+                            const masteryRef = wp.masteryId
+                              ? catalogs.weaponMasteries.find((m) => m.id === wp.masteryId)
+                              : null;
                             return (
                               <tr key={wp.id} className="hover:bg-slate-800/30 transition-colors">
                                 <td className="py-2.5 px-3 font-semibold text-slate-100 whitespace-nowrap">
-                                  {wp.name}
+                                  <div>{wp.name}</div>
+                                  {ammoRef && (
+                                    <div className="text-[10px] font-normal text-amber-300/80">
+                                      Боеприпас: {ammoRef.name}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="py-2.5 px-3 whitespace-nowrap">
                                   <span className="text-amber-400">
@@ -4287,11 +5002,20 @@ export function CatalogsView({ onNavigate }: CatalogsViewProps) {
                                 <td className="py-2.5 px-3 font-mono text-slate-200 whitespace-nowrap">
                                   {wp.damage}
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-300 max-w-[240px]">
+                                <td className="py-2.5 px-3 text-slate-300 max-w-[260px]">
                                   {wp.properties}
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
-                                  {wp.mastery}
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  {masteryRef ? (
+                                    <span
+                                      className="px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/40 text-violet-200 text-[11px]"
+                                      title={masteryRef.description}
+                                    >
+                                      {masteryRef.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">{wp.mastery || '—'}</span>
+                                  )}
                                 </td>
                                 <td className="py-2.5 px-3 font-mono tabular-nums text-slate-400 whitespace-nowrap">
                                   {wp.weight}

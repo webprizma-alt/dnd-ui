@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
+  Clock,
   Compass,
   Eye,
   EyeOff,
@@ -11,8 +12,10 @@ import {
   Map as MapIcon,
   MapPin,
   Moon,
+  Music,
   Plus,
   SlidersHorizontal,
+  Sparkles,
   Sun,
   Sunset,
   Swords,
@@ -62,6 +65,10 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
   const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
+  const [uploadingSplashAudio, setUploadingSplashAudio] = useState(false);
+  const [splashAudioError, setSplashAudioError] = useState<string | null>(null);
 
   // New location quick creator modal
   const [showNewLocation, setShowNewLocation] = useState(false);
@@ -71,6 +78,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
   const [newLocDesc, setNewLocDesc] = useState('');
   const [newLocCols, setNewLocCols] = useState(16);
   const [newLocRows, setNewLocRows] = useState(9);
+  const [newLocTimeOfDay, setNewLocTimeOfDay] = useState(false);
   const pendingCreatedNameRef = useRef<string | null>(null);
   const prevLocationIdsRef = useRef<Set<string>>(new Set());
 
@@ -96,6 +104,8 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const locationAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const splashAudioInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!dmState) return;
@@ -305,6 +315,68 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
     }
   };
 
+  const handleUploadLocationAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setAudioUploadError('Файл слишком большой (максимум 25 МБ)');
+      if (locationAudioInputRef.current) locationAudioInputRef.current.value = '';
+      return;
+    }
+    setUploadingAudio(true);
+    setAudioUploadError(null);
+    try {
+      const url = `/api/audio/upload?target=location&locationId=${encodeURIComponent(selectedLocation.id)}&filename=${encodeURIComponent(file.name)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'audio/mpeg',
+        },
+        body: file,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || 'Ошибка загрузки MP3');
+      }
+    } catch (err) {
+      setAudioUploadError(err instanceof Error ? err.message : 'Ошибка загрузки MP3');
+    } finally {
+      setUploadingAudio(false);
+      if (locationAudioInputRef.current) locationAudioInputRef.current.value = '';
+    }
+  };
+
+  const handleUploadSplashAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setSplashAudioError('Файл слишком большой (максимум 25 МБ)');
+      if (splashAudioInputRef.current) splashAudioInputRef.current.value = '';
+      return;
+    }
+    setUploadingSplashAudio(true);
+    setSplashAudioError(null);
+    try {
+      const url = `/api/audio/upload?target=splash&filename=${encodeURIComponent(file.name)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'audio/mpeg',
+        },
+        body: file,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || 'Ошибка загрузки MP3 заставки');
+      }
+    } catch (err) {
+      setSplashAudioError(err instanceof Error ? err.message : 'Ошибка загрузки MP3 заставки');
+    } finally {
+      setUploadingSplashAudio(false);
+      if (splashAudioInputRef.current) splashAudioInputRef.current.value = '';
+    }
+  };
+
   const openNewLocationModal = () => {
     setNewLocParentId(selectedLocation?.id ?? '');
     setNewLocName('');
@@ -312,6 +384,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
     setNewLocKind('city');
     setNewLocCols(16);
     setNewLocRows(9);
+    setNewLocTimeOfDay(false);
     setShowNewLocation(true);
   };
 
@@ -327,6 +400,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
         kind: newLocKind,
         description: newLocDesc.trim(),
         parentLocationId: newLocParentId || null,
+        affectedByTimeOfDay: newLocTimeOfDay,
         map:
           newLocKind === 'tactical'
             ? {
@@ -339,6 +413,7 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
     });
     setNewLocName('');
     setNewLocDesc('');
+    setNewLocTimeOfDay(false);
     setShowNewLocation(false);
   };
 
@@ -633,9 +708,23 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
                             <div className="text-xs font-semibold text-slate-100 truncate">
                               {loc.name}
                             </div>
-                            <div className="text-[10px] text-slate-400">
-                              {loc.kind === 'tactical' ? 'Тактическая карта' : 'Карта города'}
-                              {isActive ? ' · На экране' : ''}
+                            <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                              <span>
+                                {loc.kind === 'tactical' ? 'Тактическая карта' : 'Карта города'}
+                                {isActive ? ' · На экране' : ''}
+                              </span>
+                              {loc.affectedByTimeOfDay && (
+                                <Clock
+                                  className="w-3 h-3 text-amber-400 shrink-0"
+                                  aria-label="Зависит от времени суток"
+                                />
+                              )}
+                              {loc.ambientAudioUrl && (
+                                <Music
+                                  className="w-3 h-3 text-emerald-400 shrink-0"
+                                  aria-label="Загружен фоновый звук"
+                                />
+                              )}
                             </div>
                           </div>
                         </div>
@@ -952,6 +1041,101 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
                     {getMapLightingDescription(selectedLocation.map.lighting ?? 'bright')}
                   </p>
                 </div>
+
+                {/* Dynamic Day/Night Toggle (In-Game Clock Integration) */}
+                <label className="pt-2 border-t border-slate-800/80 flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedLocation.affectedByTimeOfDay)}
+                    onChange={(e) =>
+                      send({
+                        type: 'dm:upsertLocation',
+                        location: {
+                          id: selectedLocation.id,
+                          name: locNameDraft.trim() || selectedLocation.name,
+                          kind: selectedLocation.kind,
+                          affectedByTimeOfDay: e.target.checked,
+                        },
+                      })
+                    }
+                    className="mt-0.5 rounded border-slate-600 bg-[#131A26] text-amber-500 focus:ring-amber-500"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="text-[11px] font-medium text-slate-200 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Зависит от игрового времени (день/ночь)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-snug">
+                      Карта динамически меняет оттенок и освещённость по игровым часам (утро, день, закат, ночь). Рекомендуется для открытых карт города и улицы.
+                    </p>
+                  </div>
+                </label>
+
+                {/* Location Ambient Audio (Looping MP3 on TV) */}
+                <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                  <input
+                    ref={locationAudioInputRef}
+                    type="file"
+                    accept=".mp3,audio/mpeg,audio/mp3"
+                    onChange={handleUploadLocationAudio}
+                    className="hidden"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-slate-200 flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>Фоновый звук локации (MP3)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => locationAudioInputRef.current?.click()}
+                      disabled={uploadingAudio}
+                      className="px-2.5 py-1 rounded-md bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-[11px] font-medium text-emerald-300 transition-colors"
+                    >
+                      {uploadingAudio
+                        ? 'Загрузка...'
+                        : selectedLocation.ambientAudioUrl
+                          ? 'Заменить MP3'
+                          : 'Загрузить MP3'}
+                    </button>
+                  </div>
+
+                  {selectedLocation.ambientAudioUrl ? (
+                    <div className="p-2 rounded-lg bg-[#131A26] border border-emerald-500/30 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-emerald-200 truncate font-medium">
+                          {selectedLocation.ambientAudioName || 'ambient.mp3'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            send({
+                              type: 'dm:clearLocationAudio',
+                              locationId: selectedLocation.id,
+                            })
+                          }
+                          className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-800 shrink-0"
+                          title="Удалить аудиофайл локации"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <audio
+                        key={selectedLocation.ambientAudioUrl}
+                        controls
+                        loop
+                        src={selectedLocation.ambientAudioUrl}
+                        className="w-full h-8"
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-slate-500 leading-snug">
+                      Когда локация открывается на ТВ, загруженный MP3-файл начинает играть автоматически и зациклен до бесконечности (управляется кнопкой звука в панели ДМ).
+                    </p>
+                  )}
+                  {audioUploadError && (
+                    <p className="text-[11px] text-red-400">{audioUploadError}</p>
+                  )}
+                </div>
               </div>
 
               {playersInSelected.length > 0 && (
@@ -963,6 +1147,65 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Initial Game Splash Screen Audio Settings */}
+          <div className="p-3.5 rounded-xl bg-[#0B0F17] border border-slate-800 space-y-2.5">
+            <input
+              ref={splashAudioInputRef}
+              type="file"
+              accept=".mp3,audio/mpeg,audio/mp3"
+              onChange={handleUploadSplashAudio}
+              className="hidden"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Звук начальной заставки (ТВ)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => splashAudioInputRef.current?.click()}
+                disabled={uploadingSplashAudio}
+                className="px-2.5 py-1 rounded-md bg-[#131A26] hover:bg-slate-800 border border-slate-700 text-[11px] font-medium text-amber-300 transition-colors"
+              >
+                {uploadingSplashAudio
+                  ? 'Загрузка...'
+                  : dmState.tvDisplay.splashAudioUrl
+                    ? 'Заменить MP3'
+                    : 'Загрузить MP3'}
+              </button>
+            </div>
+
+            {dmState.tvDisplay.splashAudioUrl ? (
+              <div className="p-2 rounded-lg bg-[#131A26] border border-amber-500/30 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-amber-200 truncate font-medium">
+                    {dmState.tvDisplay.splashAudioName || 'splash.mp3'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => send({ type: 'dm:clearSplashAudio' })}
+                    className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-800 shrink-0"
+                    title="Удалить аудиофайл заставки"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <audio
+                  key={dmState.tvDisplay.splashAudioUrl}
+                  controls
+                  loop
+                  src={dmState.tvDisplay.splashAudioUrl}
+                  className="w-full h-8"
+                />
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Загрузите MP3-трек для титульной заставки «{dmState.tvDisplay.campaignTitle}» — он будет играть зацикленно на ТВ до нажатия «Начать игру».
+              </p>
+            )}
+            {splashAudioError && <p className="text-[11px] text-red-400">{splashAudioError}</p>}
           </div>
 
           {/* Hotspots / Activity Points Section */}
@@ -1296,6 +1539,24 @@ export function LocationsView({ onNavigate }: LocationsViewProps) {
                   placeholder="Краткое описание локации для мастера и игроков..."
                   className="w-full px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-700 text-slate-100 resize-none"
                 />
+              </label>
+
+              <label className="p-2.5 rounded-lg bg-[#0B0F17] border border-slate-800 flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={newLocTimeOfDay}
+                  onChange={(e) => setNewLocTimeOfDay(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-600 bg-[#131A26] text-amber-500 focus:ring-amber-500"
+                />
+                <div>
+                  <div className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Зависит от игрового времени (день/ночь)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Включите для уличных локаций, чтобы карта автоматически темнела ночью и окрашивалась на закате.
+                  </p>
+                </div>
               </label>
             </div>
 

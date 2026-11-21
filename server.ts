@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import http from 'http';
@@ -179,6 +180,108 @@ async function startServer() {
     broadcastState();
     res.json({ imageUrl: publicUrl });
   });
+
+  function isValidMp3Buffer(buf: Buffer): boolean {
+    if (buf.length < 4) return false;
+    // Check ID3v2 header ("ID3")
+    if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+      return true;
+    }
+    // Check MPEG audio frame sync (11 set bits: 0xFF followed by 0xE0..0xFF, non-reserved layer)
+    const scanLimit = Math.min(buf.length - 2, 4096);
+    for (let i = 0; i < scanLimit; i++) {
+      if (buf[i] === 0xff && (buf[i + 1] & 0xe0) === 0xe0) {
+        const layerBits = (buf[i + 1] >> 1) & 0x03;
+        if (layerBits !== 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function sanitizeAudioDisplayName(raw: unknown): string {
+    if (typeof raw !== 'string') return 'audio.mp3';
+    const base = path.basename(raw).replace(/[\u0000-\u001f<>:"/\\|?*]+/g, '').trim();
+    if (!base) return 'audio.mp3';
+    return base.slice(0, 80);
+  }
+
+  app.post(
+    '/api/audio/upload',
+    express.raw({
+      type: ['audio/mpeg', 'audio/mp3', 'audio/x-mpeg', 'application/octet-stream'],
+      limit: '25mb',
+    }),
+    (req, res) => {
+      const target = req.query.target === 'splash' ? 'splash' : 'location';
+      const locationId = typeof req.query.locationId === 'string' ? req.query.locationId.trim() : '';
+      let rawFilename = 'track.mp3';
+      if (typeof req.query.filename === 'string') {
+        rawFilename = req.query.filename;
+      } else if (typeof req.headers['x-audio-filename'] === 'string') {
+        try {
+          rawFilename = decodeURIComponent(req.headers['x-audio-filename']);
+        } catch {
+          rawFilename = req.headers['x-audio-filename'];
+        }
+      }
+
+      const buffer = Buffer.isBuffer(req.body) ? req.body : null;
+      if (!buffer || buffer.length === 0) {
+        res.status(400).json({ error: 'Отсутствуют данные аудиофайла' });
+        return;
+      }
+      if (buffer.length > 25 * 1024 * 1024) {
+        res.status(413).json({ error: 'Аудиофайл слишком большой (максимум 25 МБ)' });
+        return;
+      }
+      if (!isValidMp3Buffer(buffer)) {
+        res.status(400).json({ error: 'Поддерживаются только корректные аудиофайлы в формате MP3' });
+        return;
+      }
+
+      if (target === 'location' && !locationId) {
+        res.status(400).json({ error: 'Не указана локация для привязки аудио' });
+        return;
+      }
+
+      const safeFilename = `audio-${target}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.mp3`;
+      const targetPath = path.resolve(UPLOADS_DIR, safeFilename);
+      if (!targetPath.startsWith(UPLOADS_DIR + path.sep)) {
+        res.status(400).json({ error: 'Некорректный путь сохранения файла' });
+        return;
+      }
+
+      const displayName = sanitizeAudioDisplayName(rawFilename);
+      try {
+        fs.writeFileSync(targetPath, buffer);
+      } catch (err) {
+        console.error('Audio upload write error:', err);
+        res.status(500).json({ error: 'Не удалось сохранить аудиофайл на сервере' });
+        return;
+      }
+      const publicUrl = `/uploads/${safeFilename}`;
+
+      const updated =
+        target === 'splash'
+          ? store.setSplashAudio(publicUrl, displayName)
+          : store.setLocationAudio(locationId, publicUrl, displayName);
+
+      if (!updated) {
+        try {
+          fs.unlinkSync(targetPath);
+        } catch {
+          // ignore cleanup failure
+        }
+        res.status(404).json({ error: 'Локация не найдена' });
+        return;
+      }
+
+      broadcastState();
+      res.json({ audioUrl: publicUrl, audioName: displayName });
+    }
+  );
 
   app.post('/api/portraits/hero', async (req, res) => {
     const { playerId, photoDataUrl } = req.body as {

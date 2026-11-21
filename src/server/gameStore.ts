@@ -5,23 +5,36 @@ import {
   AUTOMATED_FEAT_SUMMARIES,
   AUTOMATED_SUBCLASS_FEATURE_SUMMARIES,
   canPlayerEquipItem,
+  computeCurrentGameMinutes,
+  computeHeroEncumbrance,
   computeLevelFromXp,
   computePlayerAc,
   computePlayerInitiative,
   computePlayerInitiativeDetails,
   createDefaultCatalogs,
+  createDefaultGameClock,
+  DEFAULT_GAME_CLOCK_SCALE,
+  DYING_AUTO_CONDITIONS,
+  ENCUMBRANCE_CONDITION_NAMES,
   formatArmorClassFormula,
   formatModifier,
+  formatWeaponPropertiesSummary,
   getAbilityModifier,
+  getAmmoCapacityForPlayer,
   getBackgroundLockedSkillIds,
   getClassDefaultProficiencyIds,
   getClassSelectableSkillIds,
   getEffectiveDraftAbilities,
   getHeroAllowedSkillIds,
+  inferVersatileDamageFromText,
+  inferWeaponPropertyIdsFromText,
   inferWeaponRangeType,
   inferWeaponReachRange,
   parseLegacyArmorClass,
+  resolveGearCatalogItem,
   resolveInventoryArmorCategory,
+  resolveWeaponAmmoRequirement,
+  resolveWeaponMasteryRef,
   sanitizeBackgroundAbilityBonuses,
   sortAbilityModifiers,
   sortLevels,
@@ -32,9 +45,11 @@ import type {
   CharacterCreationRequest,
   CharacterDraft,
   ClientMessage,
+  DeathSavesState,
   EntityVisionEntry,
   FullGameState,
   GameCatalogs,
+  GameClockState,
   GameEventEntry,
   GameLocation,
   InitiativeEntry,
@@ -145,6 +160,7 @@ export function createDefaultLocations(): GameLocation[] {
       description:
         'Укрепленный северный город на перекрестке торговых путей. Стартовая точка партии с таверной, площадью, кузней, казармами и выходом к северным руинам.',
       parentLocationId: null,
+      affectedByTimeOfDay: true,
       graphX: 430,
       graphY: 250,
       map: {
@@ -225,6 +241,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'city',
       description: 'Уютный зал таверны: барная стойка, камин и дубовые столы для встреч с нанимателями.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 770,
       graphY: 420,
       map: {
@@ -254,6 +271,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'city',
       description: 'Центральная рыночная площадь с заказами на чудовищ, наградами и новостями королевства.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 780,
       graphY: 250,
       map: {
@@ -293,6 +311,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'city',
       description: 'Мастерская кузнеца Железного Молота: торговля клинками, доспехами и снаряжением.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 110,
       graphY: 430,
       map: {
@@ -322,6 +341,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'city',
       description: 'Западный бастион и казармы. Место службы и ночлега стражников и солдат.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 90,
       graphY: 250,
       map: {
@@ -351,6 +371,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'city',
       description: 'Тихий постоялый двор у Северных ворот для отдыха и восстановления сил партии.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 760,
       graphY: 85,
       map: {
@@ -380,6 +401,7 @@ export function createDefaultLocations(): GameLocation[] {
       kind: 'tactical',
       description: 'Заброшенное каменное святилище к северу от Эшборна. Тактическая боевая карта с сеткой.',
       parentLocationId: DEFAULT_CITY_ID,
+      affectedByTimeOfDay: false,
       graphX: 110,
       graphY: 85,
       map: {
@@ -465,12 +487,16 @@ export function createDefaultState(): FullGameState {
     catalogs,
     locations,
     activeLocationId: startLocation.id,
+    gameClock: createDefaultGameClock(now),
     tvDisplay: {
       phase: 'title_splash',
       campaignTitle: 'Хроники Эшборна',
       campaignSubtitle: 'Настольное приключение в землях Севера',
       titleCrestUrl: TITLE_CREST_URL,
       travelBackdropUrl: TRAVEL_BACKDROP_URL,
+      splashAudioUrl: null,
+      splashAudioName: null,
+      audioMuted: false,
       startedAt: now,
     },
     scene: {
@@ -516,19 +542,32 @@ export class GameStore {
   private buildTokensForLocation(loc: GameLocation): MapToken[] {
     const playerTokens: MapToken[] = this.state.players
       .filter((p) => p.locationId === loc.id)
-      .map((p) => ({
-        id: `token-player-${p.id}`,
-        label: p.name,
-        kind: 'player' as const,
-        playerId: p.id,
-        color: p.color,
-        x: p.posX,
-        y: p.posY,
-        size: 1,
-        visibleOnTv: true,
-        initiative: p.initiative,
-        portraitUrl: p.portraitUrl ?? null,
-      }));
+      .map((p) => {
+        const isDead = p.deathSaves?.status === 'dead';
+        const isUnconscious =
+          !isDead &&
+          (p.hp <= 0 ||
+            p.conditions.some((c) => c.trim().toLowerCase().includes('бессознат')));
+        return {
+          id: `token-player-${p.id}`,
+          label: p.name,
+          kind: 'player' as const,
+          playerId: p.id,
+          color: p.color,
+          x: p.posX,
+          y: p.posY,
+          size: 1,
+          visibleOnTv: true,
+          initiative: p.initiative,
+          portraitUrl: p.portraitUrl ?? null,
+          conditions: [...p.conditions],
+          combatStatus: isDead
+            ? ('dead' as const)
+            : isUnconscious
+              ? ('unconscious' as const)
+              : ('alive' as const),
+        };
+      });
     const npcTokens: MapToken[] = (loc.tokens || [])
       .filter((t) => t.kind !== 'player')
       .map((t) => {
@@ -581,46 +620,151 @@ export class GameStore {
       if (shieldProf) rawProficiencies.push(shieldProf);
     }
 
+    const hadWeaponPropertiesSchema =
+      Array.isArray(rawCatalogs.weaponProperties) && rawCatalogs.weaponProperties.length > 0;
+    const rawWeaponProperties =
+      Array.isArray(rawCatalogs.weaponProperties) && rawCatalogs.weaponProperties.length > 0
+        ? rawCatalogs.weaponProperties
+        : defaults.weaponProperties;
+
+    const rawWeaponMasteries =
+      Array.isArray(rawCatalogs.weaponMasteries) && rawCatalogs.weaponMasteries.length > 0
+        ? rawCatalogs.weaponMasteries
+        : defaults.weaponMasteries;
+
+    const rawGearItems =
+      Array.isArray(rawCatalogs.gearItems) && rawCatalogs.gearItems.length > 0
+        ? rawCatalogs.gearItems
+        : defaults.gearItems;
+
     const rawWeapons =
       Array.isArray(rawCatalogs.weapons) && rawCatalogs.weapons.length > 0
         ? rawCatalogs.weapons.map((w) => {
+            const defaultMatch =
+              defaults.weapons.find((dw) => dw.id === w.id) ??
+              defaults.weapons.find(
+                (dw) => dw.name.trim().toLowerCase() === (w.name || '').trim().toLowerCase()
+              );
             const rangeType =
               w.rangeType === 'melee' || w.rangeType === 'ranged'
                 ? w.rangeType
                 : inferWeaponRangeType(w.name, w.properties);
             const inferred = inferWeaponReachRange(rangeType, w.properties);
+            const propertyIds =
+              Array.isArray(w.propertyIds) && w.propertyIds.length > 0
+                ? Array.from(new Set(w.propertyIds))
+                : defaultMatch?.propertyIds
+                  ? [...defaultMatch.propertyIds]
+                  : inferWeaponPropertyIdsFromText(w.properties);
+            const versatileDamage =
+              w.versatileDamage ??
+              defaultMatch?.versatileDamage ??
+              inferVersatileDamageFromText(w.properties);
+            const thrownNormalFt =
+              typeof w.thrownNormalFt === 'number' && Number.isFinite(w.thrownNormalFt)
+                ? Math.round(w.thrownNormalFt)
+                : propertyIds.includes('prop-thrown')
+                  ? defaultMatch?.thrownNormalFt ?? 20
+                  : undefined;
+            const thrownMaxFt =
+              typeof w.thrownMaxFt === 'number' && Number.isFinite(w.thrownMaxFt)
+                ? Math.round(w.thrownMaxFt)
+                : propertyIds.includes('prop-thrown')
+                  ? defaultMatch?.thrownMaxFt ?? 60
+                  : undefined;
+            const resolvedMastery = resolveWeaponMasteryRef(
+              {
+                id: w.id,
+                name: w.name,
+                category: w.category === 'martial' ? 'martial' : 'simple',
+                rangeType,
+                damage: w.damage,
+                properties: w.properties,
+                masteryId: w.masteryId ?? defaultMatch?.masteryId ?? null,
+                mastery: w.mastery || defaultMatch?.mastery || '',
+                weight: w.weight,
+                price: w.price,
+              },
+              { weaponMasteries: rawWeaponMasteries }
+            );
+            const ammoItemId =
+              w.ammoItemId !== undefined
+                ? w.ammoItemId
+                : propertyIds.includes('prop-ammunition')
+                  ? defaultMatch?.ammoItemId ??
+                    ((w.name || '').toLowerCase().includes('арбалет')
+                      ? 'gear-bolts'
+                      : (w.name || '').toLowerCase().includes('лук')
+                        ? 'gear-arrows'
+                        : null)
+                  : null;
+
             if (rangeType === 'ranged') {
               const normal =
-                typeof w.rangeNormalFt === 'number' && Number.isFinite(w.rangeNormalFt) && w.rangeNormalFt >= 0
+                typeof w.rangeNormalFt === 'number' &&
+                Number.isFinite(w.rangeNormalFt) &&
+                w.rangeNormalFt >= 0
                   ? Math.round(w.rangeNormalFt)
                   : inferred.rangeNormalFt ?? 80;
               const max =
                 typeof w.rangeMaxFt === 'number' && Number.isFinite(w.rangeMaxFt) && w.rangeMaxFt >= 0
                   ? Math.max(normal, Math.round(w.rangeMaxFt))
                   : Math.max(normal, inferred.rangeMaxFt ?? normal * 4);
-              return {
+              const nextWeapon = {
                 ...w,
                 category: w.category === 'martial' ? ('martial' as const) : ('simple' as const),
                 rangeType,
                 reachFt: undefined,
                 rangeNormalFt: normal,
                 rangeMaxFt: max,
+                propertyIds,
+                versatileDamage,
+                thrownNormalFt,
+                thrownMaxFt,
+                masteryId: resolvedMastery?.id ?? null,
+                mastery: resolvedMastery?.name ?? (w.mastery || ''),
+                ammoItemId,
               };
+              nextWeapon.properties = formatWeaponPropertiesSummary(nextWeapon, {
+                weaponProperties: rawWeaponProperties,
+              });
+              return nextWeapon;
             }
-            const reach =
+            const baseReach =
               typeof w.reachFt === 'number' && Number.isFinite(w.reachFt) && w.reachFt >= 0
                 ? Math.round(w.reachFt)
                 : inferred.reachFt ?? 5;
-            return {
+            const reach = propertyIds.includes('prop-reach') && baseReach < 10 ? baseReach + 5 : baseReach;
+            const nextWeapon = {
               ...w,
               category: w.category === 'martial' ? ('martial' as const) : ('simple' as const),
               rangeType,
               reachFt: reach,
               rangeNormalFt: undefined,
               rangeMaxFt: undefined,
+              propertyIds,
+              versatileDamage,
+              thrownNormalFt,
+              thrownMaxFt,
+              masteryId: resolvedMastery?.id ?? null,
+              mastery: resolvedMastery?.name ?? (w.mastery || ''),
+              ammoItemId,
             };
+            nextWeapon.properties = formatWeaponPropertiesSummary(nextWeapon, {
+              weaponProperties: rawWeaponProperties,
+            });
+            return nextWeapon;
           })
         : defaults.weapons;
+
+    if (!hadWeaponPropertiesSchema) {
+      for (const extraId of ['wpn-hand-crossbow', 'wpn-heavy-crossbow']) {
+        if (!rawWeapons.some((w) => w.id === extraId)) {
+          const def = defaults.weapons.find((dw) => dw.id === extraId);
+          if (def) rawWeapons.push({ ...def, propertyIds: def.propertyIds ? [...def.propertyIds] : undefined });
+        }
+      }
+    }
 
     const rawArmors =
       Array.isArray(rawCatalogs.armors) && rawCatalogs.armors.length > 0
@@ -687,7 +831,13 @@ export class GameStore {
               automatedSummary: c.automatedSummary ?? def?.automatedSummary,
             };
           })
-        : defaults.conditions;
+        : [...defaults.conditions];
+    // Append any newly introduced system conditions missing from persisted catalogs
+    for (const defCond of defaults.conditions) {
+      if (!rawConditions.some((c) => c.id === defCond.id)) {
+        rawConditions.push({ ...defCond });
+      }
+    }
 
     const defaultClassesById = new Map(defaults.classes.map((c) => [c.id, c]));
     const rawClasses =
@@ -840,8 +990,11 @@ export class GameStore {
       proficiencies: rawProficiencies,
       visions: rawVisions,
       conditions: rawConditions,
+      weaponProperties: rawWeaponProperties,
+      weaponMasteries: rawWeaponMasteries,
       weapons: rawWeapons,
       armors: rawArmors,
+      gearItems: rawGearItems,
       monsters: Array.isArray(rawCatalogs.monsters)
         ? rawCatalogs.monsters.map((m) => ({
             ...m,
@@ -864,6 +1017,19 @@ export class GameStore {
           kind: loc.kind === 'tactical' ? 'tactical' : 'city',
           description: typeof loc.description === 'string' ? loc.description : '',
           parentLocationId: loc.parentLocationId ?? null,
+          affectedByTimeOfDay:
+            typeof loc.affectedByTimeOfDay === 'boolean'
+              ? loc.affectedByTimeOfDay
+              : loc.id === DEFAULT_CITY_ID,
+          ambientAudioUrl:
+            typeof loc.ambientAudioUrl === 'string' &&
+            /^\/uploads\/[a-zA-Z0-9._-]+\.mp3$/.test(loc.ambientAudioUrl)
+              ? loc.ambientAudioUrl
+              : null,
+          ambientAudioName:
+            typeof loc.ambientAudioName === 'string' && loc.ambientAudioName.trim()
+              ? loc.ambientAudioName.trim().slice(0, 80)
+              : null,
           graphX: typeof loc.graphX === 'number' ? loc.graphX : 180 + (idx % 4) * 220,
           graphY: typeof loc.graphY === 'number' ? loc.graphY : 120 + Math.floor(idx / 4) * 180,
           map: {
@@ -994,6 +1160,23 @@ export class GameStore {
           typeof p.exhaustionLevel === 'number' && Number.isFinite(p.exhaustionLevel) && p.exhaustionLevel > 0
             ? clamp(Math.round(p.exhaustionLevel), 1, 6)
             : undefined,
+        deathSaves:
+          p.deathSaves && typeof p.deathSaves === 'object'
+            ? {
+                successes: clamp(Math.round(Number(p.deathSaves.successes) || 0), 0, 3),
+                failures: clamp(Math.round(Number(p.deathSaves.failures) || 0), 0, 3),
+                status:
+                  p.deathSaves.status === 'dying' ||
+                  p.deathSaves.status === 'stabilized' ||
+                  p.deathSaves.status === 'dead'
+                    ? p.deathSaves.status
+                    : 'none',
+                lastRollRound:
+                  typeof p.deathSaves.lastRollRound === 'number'
+                    ? Math.round(p.deathSaves.lastRollRound)
+                    : undefined,
+              }
+            : undefined,
         conditions: Array.isArray(p.conditions) ? p.conditions : [],
         isConnected: false,
         locationId: targetLoc.id,
@@ -1033,6 +1216,16 @@ export class GameStore {
           : fallback.tvDisplay.campaignSubtitle,
       titleCrestUrl: rawTvDisplay?.titleCrestUrl || TITLE_CREST_URL,
       travelBackdropUrl: rawTvDisplay?.travelBackdropUrl || TRAVEL_BACKDROP_URL,
+      splashAudioUrl:
+        typeof rawTvDisplay?.splashAudioUrl === 'string' &&
+        /^\/uploads\/[a-zA-Z0-9._-]+\.mp3$/.test(rawTvDisplay.splashAudioUrl)
+          ? rawTvDisplay.splashAudioUrl
+          : null,
+      splashAudioName:
+        typeof rawTvDisplay?.splashAudioName === 'string' && rawTvDisplay.splashAudioName.trim()
+          ? rawTvDisplay.splashAudioName.trim().slice(0, 80)
+          : null,
+      audioMuted: Boolean(rawTvDisplay?.audioMuted),
       startedAt: Date.now(),
     };
 
@@ -1048,6 +1241,26 @@ export class GameStore {
           initiativeSession: null,
         };
 
+    const rawClock = parsed.gameClock;
+    const gameClock: GameClockState =
+      rawClock &&
+      typeof rawClock.anchorGameMinutes === 'number' &&
+      Number.isFinite(rawClock.anchorGameMinutes) &&
+      typeof rawClock.anchorRealMs === 'number' &&
+      Number.isFinite(rawClock.anchorRealMs)
+        ? {
+            anchorGameMinutes: Math.max(0, rawClock.anchorGameMinutes),
+            anchorRealMs: rawClock.anchorRealMs,
+            timeScale:
+              typeof rawClock.timeScale === 'number' &&
+              Number.isFinite(rawClock.timeScale) &&
+              rawClock.timeScale >= 0
+                ? rawClock.timeScale
+                : DEFAULT_GAME_CLOCK_SCALE,
+            paused: Boolean(rawClock.paused),
+          }
+        : createDefaultGameClock(Date.now());
+
     const nextState: FullGameState = {
       version: typeof parsed.version === 'number' ? parsed.version : 1,
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
@@ -1056,6 +1269,7 @@ export class GameStore {
       catalogs,
       locations,
       activeLocationId: activeLoc.id,
+      gameClock,
       tvDisplay,
       scene: migratedScene,
       map: { ...activeLoc.map },
@@ -1065,6 +1279,9 @@ export class GameStore {
     };
 
     this.state = nextState;
+    for (const pl of this.state.players) {
+      this.syncPlayerEncumbrance(pl);
+    }
     this.syncActiveLocationView();
     return this.state;
   }
@@ -1176,6 +1393,7 @@ export class GameStore {
       initiative: resolved.initiative,
       speed: resolved.speed ?? 30,
       exhaustionLevel: resolved.exhaustionLevel,
+      deathSaves: resolved.deathSaves,
       conditions: resolved.conditions,
       isConnected: resolved.isConnected,
       locationId: resolved.locationId,
@@ -1207,6 +1425,10 @@ export class GameStore {
       updatedAt: this.state.updatedAt,
       activeLocationId: activeLoc.id,
       locationKind: activeLoc.kind,
+      locationAffectedByTimeOfDay: Boolean(activeLoc.affectedByTimeOfDay),
+      locationAmbientAudioUrl: activeLoc.ambientAudioUrl ?? null,
+      locationAmbientAudioName: activeLoc.ambientAudioName ?? null,
+      gameClock: this.state.gameClock,
       tvDisplay: this.state.tvDisplay,
       scene: this.state.scene,
       map: this.state.map,
@@ -1258,6 +1480,8 @@ export class GameStore {
       updatedAt: this.state.updatedAt,
       activeLocationId: activeLoc.id,
       locationKind: activeLoc.kind,
+      locationAffectedByTimeOfDay: Boolean(activeLoc.affectedByTimeOfDay),
+      gameClock: this.state.gameClock,
       tvDisplay: this.state.tvDisplay,
       catalogs: this.state.catalogs,
       accounts: this.state.accounts,
@@ -1294,6 +1518,37 @@ export class GameStore {
       imageUrl,
     };
     this.syncActiveLocationView();
+    this.bumpVersion();
+    this.scheduleSave();
+    return true;
+  }
+
+  public setLocationAudio(
+    locationId: string,
+    audioUrl: string | null,
+    audioName: string | null
+  ): boolean {
+    const targetLoc = this.state.locations.find((l) => l.id === locationId);
+    if (!targetLoc) return false;
+    if (audioUrl !== null && !/^\/uploads\/[a-zA-Z0-9._-]+\.mp3$/.test(audioUrl)) {
+      return false;
+    }
+    targetLoc.ambientAudioUrl = audioUrl;
+    targetLoc.ambientAudioName = audioUrl ? (audioName?.trim().slice(0, 80) || 'audio.mp3') : null;
+    this.bumpVersion();
+    this.scheduleSave();
+    return true;
+  }
+
+  public setSplashAudio(audioUrl: string | null, audioName: string | null): boolean {
+    if (audioUrl !== null && !/^\/uploads\/[a-zA-Z0-9._-]+\.mp3$/.test(audioUrl)) {
+      return false;
+    }
+    this.state.tvDisplay = {
+      ...this.state.tvDisplay,
+      splashAudioUrl: audioUrl,
+      splashAudioName: audioUrl ? (audioName?.trim().slice(0, 80) || 'splash.mp3') : null,
+    };
     this.bumpVersion();
     this.scheduleSave();
     return true;
@@ -1378,8 +1633,112 @@ export class GameStore {
       if (recomputeInitiative) {
         player.initiative = computePlayerInitiative(player.abilities, this.state.catalogs);
       }
+      this.syncPlayerEncumbrance(player);
     }
     this.syncActiveLocationView();
+  }
+
+  private addConditionsIfMissing(player: PlayerCharacter, names: readonly string[]) {
+    const existingLower = new Set(player.conditions.map((c) => c.trim().toLowerCase()));
+    for (const name of names) {
+      const lower = name.trim().toLowerCase();
+      if (!existingLower.has(lower)) {
+        player.conditions.push(name);
+        existingLower.add(lower);
+      }
+    }
+  }
+
+  private removeConditions(player: PlayerCharacter, names: readonly string[]) {
+    const dropSet = new Set(names.map((n) => n.trim().toLowerCase()));
+    player.conditions = player.conditions.filter((c) => !dropSet.has(c.trim().toLowerCase()));
+  }
+
+  private syncPlayerEncumbrance(player: PlayerCharacter) {
+    const enc = computeHeroEncumbrance(player, this.state.catalogs);
+    this.removeConditions(player, ENCUMBRANCE_CONDITION_NAMES);
+    if (enc.conditionName) {
+      this.addConditionsIfMissing(player, [enc.conditionName]);
+    }
+  }
+
+  private enforcePlayerAmmoAndContainerIntegrity(player: PlayerCharacter) {
+    const ammoCatalog = this.state.catalogs.gearItems.filter((g) => g.kind === 'ammunition');
+    for (const ammoRef of ammoCatalog) {
+      const cap = getAmmoCapacityForPlayer(player.inventory, ammoRef, this.state.catalogs);
+      if (Number.isFinite(cap.maxCapacity) && cap.currentQty > cap.maxCapacity) {
+        let excess = cap.currentQty - cap.maxCapacity;
+        for (let i = player.inventory.length - 1; i >= 0 && excess > 0; i -= 1) {
+          const inv = player.inventory[i];
+          const isAmmo =
+            inv.catalogItemId === ammoRef.id ||
+            inv.name.trim().toLowerCase() === ammoRef.name.trim().toLowerCase();
+          if (!isAmmo) continue;
+          if (inv.quantity <= excess) {
+            excess -= inv.quantity;
+            player.inventory.splice(i, 1);
+          } else {
+            inv.quantity -= excess;
+            excess = 0;
+          }
+        }
+      }
+    }
+
+    // Unequip any ranged weapon that requires a container/ammo if container was removed
+    for (const inv of player.inventory) {
+      if (!inv.equipped || inv.category !== 'weapon') continue;
+      const ammoReq = resolveWeaponAmmoRequirement(inv, this.state.catalogs);
+      if (ammoReq.required && ammoReq.ammoRef) {
+        const cap = getAmmoCapacityForPlayer(player.inventory, ammoReq.ammoRef, this.state.catalogs);
+        if (ammoReq.containerRef && cap.containerCount <= 0) {
+          inv.equipped = false;
+        }
+      }
+    }
+  }
+
+  private applyHeroZeroHp(player: PlayerCharacter) {
+    player.hp = 0;
+    player.deathSaves = {
+      successes: 0,
+      failures: 0,
+      status: 'dying',
+    };
+    this.removeConditions(player, ['Стабилизирован']);
+    this.addConditionsIfMissing(player, DYING_AUTO_CONDITIONS);
+    this.appendEvent({
+      scope: 'public',
+      title: `${player.name} при смерти (0 HP)`,
+      message: `${player.name} теряет сознание и падает. Наложены состояния: Умирающий, Бессознательный, Недееспособный и Опрокинутый.`,
+      tone: 'danger',
+    });
+  }
+
+  private applyHeroReviveFromZeroHp(player: PlayerCharacter) {
+    player.deathSaves = undefined;
+    this.removeConditions(player, [
+      'Умирающий',
+      'Стабилизирован',
+      'Бессознательный',
+      'Недееспособный',
+    ]);
+  }
+
+  private advanceActiveTurnIfDead(deadTokenId: string) {
+    if (this.state.scene.activeTurnTokenId !== deadTokenId) return;
+    const alivePool = this.state.tokens
+      .filter((t) => t.kind !== 'object' && t.combatStatus !== 'dead' && t.visibleOnTv)
+      .sort((a, b) => {
+        const aInit = a.playerId
+          ? this.state.players.find((p) => p.id === a.playerId)?.initiative ?? a.initiative ?? 0
+          : a.initiative ?? 0;
+        const bInit = b.playerId
+          ? this.state.players.find((p) => p.id === b.playerId)?.initiative ?? b.initiative ?? 0
+          : b.initiative ?? 0;
+        return bInit - aInit;
+      });
+    this.state.scene.activeTurnTokenId = alivePool[0]?.id ?? null;
   }
 
   private startInitiativeRollForActiveLocation(): boolean {
@@ -1486,6 +1845,160 @@ export class GameStore {
       return { changed: true };
     }
 
+    if (msg.type === 'dm:addInventoryItem') {
+      const player = this.state.players.find((p) => p.id === msg.playerId);
+      if (!player) return { changed: false };
+      const name = msg.item.name.trim();
+      if (!name) return { changed: false };
+      const qty = Math.max(1, Math.round(msg.item.quantity || 1));
+
+      // Enforce container capacity for ammunition items
+      const gearRef = resolveGearCatalogItem(
+        { catalogItemId: msg.item.catalogItemId, name },
+        this.state.catalogs
+      );
+      if (gearRef && gearRef.kind === 'ammunition') {
+        const cap = getAmmoCapacityForPlayer(player.inventory, gearRef, this.state.catalogs);
+        if (cap.containerRef && cap.containerCount <= 0) {
+          return {
+            changed: false,
+            error: `Нельзя добавить «${gearRef.name}»: сначала добавьте в инвентарь контейнер «${cap.containerRef.name}» (вмещает до ${cap.containerRef.capacity ?? 20} шт.).`,
+          };
+        }
+        if (Number.isFinite(cap.maxCapacity) && cap.currentQty + qty > cap.maxCapacity) {
+          const free = Math.max(0, cap.maxCapacity - cap.currentQty);
+          return {
+            changed: false,
+            error: `Превышен лимит контейнера «${cap.containerRef?.name ?? 'Контейнер'}»: сейчас ${cap.currentQty}/${cap.maxCapacity}, нельзя добавить ещё ${qty} (свободно ${free}).`,
+          };
+        }
+      }
+
+      if (msg.item.equipped) {
+        const probeItem = {
+          ...msg.item,
+          id: '__probe__',
+          name,
+          quantity: qty,
+          equipped: false,
+        };
+        const check = canPlayerEquipItem(player, probeItem, this.state.catalogs);
+        if (!check.allowed) {
+          return { changed: false, error: check.reason };
+        }
+      }
+    }
+
+    if (msg.type === 'dm:updateInventoryItem') {
+      const player = this.state.players.find((p) => p.id === msg.playerId);
+      if (!player) return { changed: false };
+      const item = player.inventory.find((i) => i.id === msg.itemId);
+      if (!item) return { changed: false };
+
+      if (msg.patch.equipped === true && !item.equipped) {
+        const check = canPlayerEquipItem(player, item, this.state.catalogs);
+        if (!check.allowed) {
+          return { changed: false, error: check.reason };
+        }
+        // Keep at most 1 body armor and 1 shield equipped simultaneously
+        if (item.category === 'armor') {
+          const nextArmorCat = resolveInventoryArmorCategory(item, this.state.catalogs);
+          const isNextShield = nextArmorCat === 'shield';
+          for (const other of player.inventory) {
+            if (other.id !== item.id && other.equipped && other.category === 'armor') {
+              const otherCat = resolveInventoryArmorCategory(other, this.state.catalogs);
+              const isOtherShield = otherCat === 'shield';
+              if (isOtherShield === isNextShield) {
+                other.equipped = false;
+              }
+            }
+          }
+        }
+      }
+
+      if (typeof msg.patch.quantity === 'number') {
+        const nextQty = Math.max(1, Math.round(msg.patch.quantity));
+        const gearRef = resolveGearCatalogItem(item, this.state.catalogs);
+        if (gearRef && gearRef.kind === 'ammunition' && nextQty > item.quantity) {
+          const cap = getAmmoCapacityForPlayer(player.inventory, gearRef, this.state.catalogs);
+          const otherQty = Math.max(0, cap.currentQty - item.quantity);
+          if (cap.containerRef && cap.containerCount <= 0) {
+            return {
+              changed: false,
+              error: `Нельзя увеличить количество «${gearRef.name}»: в инвентаре нет контейнера «${cap.containerRef.name}».`,
+            };
+          }
+          if (Number.isFinite(cap.maxCapacity) && otherQty + nextQty > cap.maxCapacity) {
+            return {
+              changed: false,
+              error: `Превышен лимит контейнера «${cap.containerRef?.name ?? 'Контейнер'}»: максимум ${cap.maxCapacity} шт.`,
+            };
+          }
+        }
+      }
+    }
+
+    if (msg.type === 'player:spendAmmo') {
+      const player = this.state.players.find((p) => p.id === msg.playerId);
+      if (!player) return { changed: false };
+      const ammoRef = this.state.catalogs.gearItems.find((g) => g.id === msg.ammoItemId);
+      if (!ammoRef) return { changed: false };
+      const delta = typeof msg.delta === 'number' && Number.isFinite(msg.delta) ? Math.trunc(msg.delta) : -1;
+      if (delta === 0) return { changed: false };
+
+      const cap = getAmmoCapacityForPlayer(player.inventory, ammoRef, this.state.catalogs);
+      if (delta < 0) {
+        if (!cap.ammoInvItem || cap.currentQty <= 0) {
+          return {
+            changed: false,
+            error: `Боеприпасы «${ammoRef.name}» закончились.`,
+          };
+        }
+        const nextQty = cap.ammoInvItem.quantity + delta;
+        if (nextQty <= 0) {
+          player.inventory = player.inventory.filter((i) => i.id !== cap.ammoInvItem!.id);
+        } else {
+          cap.ammoInvItem.quantity = nextQty;
+        }
+      } else {
+        if (cap.containerRef && cap.containerCount <= 0) {
+          return {
+            changed: false,
+            error: `Нет контейнера «${cap.containerRef.name}» для хранения «${ammoRef.name}».`,
+          };
+        }
+        if (Number.isFinite(cap.maxCapacity) && cap.currentQty + delta > cap.maxCapacity) {
+          return {
+            changed: false,
+            error: `Контейнер «${cap.containerRef?.name ?? 'Контейнер'}» заполнен (${cap.currentQty}/${cap.maxCapacity}).`,
+          };
+        }
+        if (cap.ammoInvItem) {
+          cap.ammoInvItem.quantity += delta;
+        } else {
+          player.inventory.unshift({
+            id: makeId('item'),
+            name: ammoRef.name,
+            quantity: delta,
+            category: 'gear',
+            description: ammoRef.description,
+            equipped: false,
+            catalogItemId: ammoRef.id,
+            gearKind: ammoRef.kind,
+            packQuantity: ammoRef.packQuantity,
+            weight: ammoRef.weight,
+            price: ammoRef.price,
+          });
+        }
+      }
+
+      this.syncPlayerEncumbrance(player);
+      this.syncActiveLocationView();
+      this.bumpVersion();
+      this.scheduleSave();
+      return { changed: true };
+    }
+
     const changed = this.applyActionInternal(msg);
     return { changed };
   }
@@ -1547,6 +2060,24 @@ export class GameStore {
         this.bumpVersion();
         this.scheduleSave();
         return true;
+      }
+
+      case 'dm:setAudioMuted': {
+        this.state.tvDisplay = {
+          ...this.state.tvDisplay,
+          audioMuted: Boolean(msg.muted),
+        };
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:clearLocationAudio': {
+        return this.setLocationAudio(msg.locationId, null, null);
+      }
+
+      case 'dm:clearSplashAudio': {
+        return this.setSplashAudio(null, null);
       }
 
       case 'dm:beginLocationTransition': {
@@ -1643,6 +2174,9 @@ export class GameStore {
                 ? incoming.parentLocationId
                 : null;
           }
+          if (typeof incoming.affectedByTimeOfDay === 'boolean') {
+            existing.affectedByTimeOfDay = incoming.affectedByTimeOfDay;
+          }
           if (typeof incoming.graphX === 'number') existing.graphX = Math.round(incoming.graphX);
           if (typeof incoming.graphY === 'number') existing.graphY = Math.round(incoming.graphY);
           if (incoming.map) {
@@ -1680,6 +2214,7 @@ export class GameStore {
             kind: incoming.kind === 'tactical' ? 'tactical' : 'city',
             description: (incoming.description || '').trim(),
             parentLocationId: parentLoc ? parentLoc.id : null,
+            affectedByTimeOfDay: Boolean(incoming.affectedByTimeOfDay),
             graphX:
               typeof incoming.graphX === 'number'
                 ? Math.round(incoming.graphX)
@@ -2335,6 +2870,7 @@ export class GameStore {
               new Set(this.state.catalogs.visions.map((v) => v.id))
             );
           }
+          this.syncPlayerEncumbrance(existing);
         } else {
           const newId = makeId('player');
           const safeMaxHp = Math.max(1, Math.round(incoming.maxHp || 10));
@@ -2538,12 +3074,23 @@ export class GameStore {
         if (typeof msg.acknowledgedLevel === 'number' && Number.isFinite(msg.acknowledgedLevel)) {
           player.acknowledgedLevel = clamp(Math.floor(msg.acknowledgedLevel), 1, 20);
         }
+        const prevHp = player.hp;
         if (typeof msg.maxHp === 'number') {
           player.maxHp = Math.max(1, Math.round(msg.maxHp));
           player.hp = Math.min(player.hp, player.maxHp);
         }
         if (typeof msg.hp === 'number') {
           player.hp = Math.max(0, Math.min(player.maxHp, Math.round(msg.hp)));
+        }
+        if (typeof msg.hp === 'number' || typeof msg.maxHp === 'number') {
+          if (player.hp === 0 && (prevHp > 0 || !player.deathSaves || player.deathSaves.status === 'none')) {
+            this.applyHeroZeroHp(player);
+          } else if (
+            player.hp > 0 &&
+            (prevHp === 0 || (player.deathSaves && player.deathSaves.status !== 'none'))
+          ) {
+            this.applyHeroReviveFromZeroHp(player);
+          }
         }
         if (typeof msg.tempHp === 'number') {
           player.tempHp = Math.max(0, Math.round(msg.tempHp));
@@ -2655,6 +3202,7 @@ export class GameStore {
             new Set(this.state.catalogs.visions.map((v) => v.id))
           );
         }
+        this.syncPlayerEncumbrance(player);
         this.syncActiveLocationView();
         this.bumpVersion();
         this.scheduleSave();
@@ -2680,6 +3228,17 @@ export class GameStore {
           if (typeof msg.item.reachFt === 'number') existingSame.reachFt = msg.item.reachFt;
           if (typeof msg.item.rangeNormalFt === 'number') existingSame.rangeNormalFt = msg.item.rangeNormalFt;
           if (typeof msg.item.rangeMaxFt === 'number') existingSame.rangeMaxFt = msg.item.rangeMaxFt;
+          if (typeof msg.item.thrownNormalFt === 'number')
+            existingSame.thrownNormalFt = msg.item.thrownNormalFt;
+          if (typeof msg.item.thrownMaxFt === 'number')
+            existingSame.thrownMaxFt = msg.item.thrownMaxFt;
+          if (msg.item.versatileDamage) existingSame.versatileDamage = msg.item.versatileDamage;
+          if (Array.isArray(msg.item.propertyIds)) existingSame.propertyIds = [...msg.item.propertyIds];
+          if (msg.item.masteryId !== undefined) existingSame.masteryId = msg.item.masteryId;
+          if (msg.item.ammoItemId !== undefined) existingSame.ammoItemId = msg.item.ammoItemId;
+          if (msg.item.gearKind) existingSame.gearKind = msg.item.gearKind;
+          if (typeof msg.item.packQuantity === 'number')
+            existingSame.packQuantity = msg.item.packQuantity;
           if (msg.item.armorCategory) existingSame.armorCategory = msg.item.armorCategory;
           if (msg.item.damage) existingSame.damage = msg.item.damage;
           if (msg.item.properties) existingSame.properties = msg.item.properties;
@@ -2706,6 +3265,14 @@ export class GameStore {
             reachFt: msg.item.reachFt,
             rangeNormalFt: msg.item.rangeNormalFt,
             rangeMaxFt: msg.item.rangeMaxFt,
+            thrownNormalFt: msg.item.thrownNormalFt,
+            thrownMaxFt: msg.item.thrownMaxFt,
+            versatileDamage: msg.item.versatileDamage,
+            propertyIds: Array.isArray(msg.item.propertyIds) ? [...msg.item.propertyIds] : undefined,
+            masteryId: msg.item.masteryId,
+            ammoItemId: msg.item.ammoItemId,
+            gearKind: msg.item.gearKind,
+            packQuantity: msg.item.packQuantity,
             armorCategory: msg.item.armorCategory,
             damage: msg.item.damage,
             properties: msg.item.properties,
@@ -2721,6 +3288,7 @@ export class GameStore {
           });
         }
         player.ac = computePlayerAc(player, this.state.catalogs);
+        this.syncPlayerEncumbrance(player);
 
         this.appendEvent({
           scope: 'private',
@@ -2730,6 +3298,7 @@ export class GameStore {
           tone: 'reward',
         });
 
+        this.syncActiveLocationView();
         this.bumpVersion();
         this.scheduleSave();
         return true;
@@ -2747,10 +3316,14 @@ export class GameStore {
         if (typeof msg.patch.description === 'string') item.description = msg.patch.description;
         if (typeof msg.patch.equipped === 'boolean') item.equipped = msg.patch.equipped;
         if (msg.patch.category) item.category = msg.patch.category;
+        if (typeof msg.patch.weight === 'string') item.weight = msg.patch.weight.trim();
         if (typeof msg.patch.reachFt === 'number') item.reachFt = msg.patch.reachFt;
         if (typeof msg.patch.rangeNormalFt === 'number') item.rangeNormalFt = msg.patch.rangeNormalFt;
         if (typeof msg.patch.rangeMaxFt === 'number') item.rangeMaxFt = msg.patch.rangeMaxFt;
+        this.enforcePlayerAmmoAndContainerIntegrity(player);
         player.ac = computePlayerAc(player, this.state.catalogs);
+        this.syncPlayerEncumbrance(player);
+        this.syncActiveLocationView();
         this.bumpVersion();
         this.scheduleSave();
         return true;
@@ -2762,7 +3335,10 @@ export class GameStore {
         const before = player.inventory.length;
         player.inventory = player.inventory.filter((i) => i.id !== msg.itemId);
         if (player.inventory.length === before) return false;
+        this.enforcePlayerAmmoAndContainerIntegrity(player);
         player.ac = computePlayerAc(player, this.state.catalogs);
+        this.syncPlayerEncumbrance(player);
+        this.syncActiveLocationView();
         this.bumpVersion();
         this.scheduleSave();
         return true;
@@ -2953,6 +3529,210 @@ export class GameStore {
           this.state.scene.activeTurnTokenId = alivePool[0]?.id ?? null;
         }
 
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:recordDeathSave': {
+        const player = this.state.players.find((p) => p.id === msg.playerId);
+        if (!player) return false;
+        const currentRound = this.state.scene.round || 1;
+        const prev: DeathSavesState = player.deathSaves ?? {
+          successes: 0,
+          failures: 0,
+          status: player.hp === 0 ? 'dying' : 'none',
+        };
+
+        if (msg.outcome === 'reset') {
+          if (player.hp === 0) {
+            player.deathSaves = { successes: 0, failures: 0, status: 'dying' };
+            this.removeConditions(player, ['Стабилизирован']);
+            this.addConditionsIfMissing(player, DYING_AUTO_CONDITIONS);
+          } else {
+            this.applyHeroReviveFromZeroHp(player);
+          }
+          this.syncActiveLocationView();
+          this.bumpVersion();
+          this.scheduleSave();
+          return true;
+        }
+
+        if (msg.outcome === 'nat20') {
+          player.hp = Math.max(1, player.hp);
+          this.applyHeroReviveFromZeroHp(player);
+          this.appendEvent({
+            scope: 'public',
+            title: `${player.name} — Натуральная 20!`,
+            message: `${player.name} восстанавливает 1 Хит и приходит в сознание (остаётся Опрокинутым).`,
+            tone: 'reward',
+          });
+          this.syncActiveLocationView();
+          this.bumpVersion();
+          this.scheduleSave();
+          return true;
+        }
+
+        if (msg.outcome === 'stabilize') {
+          player.hp = 0;
+          player.deathSaves = {
+            successes: 3,
+            failures: prev.failures,
+            status: 'stabilized',
+            lastRollRound: prev.lastRollRound,
+          };
+          this.removeConditions(player, ['Умирающий']);
+          this.addConditionsIfMissing(player, [
+            'Стабилизирован',
+            'Бессознательный',
+            'Недееспособный',
+            'Опрокинутый',
+          ]);
+          this.appendEvent({
+            scope: 'public',
+            title: `${player.name} стабилизирован`,
+            message: `${player.name} стабилизирован (0 HP, без сознания). Спасброски от смерти больше не требуются.`,
+            tone: 'reward',
+          });
+          this.syncActiveLocationView();
+          this.bumpVersion();
+          this.scheduleSave();
+          return true;
+        }
+
+        if (msg.outcome === 'success') {
+          const nextSuccesses = Math.min(3, prev.successes + 1);
+          if (nextSuccesses >= 3) {
+            player.deathSaves = {
+              successes: 3,
+              failures: prev.failures,
+              status: 'stabilized',
+              lastRollRound: currentRound,
+            };
+            this.removeConditions(player, ['Умирающий']);
+            this.addConditionsIfMissing(player, [
+              'Стабилизирован',
+              'Бессознательный',
+              'Недееспособный',
+              'Опрокинутый',
+            ]);
+            this.appendEvent({
+              scope: 'public',
+              title: `${player.name} стабилизирован (3/3)`,
+              message: `${player.name} набрал 3 успешных спасброска от смерти и стабилизирован.`,
+              tone: 'reward',
+            });
+          } else {
+            player.deathSaves = {
+              successes: nextSuccesses,
+              failures: prev.failures,
+              status: 'dying',
+              lastRollRound: currentRound,
+            };
+            this.removeConditions(player, ['Стабилизирован']);
+            this.addConditionsIfMissing(player, DYING_AUTO_CONDITIONS);
+            this.appendEvent({
+              scope: 'public',
+              title: `Спасбросок от смерти: ${player.name}`,
+              message: `Успех (${nextSuccesses}/3 успехов, ${prev.failures}/3 провалов).`,
+              tone: 'neutral',
+            });
+          }
+          this.syncActiveLocationView();
+          this.bumpVersion();
+          this.scheduleSave();
+          return true;
+        }
+
+        // Failure / Nat 1 / Damage while at 0 HP
+        const isDamage = msg.outcome === 'damage_1' || msg.outcome === 'damage_2';
+        const failDelta = msg.outcome === 'nat1' || msg.outcome === 'damage_2' ? 2 : 1;
+        const baseSuccesses = prev.status === 'stabilized' && isDamage ? 0 : prev.successes;
+        const nextFailures = Math.min(3, prev.failures + failDelta);
+
+        if (nextFailures >= 3) {
+          player.hp = 0;
+          player.deathSaves = {
+            successes: baseSuccesses,
+            failures: 3,
+            status: 'dead',
+            lastRollRound: isDamage ? prev.lastRollRound : currentRound,
+          };
+          this.removeConditions(player, ['Умирающий', 'Стабилизирован']);
+          this.appendEvent({
+            scope: 'public',
+            title: `${player.name} погиб`,
+            message: `${player.name} получил 3 провала спасбросков от смерти и погиб.`,
+            tone: 'danger',
+          });
+          this.syncActiveLocationView();
+          this.advanceActiveTurnIfDead(`token-player-${player.id}`);
+        } else {
+          player.hp = 0;
+          player.deathSaves = {
+            successes: baseSuccesses,
+            failures: nextFailures,
+            status: 'dying',
+            lastRollRound: isDamage ? prev.lastRollRound : currentRound,
+          };
+          this.removeConditions(player, ['Стабилизирован']);
+          this.addConditionsIfMissing(player, DYING_AUTO_CONDITIONS);
+          const reason =
+            msg.outcome === 'nat1'
+              ? 'Натуральная 1 (+2 провала)'
+              : msg.outcome === 'damage_2'
+                ? 'Критический урон при 0 HP (+2 провала)'
+                : msg.outcome === 'damage_1'
+                  ? 'Урон при 0 HP (+1 провал)'
+                  : 'Провал (+1 провал)';
+          this.appendEvent({
+            scope: 'public',
+            title: `Спасбросок от смерти: ${player.name}`,
+            message: `${reason} — ${baseSuccesses}/3 успехов, ${nextFailures}/3 провалов.`,
+            tone: 'danger',
+          });
+          this.syncActiveLocationView();
+        }
+        this.bumpVersion();
+        this.scheduleSave();
+        return true;
+      }
+
+      case 'dm:updateGameClock': {
+        const now = Date.now();
+        const currentTotal = computeCurrentGameMinutes(this.state.gameClock, now);
+        let nextTotal = currentTotal;
+
+        const currentDay = Math.floor(Math.floor(currentTotal) / 1440) + 1;
+        const currentMinuteOfDay = ((Math.floor(currentTotal) % 1440) + 1440) % 1440;
+
+        if (typeof msg.setDay === 'number' || typeof msg.setMinuteOfDay === 'number') {
+          const targetDay =
+            typeof msg.setDay === 'number' && Number.isFinite(msg.setDay)
+              ? Math.max(1, Math.floor(msg.setDay))
+              : currentDay;
+          const targetMod =
+            typeof msg.setMinuteOfDay === 'number' && Number.isFinite(msg.setMinuteOfDay)
+              ? clamp(Math.floor(msg.setMinuteOfDay), 0, 1439)
+              : currentMinuteOfDay;
+          nextTotal = (targetDay - 1) * 1440 + targetMod;
+        }
+
+        if (typeof msg.addMinutes === 'number' && Number.isFinite(msg.addMinutes)) {
+          nextTotal = Math.max(0, nextTotal + msg.addMinutes);
+        }
+
+        const nextScale =
+          typeof msg.timeScale === 'number' && Number.isFinite(msg.timeScale) && msg.timeScale >= 0
+            ? clamp(msg.timeScale, 0, 120)
+            : this.state.gameClock.timeScale;
+
+        this.state.gameClock = {
+          anchorGameMinutes: nextTotal,
+          anchorRealMs: now,
+          timeScale: nextScale,
+          paused: typeof msg.paused === 'boolean' ? msg.paused : this.state.gameClock.paused,
+        };
         this.bumpVersion();
         this.scheduleSave();
         return true;
@@ -3319,22 +4099,93 @@ export class GameStore {
           const idx = list.findIndex((x) => x.id === normalized.id);
           if (idx >= 0) list[idx] = normalized;
           else list.push(normalized);
+        } else if (msg.catalog === 'weaponProperties') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const normalized = {
+            id: msg.item.id || makeId('prop'),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.weaponProperties;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'weaponMasteries') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const normalized = {
+            id: msg.item.id || makeId('mst'),
+            name: cleanName,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.weaponMasteries;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
+        } else if (msg.catalog === 'gearItems') {
+          const cleanName = msg.item.name.trim();
+          if (!cleanName) return false;
+          const kind =
+            msg.item.kind === 'ammunition' || msg.item.kind === 'container'
+              ? msg.item.kind
+              : ('equipment' as const);
+          const normalized = {
+            id: msg.item.id || makeId('gear'),
+            name: cleanName,
+            kind,
+            price: (msg.item.price || '').trim(),
+            weight: (msg.item.weight || '').trim(),
+            packQuantity:
+              kind === 'ammunition'
+                ? clamp(Math.round(Number(msg.item.packQuantity) || 20), 1, 1000)
+                : undefined,
+            containerId:
+              kind === 'ammunition' && msg.item.containerId ? String(msg.item.containerId) : null,
+            compatibleWeaponIds:
+              kind === 'ammunition' && Array.isArray(msg.item.compatibleWeaponIds)
+                ? Array.from(new Set(msg.item.compatibleWeaponIds.filter(Boolean)))
+                : undefined,
+            capacity:
+              kind === 'container'
+                ? clamp(Math.round(Number(msg.item.capacity) || 20), 1, 10000)
+                : undefined,
+            storedAmmoId:
+              kind === 'container' && msg.item.storedAmmoId ? String(msg.item.storedAmmoId) : null,
+            description: (msg.item.description || '').trim(),
+          };
+          const list = this.state.catalogs.gearItems;
+          const idx = list.findIndex((x) => x.id === normalized.id);
+          if (idx >= 0) list[idx] = normalized;
+          else list.push(normalized);
         } else if (msg.catalog === 'weapons') {
           const cleanName = msg.item.name.trim();
           if (!cleanName) return false;
           const rangeType = msg.item.rangeType === 'ranged' ? ('ranged' as const) : ('melee' as const);
+          const validPropIds = new Set(this.state.catalogs.weaponProperties.map((p) => p.id));
+          const propertyIds = Array.isArray(msg.item.propertyIds)
+            ? Array.from(new Set(msg.item.propertyIds.filter((id) => validPropIds.has(id))))
+            : inferWeaponPropertyIdsFromText(msg.item.properties);
           const inferred = inferWeaponReachRange(rangeType, msg.item.properties);
-          const reachFt =
+          const baseReachFt =
             rangeType === 'melee'
               ? clamp(
                   Math.round(
-                    typeof msg.item.reachFt === 'number' && Number.isFinite(msg.item.reachFt) && msg.item.reachFt >= 0
+                    typeof msg.item.reachFt === 'number' &&
+                      Number.isFinite(msg.item.reachFt) &&
+                      msg.item.reachFt >= 0
                       ? msg.item.reachFt
                       : inferred.reachFt ?? 5
                   ),
                   0,
                   100
                 )
+              : undefined;
+          const reachFt =
+            rangeType === 'melee' && baseReachFt !== undefined
+              ? propertyIds.includes('prop-reach') && baseReachFt < 10
+                ? baseReachFt + 5
+                : baseReachFt
               : undefined;
           const rangeNormalFt =
             rangeType === 'ranged'
@@ -3367,17 +4218,59 @@ export class GameStore {
                   4000
                 )
               : undefined;
+          const versatileDamage = propertyIds.includes('prop-versatile')
+            ? (msg.item.versatileDamage || '').trim() || undefined
+            : undefined;
+          const thrownNormalFt = propertyIds.includes('prop-thrown')
+            ? clamp(Math.round(Number(msg.item.thrownNormalFt) || 20), 5, 1000)
+            : undefined;
+          const thrownMaxFt = propertyIds.includes('prop-thrown')
+            ? clamp(
+                Math.max(thrownNormalFt ?? 20, Math.round(Number(msg.item.thrownMaxFt) || 60)),
+                5,
+                2000
+              )
+            : undefined;
+          const masteryRef = msg.item.masteryId
+            ? this.state.catalogs.weaponMasteries.find((m) => m.id === msg.item.masteryId) ?? null
+            : null;
+          const ammoItemId = propertyIds.includes('prop-ammunition')
+            ? msg.item.ammoItemId || null
+            : null;
+          const summaryProps =
+            propertyIds.length > 0
+              ? formatWeaponPropertiesSummary(
+                  {
+                    propertyIds,
+                    properties: (msg.item.properties || '').trim(),
+                    versatileDamage,
+                    rangeType,
+                    rangeNormalFt,
+                    rangeMaxFt,
+                    thrownNormalFt,
+                    thrownMaxFt,
+                  },
+                  this.state.catalogs
+                )
+              : (msg.item.properties || '').trim();
+
           const normalized = {
             id: msg.item.id || makeId('wpn'),
             category: msg.item.category === 'martial' ? ('martial' as const) : ('simple' as const),
             rangeType,
             name: cleanName,
             damage: (msg.item.damage || '').trim(),
+            versatileDamage,
             reachFt,
             rangeNormalFt,
             rangeMaxFt,
-            properties: (msg.item.properties || '').trim(),
-            mastery: (msg.item.mastery || '').trim(),
+            thrownNormalFt,
+            thrownMaxFt,
+            propertyIds,
+            properties: summaryProps,
+            masteryId: masteryRef?.id ?? null,
+            mastery: masteryRef?.name ?? (msg.item.mastery || '').trim(),
+            ammoItemId,
             weight: (msg.item.weight || '').trim(),
             price: (msg.item.price || '').trim(),
           };
@@ -3648,6 +4541,28 @@ export class GameStore {
           for (const p of this.state.players) {
             if (p.speciesId === msg.itemId) p.speciesId = fallbackSp;
           }
+        } else if (key === 'weaponProperties') {
+          for (const w of this.state.catalogs.weapons) {
+            if (Array.isArray(w.propertyIds)) {
+              w.propertyIds = w.propertyIds.filter((id) => id !== msg.itemId);
+              w.properties = formatWeaponPropertiesSummary(w, this.state.catalogs);
+            }
+          }
+        } else if (key === 'weaponMasteries') {
+          for (const w of this.state.catalogs.weapons) {
+            if (w.masteryId === msg.itemId) {
+              w.masteryId = null;
+              w.mastery = '';
+            }
+          }
+        } else if (key === 'gearItems') {
+          for (const w of this.state.catalogs.weapons) {
+            if (w.ammoItemId === msg.itemId) w.ammoItemId = null;
+          }
+          for (const g of this.state.catalogs.gearItems) {
+            if (g.containerId === msg.itemId) g.containerId = null;
+            if (g.storedAmmoId === msg.itemId) g.storedAmmoId = null;
+          }
         }
 
         this.syncPlayersDerivedFields(key === 'abilityModifiers');
@@ -3692,6 +4607,8 @@ export class GameStore {
         } else {
           player.inventory = player.inventory.filter((i) => i.id !== msg.itemId);
         }
+        this.syncPlayerEncumbrance(player);
+        this.syncActiveLocationView();
         this.appendEvent({
           scope: 'public',
           title: `${player.name} использовал предмет`,

@@ -16,6 +16,9 @@ import type {
   EntityVisionEntry,
   FeatRef,
   GameCatalogs,
+  GameClockState,
+  GearItemKind,
+  GearItemRef,
   InventoryItem,
   LevelThresholdRef,
   MapLighting,
@@ -26,6 +29,8 @@ import type {
   VisionBehavior,
   VisionRef,
   WeaponCategory,
+  WeaponMasteryRef,
+  WeaponPropertyRef,
   WeaponRangeType,
   WeaponRef,
 } from './types.ts';
@@ -155,6 +160,51 @@ export const DEFAULT_CONDITIONS: ConditionRef[] = [
       'Пометка в бою и проверках: Помеха на броски атаки и проверки характеристик.',
     description:
       'Пока у вас есть состояние Отравленный, на вас действует следующий эффект:\n\nВлияние на атаки и проверки характеристик. Вы совершаете с Помехой броски атаки и проверки характеристик.',
+  },
+  {
+    id: 'encumbered',
+    name: 'Слегка перегружен',
+    automationKey: 'encumbered',
+    automatedSummary:
+      'Авто при весе инвентаря > Сила × 5 фнт.: Скорость снижается на 10 фт.',
+    description:
+      'Ваш инвентарь превышает порог лёгкой нагрузки (Сила × 5 фнт.).\n\nСнижение скорости. Ваша Скорость перемещения снижается на 10 футов, пока вес носимого снаряжения остаётся выше Сила × 5 фнт.',
+  },
+  {
+    id: 'heavily_encumbered',
+    name: 'Сильно перегружен',
+    automationKey: 'heavily_encumbered',
+    automatedSummary:
+      'Авто при весе > Сила × 10 фнт.: Скорость −20 фт. · Помеха на проверки характеристик, броски атаки и спасброски СИЛ, ЛОВ и ТЕЛ.',
+    description:
+      'Ваш инвентарь превышает порог тяжёлой нагрузки (Сила × 10 фнт.).\n\nСнижение скорости. Ваша Скорость перемещения снижается на 20 футов.\n\nТяжёлая ноша (Помеха). Вы совершаете с Помехой все проверки характеристик, броски атаки и спасброски, использующие Силу, Ловкость или Телосложение.',
+  },
+  {
+    id: 'over_carry_limit',
+    name: 'Максимальный лимит',
+    automationKey: 'over_carry_limit',
+    automatedSummary:
+      'Авто при весе > Сила × 15 фнт.: Скорость падает до 5 фт. · Помеха на проверки характеристик, броски атаки и спасброски СИЛ, ЛОВ и ТЕЛ.',
+    description:
+      'Вы превысили максимальную грузоподъёмность (Сила × 15 фнт.).\n\nКритическая нагрузка. Ваша Скорость падает до 5 футов, и вы совершаете с Помехой все проверки характеристик, броски атаки и спасброски, использующие Силу, Ловкость или Телосложение, пока не сбросите лишний груз.',
+  },
+  {
+    id: 'dying',
+    name: 'Умирающий',
+    automationKey: 'dying',
+    automatedSummary:
+      'Авто при 0 HP: накладывает Бессознательный, Недееспособный и Опрокинутый · В начале своего хода нужен спасбросок от смерти (1к20).',
+    description:
+      'Ваши Хиты упали до 0, и вы находитесь при смерти.\n\nСопутствующие состояния. Вы автоматически получаете состояния Бессознательный, Недееспособный и Опрокинутый.\n\nСпасброски от смерти. В начале каждого своего хода вы бросаете 1к20 без модификаторов: 10+ — успех, 9 или меньше — провал. Выпадение «1» считается за 2 провала; «20» немедленно восстанавливает 1 Хит и возвращает вас в сознание. Три успеха стабилизируют вас; три провала означают смерть. Урон при 0 HP добавляет 1 провал (критический удар — 2 провала).',
+  },
+  {
+    id: 'stabilized',
+    name: 'Стабилизирован',
+    automationKey: 'stabilized',
+    automatedSummary:
+      'Авто при 3 успехах спасброска от смерти (или лечении Медициной): 0 HP, остаётся Бессознательный, спасброски от смерти остановлены.',
+    description:
+      'Вы остаётесь с 0 Хитов и в состоянии Бессознательный, но угроза немедленной смерти миновала.\n\nНет спасбросков. Вы больше не совершаете спасброски от смерти в начале своего хода.\n\nХрупкое состояние. Если вы получите любой урон, стабилизация спадает — вы снова становитесь Умирающим и получаете провал спасброска от смерти. Если восстановить хотя бы 1 Хит, вы приходите в сознание.',
   },
 ];
 
@@ -884,167 +934,12 @@ export function createDefaultCatalogs(): GameCatalogs {
       },
     ],
     conditions: DEFAULT_CONDITIONS.map((c) => ({ ...c })),
-    weapons: [
-      {
-        id: 'wpn-dagger',
-        category: 'simple',
-        rangeType: 'melee',
-        name: 'Кинжал',
-        damage: '1к4 колющий',
-        reachFt: 5,
-        properties: 'Фехтовальное, Лёгкое, Метательное (20/60)',
-        mastery: 'Зазубрина',
-        weight: '1 фнт.',
-        price: '2 зм',
-      },
-      {
-        id: 'wpn-club',
-        category: 'simple',
-        rangeType: 'melee',
-        name: 'Дубина',
-        damage: '1к4 дробящий',
-        reachFt: 5,
-        properties: 'Лёгкое',
-        mastery: 'Замедление',
-        weight: '2 фнт.',
-        price: '1 см',
-      },
-      {
-        id: 'wpn-quarterstaff',
-        category: 'simple',
-        rangeType: 'melee',
-        name: 'Боевой посох',
-        damage: '1к6 дробящий',
-        reachFt: 5,
-        properties: 'Универсальное (1к8)',
-        mastery: 'Опрокидывание',
-        weight: '4 фнт.',
-        price: '2 см',
-      },
-      {
-        id: 'wpn-spear',
-        category: 'simple',
-        rangeType: 'melee',
-        name: 'Копьё',
-        damage: '1к6 колющий',
-        reachFt: 5,
-        properties: 'Метательное (20/60), Универсальное (1к8)',
-        mastery: 'Ослабление',
-        weight: '3 фнт.',
-        price: '1 зм',
-      },
-      {
-        id: 'wpn-shortbow',
-        category: 'simple',
-        rangeType: 'ranged',
-        name: 'Короткий лук',
-        damage: '1к6 колющий',
-        rangeNormalFt: 80,
-        rangeMaxFt: 320,
-        properties: 'Боеприпасы (80/320), Двуручное',
-        mastery: 'Досаждение',
-        weight: '2 фнт.',
-        price: '25 зм',
-      },
-      {
-        id: 'wpn-light-crossbow',
-        category: 'simple',
-        rangeType: 'ranged',
-        name: 'Лёгкий арбалет',
-        damage: '1к8 колющий',
-        rangeNormalFt: 80,
-        rangeMaxFt: 320,
-        properties: 'Боеприпасы (80/320), Перезарядка, Двуручное',
-        mastery: 'Замедление',
-        weight: '5 фнт.',
-        price: '25 зм',
-      },
-      {
-        id: 'wpn-longsword',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Длинный меч',
-        damage: '1к8 рубящий',
-        reachFt: 5,
-        properties: 'Универсальное (1к10)',
-        mastery: 'Ослабление',
-        weight: '3 фнт.',
-        price: '15 зм',
-      },
-      {
-        id: 'wpn-shortsword',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Короткий меч',
-        damage: '1к6 колющий',
-        reachFt: 5,
-        properties: 'Фехтовальное, Лёгкое',
-        mastery: 'Досаждение',
-        weight: '2 фнт.',
-        price: '10 зм',
-      },
-      {
-        id: 'wpn-rapier',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Рапира',
-        damage: '1к8 колющий',
-        reachFt: 5,
-        properties: 'Фехтовальное',
-        mastery: 'Досаждение',
-        weight: '2 фнт.',
-        price: '25 зм',
-      },
-      {
-        id: 'wpn-battleaxe',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Боевой топор',
-        damage: '1к8 рубящий',
-        reachFt: 5,
-        properties: 'Универсальное (1к10)',
-        mastery: 'Опрокидывание',
-        weight: '4 фнт.',
-        price: '10 зм',
-      },
-      {
-        id: 'wpn-greatsword',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Двуручный меч',
-        damage: '2к6 рубящий',
-        reachFt: 5,
-        properties: 'Тяжёлое, Двуручное',
-        mastery: 'Скользящий удар',
-        weight: '6 фнт.',
-        price: '50 зм',
-      },
-      {
-        id: 'wpn-halberd',
-        category: 'martial',
-        rangeType: 'melee',
-        name: 'Алебарда',
-        damage: '1к10 рубящий',
-        reachFt: 10,
-        properties: 'Тяжёлое, Досягаемость, Двуручное',
-        mastery: 'Рассечение',
-        weight: '6 фнт.',
-        price: '20 зм',
-      },
-      {
-        id: 'wpn-longbow',
-        category: 'martial',
-        rangeType: 'ranged',
-        name: 'Длинный лук',
-        damage: '1к8 колющий',
-        rangeNormalFt: 150,
-        rangeMaxFt: 600,
-        properties: 'Боеприпасы (150/600), Тяжёлое, Двуручное',
-        mastery: 'Замедление',
-        weight: '2 фнт.',
-        price: '50 зм',
-      },
-    ],
+    weaponProperties: DEFAULT_WEAPON_PROPERTIES.map((p) => ({ ...p })),
+    weaponMasteries: DEFAULT_WEAPON_MASTERIES.map((m) => ({ ...m })),
+    weapons: DEFAULT_WEAPONS.map((w) => ({
+      ...w,
+      propertyIds: w.propertyIds ? [...w.propertyIds] : undefined,
+    })),
     armors: [
       makeArmor('arm-padded', 'light', 'Стёганый доспех', 11, 'dex', null, '—', 'Помеха', '8 фнт.', '5 зм'),
       makeArmor('arm-leather', 'light', 'Кожаный доспех', 11, 'dex', null, '—', '—', '10 фнт.', '10 зм'),
@@ -1060,6 +955,10 @@ export function createDefaultCatalogs(): GameCatalogs {
       makeArmor('arm-plate', 'heavy', 'Латный доспех', 18, null, null, 'Сила 15', 'Помеха', '65 фнт.', '1500 зм'),
       makeArmor('arm-shield', 'shield', 'Щит', 2, null, null, '—', '—', '6 фнт.', '10 зм'),
     ],
+    gearItems: DEFAULT_GEAR_ITEMS.map((g) => ({
+      ...g,
+      compatibleWeaponIds: g.compatibleWeaponIds ? [...g.compatibleWeaponIds] : undefined,
+    })),
     monsters: [
       {
         id: 'mon-rat',
@@ -1451,6 +1350,12 @@ export interface ActiveConditionEffects {
   blinded: boolean;
   unaware: boolean;
   incapacitated: boolean;
+  isDying: boolean;
+  isStabilized: boolean;
+  encumbranceTier: 'none' | 'light' | 'heavy' | 'max';
+  encumbranceSpeedPenaltyFt: number;
+  encumbranceSpeedCapFt: number | null;
+  strDexConDisadvantage: boolean;
   exhaustionLevel: number;
   d20Penalty: number;
   speedPenaltyFt: number;
@@ -1477,6 +1382,11 @@ function normalizeConditionKey(name: string): string {
   if (lower.includes('опутан')) return 'restrained';
   if (lower.includes('ослепл')) return 'blinded';
   if (lower.includes('отравл')) return 'poisoned';
+  if (lower.includes('максимальн') && lower.includes('лимит')) return 'over_carry_limit';
+  if (lower.includes('сильно') && lower.includes('перегруж')) return 'heavily_encumbered';
+  if (lower.includes('слегка') && lower.includes('перегруж')) return 'encumbered';
+  if (lower.includes('умирающ')) return 'dying';
+  if (lower.includes('стабилизир')) return 'stabilized';
   return lower;
 }
 
@@ -1487,15 +1397,31 @@ export function getActiveConditionEffects(
   const list = Array.isArray(conditions) ? conditions : [];
   const keys = new Set(list.map(normalizeConditionKey));
 
+  const isDying = keys.has('dying');
+  const isStabilized = keys.has('stabilized');
+
   const speedZeroSources: string[] = [];
   if (keys.has('unconscious')) speedZeroSources.push('Бессознательный');
   if (keys.has('petrified')) speedZeroSources.push('Окаменевший');
   if (keys.has('restrained')) speedZeroSources.push('Опутанный');
   if (keys.has('incapacitated')) speedZeroSources.push('Недееспособный');
+  if (isDying && !keys.has('unconscious')) speedZeroSources.push('Умирающий');
 
-  const unaware = keys.has('unconscious') || keys.has('petrified');
+  const unaware = keys.has('unconscious') || keys.has('petrified') || isDying;
   const blinded = unaware || keys.has('blinded');
   const incapacitated = unaware || keys.has('incapacitated');
+
+  const encumbranceTier: 'none' | 'light' | 'heavy' | 'max' = keys.has('over_carry_limit')
+    ? 'max'
+    : keys.has('heavily_encumbered')
+      ? 'heavy'
+      : keys.has('encumbered')
+        ? 'light'
+        : 'none';
+  const encumbranceSpeedPenaltyFt =
+    encumbranceTier === 'heavy' ? 20 : encumbranceTier === 'light' ? 10 : 0;
+  const encumbranceSpeedCapFt = encumbranceTier === 'max' ? 5 : null;
+  const strDexConDisadvantage = encumbranceTier === 'heavy' || encumbranceTier === 'max';
 
   const effExhaustion = keys.has('exhaustion')
     ? Math.max(1, Math.min(6, Math.round(Number(exhaustionLevel) || 1)))
@@ -1509,6 +1435,8 @@ export function getActiveConditionEffects(
   if (keys.has('poisoned')) attackDisadvantage.push('Отравленный');
   if (keys.has('prone')) attackDisadvantage.push('Опрокинутый');
   if (keys.has('restrained')) attackDisadvantage.push('Опутанный');
+  if (encumbranceTier === 'heavy') attackDisadvantage.push('Сильно перегружен (СИЛ/ЛОВ/ТЕЛ)');
+  if (encumbranceTier === 'max') attackDisadvantage.push('Максимальный лимит (СИЛ/ЛОВ/ТЕЛ)');
 
   const attackAdvantage: string[] = [];
   if (keys.has('invisible')) attackAdvantage.push('Невидимый');
@@ -1516,15 +1444,32 @@ export function getActiveConditionEffects(
   const checkDisadvantage: string[] = [];
   if (keys.has('poisoned')) checkDisadvantage.push('Отравленный');
   if (keys.has('frightened')) checkDisadvantage.push('Испуганный');
+  if (encumbranceTier === 'heavy') checkDisadvantage.push('Сильно перегружен (СИЛ/ЛОВ/ТЕЛ)');
+  if (encumbranceTier === 'max') checkDisadvantage.push('Максимальный лимит (СИЛ/ЛОВ/ТЕЛ)');
 
   const initiativeAdvantage = keys.has('invisible');
   const initiativeDisadvantage = incapacitated;
   const autoFailStrDexSaves = keys.has('unconscious') || keys.has('petrified');
-  const dexSaveDisadvantage = keys.has('restrained');
+  const dexSaveDisadvantage = keys.has('restrained') || strDexConDisadvantage;
 
   const combatCallouts: string[] = [];
+  if (isDying) {
+    combatCallouts.push('Умирающий (0 HP): в начале хода спасбросок от смерти (1к20)');
+  } else if (isStabilized) {
+    combatCallouts.push('Стабилизирован (0 HP): без сознания, спасброски от смерти остановлены');
+  }
   if (speedZeroSources.length > 0) {
     combatCallouts.push(`Скорость = 0 фт. (${speedZeroSources.join(', ')})`);
+  } else if (encumbranceTier === 'max') {
+    combatCallouts.push(
+      'Максимальный лимит веса: Скорость = 5 фт. · Помеха на проверки, атаки и спасброски СИЛ/ЛОВ/ТЕЛ'
+    );
+  } else if (encumbranceTier === 'heavy') {
+    combatCallouts.push(
+      'Сильно перегружен: Скорость −20 фт. · Помеха на проверки, атаки и спасброски СИЛ/ЛОВ/ТЕЛ'
+    );
+  } else if (encumbranceTier === 'light') {
+    combatCallouts.push('Слегка перегружен: Скорость −10 фт.');
   }
   if (effExhaustion > 0) {
     combatCallouts.push(
@@ -1558,6 +1503,12 @@ export function getActiveConditionEffects(
     blinded,
     unaware,
     incapacitated,
+    isDying,
+    isStabilized,
+    encumbranceTier,
+    encumbranceSpeedPenaltyFt,
+    encumbranceSpeedCapFt,
+    strDexConDisadvantage,
     exhaustionLevel: effExhaustion,
     d20Penalty,
     speedPenaltyFt,
@@ -1635,7 +1586,18 @@ export function computePlayerEffectiveSpeed(
     parts.push(`−${effects.speedPenaltyFt} фт. (Истощение ур. ${effects.exhaustionLevel})`);
   }
 
-  const effectiveFt = Math.max(0, baseFt + bonusFt - effects.speedPenaltyFt);
+  let effectiveFt = Math.max(0, baseFt + bonusFt - effects.speedPenaltyFt);
+
+  if (effects.encumbranceSpeedCapFt !== null) {
+    effectiveFt = Math.min(effectiveFt, effects.encumbranceSpeedCapFt);
+    parts.push(`→ макс. ${effects.encumbranceSpeedCapFt} фт. (Максимальный лимит веса)`);
+  } else if (effects.encumbranceSpeedPenaltyFt > 0) {
+    effectiveFt = Math.max(0, effectiveFt - effects.encumbranceSpeedPenaltyFt);
+    const encLabel =
+      effects.encumbranceTier === 'heavy' ? 'Сильно перегружен' : 'Слегка перегружен';
+    parts.push(`−${effects.encumbranceSpeedPenaltyFt} фт. (${encLabel})`);
+  }
+
   return {
     baseFt,
     effectiveFt,
@@ -1765,21 +1727,808 @@ function hasProficiencyFor(
   });
 }
 
+export const DEFAULT_WEAPON_PROPERTIES: WeaponPropertyRef[] = [
+  {
+    id: 'prop-versatile',
+    name: 'Универсальное',
+    description:
+      'Универсальным оружием можно пользоваться как одной, так и двумя руками. Если вы совершаете рукопашную атаку этим оружием с использованием двух рук, то наносите им повышенный урон (например, не 1к6, а 1к8, или 1к10 вместо 1к8).',
+  },
+  {
+    id: 'prop-light',
+    name: 'Лёгкое',
+    description:
+      'Когда в свой ход вы совершаете действие Атака и атакуете Лёгким оружием, вы можете Бонусным действием позже в тот же ход совершить одну дополнительную атаку. Эта дополнительная атака должна быть совершена другим Лёгким оружием, и вы не добавляете модификатор характеристики к урону этой атаки, если только он не отрицательный.',
+  },
+  {
+    id: 'prop-thrown',
+    name: 'Метательное',
+    description:
+      'Вы можете совершать этим оружием дальнобойные атаки, метая его; вы можете вынуть такое оружие частью атаки. Вы используете в бросках атаки и урона модификатор той же характеристики, что и для рукопашных атак этим оружием. Нормальная дистанция атак при метании — 20 футов, а максимальная — 60 футов. Вы совершаете с Помехой броски атаки по цели за пределами нормальной дистанции, и не можете атаковать цель за пределами максимальной дистанции.',
+  },
+  {
+    id: 'prop-finesse',
+    name: 'Фехтовальное',
+    description:
+      'При совершении атаки Фехтовальным оружием вы выбираете, использовать при совершении бросков атаки и урона ваш модификатор Силы или Ловкости. Вы должны использовать один и тот же модификатор для обоих бросков.',
+  },
+  {
+    id: 'prop-two-handed',
+    name: 'Двуручное',
+    description: 'Это оружие при атаке нужно держать двумя руками.',
+  },
+  {
+    id: 'prop-heavy',
+    name: 'Тяжёлое',
+    description:
+      'Вы совершаете с Помехой броски атаки этим оружием, если значение вашей Силы меньше 13.',
+  },
+  {
+    id: 'prop-reach',
+    name: 'Досягаемость',
+    description:
+      'Досягаемость ваших атак этим оружием, включая досягаемость Провоцированных атак этим оружием, увеличена на 5 футов.',
+  },
+  {
+    id: 'prop-ammunition',
+    name: 'Боеприпас',
+    description:
+      'Вы можете использовать это оружие для совершения дальнобойной атаки только если у вас есть нужные боеприпасы. Каждая атака расходует один боеприпас. Боеприпас заряжается как часть атаки (для зарядки одноручного оружия требуется одна свободная рука). После сражения вы можете потратить 1 минуту на поиски на поле боя, чтобы восполнить половину использованных боеприпасов (округляя вниз); остальные утрачены.',
+  },
+  {
+    id: 'prop-loading',
+    name: 'Перезарядка',
+    description:
+      'Когда вы стреляете действием, Бонусным действием или Реакцией из оружия со свойством Перезарядка, вы можете выстрелить только одним боеприпасом вне зависимости от количества атак, которые вы обычно можете совершить.',
+  },
+];
+
+export const DEFAULT_WEAPON_MASTERIES: WeaponMasteryRef[] = [
+  {
+    id: 'mst-topple',
+    name: 'Опрокидывание',
+    description:
+      'Если вы попадаете по существу этим оружием, можете заставить его совершить спасбросок Телосложения (Сл 8 + ваши Бонус владения и модификатор характеристики, используемой для броска атаки). При провале существо получает состояние Опрокинутый.',
+  },
+  {
+    id: 'mst-sap',
+    name: 'Ослабление',
+    description:
+      'Если вы попадаете по существу этим оружием, оно будет совершать с Помехой следующий бросок атаки до начала вашего следующего хода.',
+  },
+  {
+    id: 'mst-slow',
+    name: 'Замедление',
+    description:
+      'Если вы попадаете по существу этим оружием и наносите урон, можете уменьшить его Скорость на 10 футов до начала вашего следующего хода. Если по существу попадают из оружия с таким свойством несколько раз, снижение Скорости от этого свойства не превышает 10 футов.',
+  },
+  {
+    id: 'mst-nick',
+    name: 'Быстрое',
+    description:
+      'Когда вы совершаете дополнительную атаку от свойства Лёгкое, можете совершить её не Бонусным действием, а частью действия Атака. Вы можете совершить эту дополнительную атаку только один раз за ход.',
+  },
+  {
+    id: 'mst-vex',
+    name: 'Досаждение',
+    description:
+      'Если вы попадаете по существу этим оружием и наносите урон, вы получаете Преимущество на ваш следующий бросок атаки по этому существу до конца вашего следующего хода.',
+  },
+  {
+    id: 'mst-graze',
+    name: 'Царапание',
+    description:
+      'Если ваш бросок атаки этим оружием промахивается по существу, вы можете нанести этому существу урон, равный модификатору характеристики, использованной для броска атаки. Тип этого урона такой же, как у оружия.',
+  },
+  {
+    id: 'mst-cleave',
+    name: 'Прорубание',
+    description:
+      'Если вы попадаете по существу рукопашной атакой этим оружием, можете совершить дополнительную рукопашную атаку этим оружием по второму существу в пределах 5 футов от первого, которое также находится в вашей досягаемости. При попадании вы наносите урон оружия без добавления модификатора характеристики, если только он не отрицательный (1 раз за ход).',
+  },
+  {
+    id: 'mst-push',
+    name: 'Толчок',
+    description:
+      'Если вы попадаете по существу этим оружием, можете оттолкнуть его на расстояние до 10 футов прямо от себя, если его размер Большой или меньше.',
+  },
+];
+
+export const DEFAULT_GEAR_ITEMS: GearItemRef[] = [
+  {
+    id: 'gear-arrows',
+    name: 'Стрелы',
+    kind: 'ammunition',
+    price: '1 ЗМ',
+    weight: '1 фнт.',
+    packQuantity: 20,
+    containerId: 'gear-quiver',
+    compatibleWeaponIds: ['wpn-shortbow', 'wpn-longbow'],
+    description: 'Боеприпас для луков (Короткий лук, Длинный лук). Хранится в Колчане (до 20 шт.).',
+  },
+  {
+    id: 'gear-bolts',
+    name: 'Болты',
+    kind: 'ammunition',
+    price: '1 ЗМ',
+    weight: '1.5 фнт.',
+    packQuantity: 20,
+    containerId: 'gear-bolt-case',
+    compatibleWeaponIds: ['wpn-light-crossbow', 'wpn-hand-crossbow', 'wpn-heavy-crossbow'],
+    description:
+      'Боеприпас для арбалетов (Лёгкий арбалет, Одноручный арбалет, Тяжёлый арбалет). Хранится в Футляре для арбалетных болтов (до 20 шт.).',
+  },
+  {
+    id: 'gear-bolt-case',
+    name: 'Футляр для арбалетных болтов',
+    kind: 'container',
+    price: '1 ЗМ',
+    weight: '1 фнт.',
+    capacity: 20,
+    storedAmmoId: 'gear-bolts',
+    description: 'Футляр для арбалетных болтов вмещает до 20 Болтов.',
+  },
+  {
+    id: 'gear-quiver',
+    name: 'Колчан',
+    kind: 'container',
+    price: '1 ЗМ',
+    weight: '1 фнт.',
+    capacity: 20,
+    storedAmmoId: 'gear-arrows',
+    description: 'Колчан вмещает до 20 Стрел.',
+  },
+];
+
+export const DEFAULT_WEAPONS: WeaponRef[] = [
+  {
+    id: 'wpn-dagger',
+    category: 'simple',
+    rangeType: 'melee',
+    name: 'Кинжал',
+    damage: '1к4 колющий',
+    reachFt: 5,
+    thrownNormalFt: 20,
+    thrownMaxFt: 60,
+    propertyIds: ['prop-finesse', 'prop-light', 'prop-thrown'],
+    properties: 'Фехтовальное, Лёгкое, Метательное (20/60)',
+    masteryId: 'mst-nick',
+    mastery: 'Быстрое',
+    weight: '1 фнт.',
+    price: '2 зм',
+  },
+  {
+    id: 'wpn-club',
+    category: 'simple',
+    rangeType: 'melee',
+    name: 'Дубина',
+    damage: '1к4 дробящий',
+    reachFt: 5,
+    propertyIds: ['prop-light'],
+    properties: 'Лёгкое',
+    masteryId: 'mst-slow',
+    mastery: 'Замедление',
+    weight: '2 фнт.',
+    price: '1 см',
+  },
+  {
+    id: 'wpn-quarterstaff',
+    category: 'simple',
+    rangeType: 'melee',
+    name: 'Боевой посох',
+    damage: '1к6 дробящий',
+    versatileDamage: '1к8',
+    reachFt: 5,
+    propertyIds: ['prop-versatile'],
+    properties: 'Универсальное (1к8)',
+    masteryId: 'mst-topple',
+    mastery: 'Опрокидывание',
+    weight: '4 фнт.',
+    price: '2 см',
+  },
+  {
+    id: 'wpn-spear',
+    category: 'simple',
+    rangeType: 'melee',
+    name: 'Копьё',
+    damage: '1к6 колющий',
+    versatileDamage: '1к8',
+    reachFt: 5,
+    thrownNormalFt: 20,
+    thrownMaxFt: 60,
+    propertyIds: ['prop-thrown', 'prop-versatile'],
+    properties: 'Метательное (20/60), Универсальное (1к8)',
+    masteryId: 'mst-sap',
+    mastery: 'Ослабление',
+    weight: '3 фнт.',
+    price: '1 зм',
+  },
+  {
+    id: 'wpn-shortbow',
+    category: 'simple',
+    rangeType: 'ranged',
+    name: 'Короткий лук',
+    damage: '1к6 колющий',
+    rangeNormalFt: 80,
+    rangeMaxFt: 320,
+    propertyIds: ['prop-ammunition', 'prop-two-handed'],
+    properties: 'Боеприпас (80/320), Двуручное',
+    masteryId: 'mst-vex',
+    mastery: 'Досаждение',
+    ammoItemId: 'gear-arrows',
+    weight: '2 фнт.',
+    price: '25 зм',
+  },
+  {
+    id: 'wpn-light-crossbow',
+    category: 'simple',
+    rangeType: 'ranged',
+    name: 'Лёгкий арбалет',
+    damage: '1к8 колющий',
+    rangeNormalFt: 80,
+    rangeMaxFt: 320,
+    propertyIds: ['prop-ammunition', 'prop-loading', 'prop-two-handed'],
+    properties: 'Боеприпас (80/320), Перезарядка, Двуручное',
+    masteryId: 'mst-slow',
+    mastery: 'Замедление',
+    ammoItemId: 'gear-bolts',
+    weight: '5 фнт.',
+    price: '25 зм',
+  },
+  {
+    id: 'wpn-hand-crossbow',
+    category: 'martial',
+    rangeType: 'ranged',
+    name: 'Одноручный арбалет',
+    damage: '1к6 колющий',
+    rangeNormalFt: 30,
+    rangeMaxFt: 120,
+    propertyIds: ['prop-ammunition', 'prop-light', 'prop-loading'],
+    properties: 'Боеприпас (30/120), Лёгкое, Перезарядка',
+    masteryId: 'mst-vex',
+    mastery: 'Досаждение',
+    ammoItemId: 'gear-bolts',
+    weight: '3 фнт.',
+    price: '75 зм',
+  },
+  {
+    id: 'wpn-heavy-crossbow',
+    category: 'martial',
+    rangeType: 'ranged',
+    name: 'Тяжёлый арбалет',
+    damage: '1к10 колющий',
+    rangeNormalFt: 100,
+    rangeMaxFt: 400,
+    propertyIds: ['prop-ammunition', 'prop-heavy', 'prop-loading', 'prop-two-handed'],
+    properties: 'Боеприпас (100/400), Тяжёлое, Перезарядка, Двуручное',
+    masteryId: 'mst-push',
+    mastery: 'Толчок',
+    ammoItemId: 'gear-bolts',
+    weight: '18 фнт.',
+    price: '50 зм',
+  },
+  {
+    id: 'wpn-longsword',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Длинный меч',
+    damage: '1к8 рубящий',
+    versatileDamage: '1к10',
+    reachFt: 5,
+    propertyIds: ['prop-versatile'],
+    properties: 'Универсальное (1к10)',
+    masteryId: 'mst-sap',
+    mastery: 'Ослабление',
+    weight: '3 фнт.',
+    price: '15 зм',
+  },
+  {
+    id: 'wpn-shortsword',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Короткий меч',
+    damage: '1к6 колющий',
+    reachFt: 5,
+    propertyIds: ['prop-finesse', 'prop-light'],
+    properties: 'Фехтовальное, Лёгкое',
+    masteryId: 'mst-vex',
+    mastery: 'Досаждение',
+    weight: '2 фнт.',
+    price: '10 зм',
+  },
+  {
+    id: 'wpn-rapier',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Рапира',
+    damage: '1к8 колющий',
+    reachFt: 5,
+    propertyIds: ['prop-finesse'],
+    properties: 'Фехтовальное',
+    masteryId: 'mst-vex',
+    mastery: 'Досаждение',
+    weight: '2 фнт.',
+    price: '25 зм',
+  },
+  {
+    id: 'wpn-battleaxe',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Боевой топор',
+    damage: '1к8 рубящий',
+    versatileDamage: '1к10',
+    reachFt: 5,
+    propertyIds: ['prop-versatile'],
+    properties: 'Универсальное (1к10)',
+    masteryId: 'mst-topple',
+    mastery: 'Опрокидывание',
+    weight: '4 фнт.',
+    price: '10 зм',
+  },
+  {
+    id: 'wpn-greatsword',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Двуручный меч',
+    damage: '2к6 рубящий',
+    reachFt: 5,
+    propertyIds: ['prop-heavy', 'prop-two-handed'],
+    properties: 'Тяжёлое, Двуручное',
+    masteryId: 'mst-graze',
+    mastery: 'Царапание',
+    weight: '6 фнт.',
+    price: '50 зм',
+  },
+  {
+    id: 'wpn-halberd',
+    category: 'martial',
+    rangeType: 'melee',
+    name: 'Алебарда',
+    damage: '1к10 рубящий',
+    reachFt: 10,
+    propertyIds: ['prop-heavy', 'prop-reach', 'prop-two-handed'],
+    properties: 'Тяжёлое, Досягаемость, Двуручное',
+    masteryId: 'mst-cleave',
+    mastery: 'Прорубание',
+    weight: '6 фнт.',
+    price: '20 зм',
+  },
+  {
+    id: 'wpn-longbow',
+    category: 'martial',
+    rangeType: 'ranged',
+    name: 'Длинный лук',
+    damage: '1к8 колющий',
+    rangeNormalFt: 150,
+    rangeMaxFt: 600,
+    propertyIds: ['prop-ammunition', 'prop-heavy', 'prop-two-handed'],
+    properties: 'Боеприпас (150/600), Тяжёлое, Двуручное',
+    masteryId: 'mst-slow',
+    mastery: 'Замедление',
+    ammoItemId: 'gear-arrows',
+    weight: '2 фнт.',
+    price: '50 зм',
+  },
+];
+
+export function getGearKindLabel(kind: GearItemKind): string {
+  switch (kind) {
+    case 'ammunition':
+      return 'Боеприпас';
+    case 'container':
+      return 'Контейнер';
+    default:
+      return 'Предмет снаряжения';
+  }
+}
+
+export function resolveWeaponCatalogItem(
+  item: Pick<InventoryItem, 'catalogItemId' | 'name'>,
+  catalogs: Pick<GameCatalogs, 'weapons'>
+): WeaponRef | undefined {
+  return (
+    (item.catalogItemId
+      ? catalogs.weapons.find((w) => w.id === item.catalogItemId)
+      : undefined) ??
+    catalogs.weapons.find((w) => w.name.trim().toLowerCase() === item.name.trim().toLowerCase())
+  );
+}
+
+export function resolveGearCatalogItem(
+  item: Pick<InventoryItem, 'catalogItemId' | 'name'>,
+  catalogs?: { gearItems?: GearItemRef[] } | null
+): GearItemRef | undefined {
+  const list = catalogs?.gearItems ?? DEFAULT_GEAR_ITEMS;
+  return (
+    (item.catalogItemId ? list.find((g) => g.id === item.catalogItemId) : undefined) ??
+    list.find((g) => g.name.trim().toLowerCase() === item.name.trim().toLowerCase())
+  );
+}
+
+export function inferWeaponPropertyIdsFromText(propertiesText?: string): string[] {
+  const lower = (propertiesText || '').toLowerCase();
+  if (!lower) return [];
+  const ids: string[] = [];
+  if (lower.includes('универсал')) ids.push('prop-versatile');
+  if (lower.includes('лёгк') || lower.includes('легк')) ids.push('prop-light');
+  if (lower.includes('метател')) ids.push('prop-thrown');
+  if (lower.includes('фехтовал')) ids.push('prop-finesse');
+  if (lower.includes('двуруч')) ids.push('prop-two-handed');
+  if (lower.includes('тяжёл') || lower.includes('тяжел')) ids.push('prop-heavy');
+  if (lower.includes('досягаем')) ids.push('prop-reach');
+  if (lower.includes('боеприпас')) ids.push('prop-ammunition');
+  if (lower.includes('перезаряд')) ids.push('prop-loading');
+  return ids;
+}
+
+export function inferVersatileDamageFromText(propertiesText?: string): string | undefined {
+  if (!propertiesText) return undefined;
+  const match = /универсал[а-я]*\s*\(\s*([0-9]+[ккd][0-9]+)\s*\)/i.exec(propertiesText);
+  return match ? match[1].toLowerCase().replace('d', 'к') : undefined;
+}
+
+export function resolveWeaponPropertyRefs(
+  source: Pick<InventoryItem, 'catalogItemId' | 'name' | 'propertyIds' | 'properties'> | WeaponRef,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'weaponProperties'>> | null
+): WeaponPropertyRef[] {
+  const propCatalog =
+    catalogs?.weaponProperties && catalogs.weaponProperties.length > 0
+      ? catalogs.weaponProperties
+      : DEFAULT_WEAPON_PROPERTIES;
+  const catalogWeapon =
+    'category' in source && 'damage' in source && !('quantity' in source)
+      ? (source as WeaponRef)
+      : catalogs?.weapons
+        ? resolveWeaponCatalogItem(source, { weapons: catalogs.weapons })
+        : undefined;
+
+  const rawIds =
+    Array.isArray(source.propertyIds) && source.propertyIds.length > 0
+      ? source.propertyIds
+      : Array.isArray(catalogWeapon?.propertyIds) && catalogWeapon.propertyIds.length > 0
+        ? catalogWeapon.propertyIds
+        : inferWeaponPropertyIdsFromText(source.properties ?? catalogWeapon?.properties);
+
+  const uniqueIds = Array.from(new Set(rawIds));
+  const resolved: WeaponPropertyRef[] = [];
+  for (const id of uniqueIds) {
+    const found = propCatalog.find((p) => p.id === id);
+    if (found) resolved.push(found);
+  }
+  return resolved;
+}
+
+export function hasWeaponProperty(
+  source: Pick<InventoryItem, 'catalogItemId' | 'name' | 'propertyIds' | 'properties'> | WeaponRef,
+  catalogs: Partial<Pick<GameCatalogs, 'weapons' | 'weaponProperties'>> | null | undefined,
+  propId: string,
+  nameNeedle?: string
+): boolean {
+  const refs = resolveWeaponPropertyRefs(source, catalogs);
+  return refs.some(
+    (p) =>
+      p.id === propId ||
+      (nameNeedle ? p.name.toLowerCase().includes(nameNeedle.toLowerCase()) : false)
+  );
+}
+
+export function formatWeaponPropertiesSummary(
+  weapon: Pick<
+    WeaponRef,
+    | 'propertyIds'
+    | 'properties'
+    | 'versatileDamage'
+    | 'rangeType'
+    | 'rangeNormalFt'
+    | 'rangeMaxFt'
+    | 'thrownNormalFt'
+    | 'thrownMaxFt'
+  >,
+  catalogs?: Partial<Pick<GameCatalogs, 'weaponProperties'>> | null
+): string {
+  const propCatalog =
+    catalogs?.weaponProperties && catalogs.weaponProperties.length > 0
+      ? catalogs.weaponProperties
+      : DEFAULT_WEAPON_PROPERTIES;
+  const ids = Array.isArray(weapon.propertyIds) ? weapon.propertyIds : [];
+  if (ids.length === 0) return weapon.properties || '—';
+
+  const labels: string[] = [];
+  for (const id of ids) {
+    const ref = propCatalog.find((p) => p.id === id);
+    if (!ref) continue;
+    if (ref.id === 'prop-versatile' && weapon.versatileDamage) {
+      labels.push(`${ref.name} (${weapon.versatileDamage})`);
+    } else if (ref.id === 'prop-thrown') {
+      const n = weapon.thrownNormalFt ?? 20;
+      const m = weapon.thrownMaxFt ?? 60;
+      labels.push(`${ref.name} (${n}/${m})`);
+    } else if (ref.id === 'prop-ammunition' && weapon.rangeNormalFt && weapon.rangeMaxFt) {
+      labels.push(`${ref.name} (${weapon.rangeNormalFt}/${weapon.rangeMaxFt})`);
+    } else {
+      labels.push(ref.name);
+    }
+  }
+  return labels.length > 0 ? labels.join(', ') : weapon.properties || '—';
+}
+
+const LEGACY_MASTERY_ALIASES: Record<string, string> = {
+  зазубрина: 'mst-nick',
+  быстрое: 'mst-nick',
+  опрокидывание: 'mst-topple',
+  ослабление: 'mst-sap',
+  замедление: 'mst-slow',
+  досаждение: 'mst-vex',
+  царапание: 'mst-graze',
+  'скользящий удар': 'mst-graze',
+  прорубание: 'mst-cleave',
+  рассечение: 'mst-cleave',
+  толчок: 'mst-push',
+};
+
+export function resolveWeaponMasteryRef(
+  source: Pick<InventoryItem, 'catalogItemId' | 'name' | 'masteryId' | 'mastery'> | WeaponRef,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'weaponMasteries'>> | null
+): WeaponMasteryRef | null {
+  const masteries =
+    catalogs?.weaponMasteries && catalogs.weaponMasteries.length > 0
+      ? catalogs.weaponMasteries
+      : DEFAULT_WEAPON_MASTERIES;
+  const catalogWeapon =
+    'category' in source && 'damage' in source && !('quantity' in source)
+      ? (source as WeaponRef)
+      : catalogs?.weapons
+        ? resolveWeaponCatalogItem(source, { weapons: catalogs.weapons })
+        : undefined;
+
+  const targetId = source.masteryId ?? catalogWeapon?.masteryId ?? null;
+  if (targetId) {
+    const byId = masteries.find((m) => m.id === targetId);
+    if (byId) return byId;
+  }
+
+  const rawName = (source.mastery ?? catalogWeapon?.mastery ?? '').trim().toLowerCase();
+  if (!rawName || rawName === '—' || rawName === '-') return null;
+
+  const exact = masteries.find((m) => m.name.trim().toLowerCase() === rawName);
+  if (exact) return exact;
+
+  const aliasId = LEGACY_MASTERY_ALIASES[rawName];
+  if (aliasId) {
+    return masteries.find((m) => m.id === aliasId) ?? null;
+  }
+  return null;
+}
+
+export function resolveWeaponAmmoRequirement(
+  source: Pick<
+    InventoryItem,
+    'catalogItemId' | 'name' | 'propertyIds' | 'properties' | 'ammoItemId'
+  > | WeaponRef,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'weaponProperties' | 'gearItems'>> | null
+): {
+  required: boolean;
+  ammoRef: GearItemRef | null;
+  containerRef: GearItemRef | null;
+} {
+  const needsAmmo = hasWeaponProperty(source, catalogs, 'prop-ammunition', 'боеприпас');
+  if (!needsAmmo) {
+    return { required: false, ammoRef: null, containerRef: null };
+  }
+  const gearItems =
+    catalogs?.gearItems && catalogs.gearItems.length > 0 ? catalogs.gearItems : DEFAULT_GEAR_ITEMS;
+  const catalogWeapon =
+    'category' in source && 'damage' in source && !('quantity' in source)
+      ? (source as WeaponRef)
+      : catalogs?.weapons
+        ? resolveWeaponCatalogItem(source, { weapons: catalogs.weapons })
+        : undefined;
+
+  const weaponId = catalogWeapon?.id ?? ('id' in source ? (source as WeaponRef).id : undefined);
+  const directAmmoId = source.ammoItemId ?? catalogWeapon?.ammoItemId ?? null;
+  let ammoRef: GearItemRef | null = directAmmoId
+    ? gearItems.find((g) => g.id === directAmmoId) ?? null
+    : null;
+
+  if (!ammoRef && weaponId) {
+    ammoRef =
+      gearItems.find(
+        (g) => g.kind === 'ammunition' && g.compatibleWeaponIds?.includes(weaponId)
+      ) ?? null;
+  }
+  if (!ammoRef) {
+    const lowerName = source.name.toLowerCase();
+    if (lowerName.includes('арбалет')) {
+      ammoRef = gearItems.find((g) => g.id === 'gear-bolts') ?? null;
+    } else if (lowerName.includes('лук')) {
+      ammoRef = gearItems.find((g) => g.id === 'gear-arrows') ?? null;
+    }
+  }
+
+  const containerRef = ammoRef?.containerId
+    ? gearItems.find((g) => g.id === ammoRef!.containerId) ?? null
+    : ammoRef
+      ? gearItems.find((g) => g.kind === 'container' && g.storedAmmoId === ammoRef!.id) ?? null
+      : null;
+
+  return { required: true, ammoRef, containerRef };
+}
+
+export function getAmmoCapacityForPlayer(
+  inventory: InventoryItem[] | undefined,
+  ammoRef: GearItemRef,
+  catalogs?: Partial<Pick<GameCatalogs, 'gearItems'>> | null
+): {
+  currentQty: number;
+  maxCapacity: number;
+  containerCount: number;
+  containerRef: GearItemRef | null;
+  ammoInvItem: InventoryItem | null;
+} {
+  const list = inventory ?? [];
+  const gearItems =
+    catalogs?.gearItems && catalogs.gearItems.length > 0 ? catalogs.gearItems : DEFAULT_GEAR_ITEMS;
+  const containerRef = ammoRef.containerId
+    ? gearItems.find((g) => g.id === ammoRef.containerId) ?? null
+    : gearItems.find((g) => g.kind === 'container' && g.storedAmmoId === ammoRef.id) ?? null;
+
+  let currentQty = 0;
+  let ammoInvItem: InventoryItem | null = null;
+  for (const inv of list) {
+    const isAmmo =
+      inv.catalogItemId === ammoRef.id ||
+      inv.name.trim().toLowerCase() === ammoRef.name.trim().toLowerCase();
+    if (isAmmo) {
+      currentQty += Math.max(0, Number(inv.quantity) || 0);
+      if (!ammoInvItem) ammoInvItem = inv;
+    }
+  }
+
+  let containerCount = 0;
+  if (containerRef) {
+    for (const inv of list) {
+      const isContainer =
+        inv.catalogItemId === containerRef.id ||
+        inv.name.trim().toLowerCase() === containerRef.name.trim().toLowerCase();
+      if (isContainer) {
+        containerCount += Math.max(0, Number(inv.quantity) || 0);
+      }
+    }
+  }
+
+  const perContainerCap = Math.max(1, containerRef?.capacity ?? ammoRef.packQuantity ?? 20);
+  const maxCapacity = containerRef ? containerCount * perContainerCap : Infinity;
+
+  return {
+    currentQty,
+    maxCapacity,
+    containerCount,
+    containerRef,
+    ammoInvItem,
+  };
+}
+
+export interface EquippedHandSlot {
+  itemId: string;
+  name: string;
+  hands: 1 | 2;
+  kind: 'weapon' | 'shield';
+}
+
+export interface EquippedHandsUsage {
+  usedHands: number;
+  maxHands: 2;
+  freeHands: number;
+  slots: EquippedHandSlot[];
+}
+
+export function getWeaponRequiredHands(
+  item: Pick<InventoryItem, 'catalogItemId' | 'name' | 'propertyIds' | 'properties'> | WeaponRef,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'weaponProperties'>> | null
+): 1 | 2 {
+  return hasWeaponProperty(item, catalogs, 'prop-two-handed', 'двуруч') ? 2 : 1;
+}
+
+export function computeEquippedHandsUsage(
+  inventory: InventoryItem[] | undefined,
+  catalogs: Pick<GameCatalogs, 'weapons' | 'armors'> &
+    Partial<Pick<GameCatalogs, 'weaponProperties'>>,
+  options?: { excludeItemId?: string; excludeShields?: boolean }
+): EquippedHandsUsage {
+  const slots: EquippedHandSlot[] = [];
+  for (const item of inventory ?? []) {
+    if (!item.equipped) continue;
+    if (options?.excludeItemId && item.id === options.excludeItemId) continue;
+
+    if (item.category === 'weapon') {
+      const hands = getWeaponRequiredHands(item, catalogs);
+      slots.push({
+        itemId: item.id,
+        name: item.name,
+        hands,
+        kind: 'weapon',
+      });
+    } else if (item.category === 'armor') {
+      const armorCat = resolveInventoryArmorCategory(item, catalogs as GameCatalogs);
+      if (armorCat === 'shield' && !options?.excludeShields) {
+        slots.push({
+          itemId: item.id,
+          name: item.name,
+          hands: 1,
+          kind: 'shield',
+        });
+      }
+    }
+  }
+  const usedHands = slots.reduce((sum, s) => sum + s.hands, 0);
+  return {
+    usedHands,
+    maxHands: 2,
+    freeHands: Math.max(0, 2 - usedHands),
+    slots,
+  };
+}
+
+export function hasHeroWeaponMasteryFeature(
+  player: Pick<PlayerCharacter, 'classId' | 'level'> & { subclassId?: string },
+  catalogs?: Partial<
+    Pick<GameCatalogs, 'classes' | 'classFeatures' | 'subclassFeatures'>
+  > | null
+): boolean {
+  const safeLevel = Math.max(1, Math.floor(Number(player.level) || 1));
+  const classFeatures = catalogs?.classFeatures ?? [];
+  if (
+    classFeatures.some(
+      (f) =>
+        f.classId === player.classId &&
+        f.level <= safeLevel &&
+        f.name.toLowerCase().includes('оружейное мастерство')
+    )
+  ) {
+    return true;
+  }
+  const subclassFeatures = catalogs?.subclassFeatures ?? [];
+  if (
+    player.subclassId &&
+    subclassFeatures.some(
+      (f) =>
+        f.subclassId === player.subclassId &&
+        f.level <= safeLevel &&
+        f.name.toLowerCase().includes('оружейное мастерство')
+    )
+  ) {
+    return true;
+  }
+  const classRef = catalogs?.classes?.find((c) => c.id === player.classId);
+  if (classRef?.classResources) {
+    const masteryRes = classRef.classResources.find((r) =>
+      r.name.toLowerCase().includes('оружейное мастерство')
+    );
+    if (masteryRes) {
+      const val = String(masteryRes.values[Math.min(safeLevel - 1, masteryRes.values.length - 1)] ?? '').trim();
+      if (val && val !== '—' && val !== '-' && val !== '0') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function canPlayerEquipItem(
-  player: Pick<PlayerCharacter, 'proficiencyIds' | 'abilities'> & { classId?: string },
+  player: Pick<PlayerCharacter, 'proficiencyIds' | 'abilities'> & {
+    classId?: string;
+    inventory?: InventoryItem[];
+  },
   item: InventoryItem,
   catalogs: GameCatalogs
 ): { allowed: true } | { allowed: false; reason: string } {
   if (item.category === 'weapon') {
-    const catalogWeapon =
-      (item.catalogItemId
-        ? catalogs.weapons.find((w) => w.id === item.catalogItemId)
-        : undefined) ??
-      catalogs.weapons.find((w) => w.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+    const catalogWeapon = resolveWeaponCatalogItem(item, catalogs);
     const weaponCat: WeaponCategory | undefined = item.weaponCategory ?? catalogWeapon?.category;
     const weaponRange: WeaponRangeType | undefined =
       item.weaponRangeType ?? catalogWeapon?.rangeType;
-    const weaponProps = (item.properties ?? catalogWeapon?.properties ?? '').toLowerCase();
+    const isLight = hasWeaponProperty(item, catalogs, 'prop-light', 'лёгк');
+    const isFinesse = hasWeaponProperty(item, catalogs, 'prop-finesse', 'фехтовал');
     const classRef = player.classId
       ? catalogs.classes.find((c) => c.id === player.classId)
       : undefined;
@@ -1796,11 +2545,13 @@ export function canPlayerEquipItem(
         ['военн', 'оруж'],
       ]);
       const allowedByLightProp =
-        (player.classId === 'monk' || player.classId === 'rogue' || classNote.includes('лёгк') || classNote.includes('легк')) &&
-        (weaponProps.includes('лёгк') || weaponProps.includes('легк'));
+        (player.classId === 'monk' ||
+          player.classId === 'rogue' ||
+          classNote.includes('лёгк') ||
+          classNote.includes('легк')) &&
+        isLight;
       const allowedByFinesseProp =
-        (player.classId === 'rogue' || classNote.includes('фехтовал')) &&
-        weaponProps.includes('фехтовал');
+        (player.classId === 'rogue' || classNote.includes('фехтовал')) && isFinesse;
       if (!hasMartial && !allowedByLightProp && !allowedByFinesseProp) {
         missingParts.push('воинским оружием');
       }
@@ -1830,7 +2581,10 @@ export function canPlayerEquipItem(
     if (!weaponCat && !weaponRange) {
       const hasAnyWeaponProf =
         hasProficiencyFor(player, catalogs, 'weapon_simple', [['прост', 'оруж']]) ||
-        hasProficiencyFor(player, catalogs, 'weapon_martial', [['воинск', 'оруж'], ['военн', 'оруж']]) ||
+        hasProficiencyFor(player, catalogs, 'weapon_martial', [
+          ['воинск', 'оруж'],
+          ['военн', 'оруж'],
+        ]) ||
         catalogs.proficiencies.some(
           (pr) => pr.category === 'weapon' && player.proficiencyIds.includes(pr.id)
         );
@@ -1839,6 +2593,61 @@ export function canPlayerEquipItem(
           allowed: false,
           reason: `Нельзя экипировать «${item.name}»: у персонажа нет владения оружием.`,
         };
+      }
+    }
+
+    // Check Two-Hand slot limit (max 2 hands occupied)
+    if (Array.isArray(player.inventory)) {
+      const neededHands = getWeaponRequiredHands(item, catalogs);
+      const handsUsage = computeEquippedHandsUsage(player.inventory, catalogs, {
+        excludeItemId: item.id,
+      });
+      if (handsUsage.usedHands + neededHands > 2) {
+        const twoHandedEquipped = handsUsage.slots.find((s) => s.hands === 2);
+        if (twoHandedEquipped) {
+          return {
+            allowed: false,
+            reason: `Руки заняты: сейчас надето двуручное оружие «${twoHandedEquipped.name}». Сначала снимите его, чтобы взять «${item.name}».`,
+          };
+        }
+        if (neededHands === 2) {
+          const occupiedNames = handsUsage.slots.map((s) => `«${s.name}»`).join(', ');
+          return {
+            allowed: false,
+            reason: `Руки заняты (${handsUsage.usedHands}/2): для двуручного оружия «${item.name}» нужны обе свободные руки. Сначала снимите ${occupiedNames}.`,
+          };
+        }
+        const occupiedNames = handsUsage.slots.map((s) => `«${s.name}»`).join(' и ');
+        return {
+          allowed: false,
+          reason: `Обе руки заняты (${occupiedNames}): нельзя взять «${item.name}» в третью руку. Сначала снимите один предмет.`,
+        };
+      }
+
+      // Check Ammunition + Container requirement for ranged weapons with "Боеприпас"
+      const ammoReq = resolveWeaponAmmoRequirement(item, catalogs);
+      if (ammoReq.required && ammoReq.ammoRef) {
+        const cap = getAmmoCapacityForPlayer(player.inventory, ammoReq.ammoRef, catalogs);
+        const missingContainer = Boolean(ammoReq.containerRef && cap.containerCount <= 0);
+        const missingAmmo = cap.currentQty <= 0;
+        if (missingContainer && missingAmmo) {
+          return {
+            allowed: false,
+            reason: `Нельзя надеть «${item.name}»: в инвентаре отсутствуют «${ammoReq.containerRef!.name}» и боеприпасы «${ammoReq.ammoRef.name}».`,
+          };
+        }
+        if (missingContainer) {
+          return {
+            allowed: false,
+            reason: `Нельзя надеть «${item.name}»: в инвентаре нет контейнера «${ammoReq.containerRef!.name}».`,
+          };
+        }
+        if (missingAmmo) {
+          return {
+            allowed: false,
+            reason: `Нельзя надеть «${item.name}»: в инвентаре нет боеприпасов «${ammoReq.ammoRef.name}».`,
+          };
+        }
       }
     }
   }
@@ -1888,6 +2697,19 @@ export function canPlayerEquipItem(
           allowed: false,
           reason: `Нельзя использовать «${item.name}»: у персонажа нет владения щитом.`,
         };
+      }
+      if (Array.isArray(player.inventory)) {
+        const handsUsage = computeEquippedHandsUsage(player.inventory, catalogs, {
+          excludeItemId: item.id,
+          excludeShields: true,
+        });
+        if (handsUsage.usedHands + 1 > 2) {
+          const occupiedNames = handsUsage.slots.map((s) => `«${s.name}»`).join(' и ');
+          return {
+            allowed: false,
+            reason: `Обе руки заняты (${occupiedNames}): нельзя взять щит «${item.name}». Сначала освободите одну руку.`,
+          };
+        }
       }
     } else {
       const hasAnyArmorProf = catalogs.proficiencies.some(
@@ -2051,7 +2873,7 @@ export function resolveWeaponReachRange(
     return { rangeType, normalFt, maxFt };
   }
 
-  const reachFt =
+  const baseReachFt =
     typeof item.reachFt === 'number' && Number.isFinite(item.reachFt) && item.reachFt >= 0
       ? item.reachFt
       : typeof catalogWeapon?.reachFt === 'number' &&
@@ -2059,6 +2881,8 @@ export function resolveWeaponReachRange(
           catalogWeapon.reachFt >= 0
         ? catalogWeapon.reachFt
         : inferred.reachFt ?? 5;
+  const hasReachProp = hasWeaponProperty(item, catalogs, 'prop-reach', 'досягаем');
+  const reachFt = hasReachProp && baseReachFt < 10 ? baseReachFt + 5 : baseReachFt;
   return { rangeType: 'melee', normalFt: reachFt, maxFt: reachFt };
 }
 
@@ -2594,11 +3418,12 @@ export function getHeroLevelUpChecklist(
 
 export interface HeroActionItem {
   id: string;
-  kind: 'unarmed' | 'melee' | 'ranged';
+  kind: 'unarmed' | 'melee' | 'ranged' | 'bonus_light';
   name: string;
   subtitle: string;
   equipped: boolean;
   inventoryItemId?: string;
+  handsRequired?: 1 | 2;
   hitBonus: number;
   hitFormula: string;
   hitBreakdown: string;
@@ -2606,7 +3431,49 @@ export interface HeroActionItem {
   damageBreakdown: string;
   rangeLabel: string;
   properties?: string;
+  resolvedProperties?: WeaponPropertyRef[];
   mastery?: string;
+  /** Active mastery (only populated when weapon is equipped AND hero has "Оружейное мастерство") */
+  activeMastery?: {
+    id: string;
+    name: string;
+    description: string;
+    saveDc?: number;
+    computedHint?: string;
+  } | null;
+  /** Extra two-handed attack stats for Versatile weapons */
+  versatileAttack?: {
+    damageFormula: string;
+    damageBreakdown: string;
+    availableNow: boolean;
+    note: string;
+  } | null;
+  /** Thrown ranged attack stats for melee weapons with Thrown property */
+  thrownAttack?: {
+    hitFormula: string;
+    damageFormula: string;
+    normalFt: number;
+    maxFt: number;
+  } | null;
+  /** True when weapon has Heavy property and hero STR < 13 */
+  heavyDisadvantage?: boolean;
+  /** True when weapon has Loading property */
+  loadingNote?: boolean;
+  /** True when weapon has Finesse property */
+  finesseChoice?: boolean;
+  /** True when weapon has Reach property */
+  reachBonusNote?: boolean;
+  /** Ammunition status for weapons with Ammunition property */
+  ammoStatus?: {
+    ammoItemId: string;
+    ammoName: string;
+    currentQty: number;
+    maxCapacity: number;
+    containerName: string | null;
+    hasContainer: boolean;
+  } | null;
+  /** True when action represents an extra Light-weapon attack */
+  isBonusAction?: boolean;
   bonusNote?: string;
 }
 
@@ -2624,6 +3491,13 @@ function formatDamageWithAbilityMod(baseDamage: string, mod: number): string {
   if (mod === 0) return `${dicePart}${restPart}`;
   const sign = mod > 0 ? '+' : '−';
   return `${dicePart} ${sign} ${Math.abs(mod)}${restPart}`;
+}
+
+function replaceDamageDice(baseDamage: string, nextDice: string): string {
+  const clean = baseDamage.trim();
+  const match = /^(\S+)(\s+.*)?$/.exec(clean);
+  if (!match) return nextDice;
+  return `${nextDice}${match[2] || ''}`;
 }
 
 function formatHitFormula(hitBonus: number): string {
@@ -2647,14 +3521,21 @@ function formatHitBreakdown(
 
 export function computeHeroActions(
   player: Pick<PlayerCharacter, 'abilities' | 'level' | 'classId' | 'inventory'> & {
+    subclassId?: string;
     backgroundId?: string;
     featIds?: string[];
     conditions?: string[];
     exhaustionLevel?: number;
   },
   catalogs: Pick<GameCatalogs, 'classes' | 'weapons' | 'abilityModifiers'> & {
+    armors?: GameCatalogs['armors'];
     backgrounds?: GameCatalogs['backgrounds'];
     feats?: GameCatalogs['feats'];
+    classFeatures?: GameCatalogs['classFeatures'];
+    subclassFeatures?: GameCatalogs['subclassFeatures'];
+    weaponProperties?: GameCatalogs['weaponProperties'];
+    weaponMasteries?: GameCatalogs['weaponMasteries'];
+    gearItems?: GameCatalogs['gearItems'];
   }
 ): HeroActionItem[] {
   const classRef = catalogs.classes.find((c) => c.id === player.classId) ?? null;
@@ -2670,11 +3551,19 @@ export function computeHeroActions(
   const isBarbarian = player.classId === 'barbarian';
   const isRogue = player.classId === 'rogue';
   const safeLevel = Math.max(1, Math.min(20, Math.floor(Number(player.level) || 1)));
+  const hasMasteryFeature = hasHeroWeaponMasteryFeature(player, catalogs);
+
+  const handsUsage = computeEquippedHandsUsage(player.inventory, {
+    weapons: catalogs.weapons,
+    armors: catalogs.armors ?? [],
+    weaponProperties: catalogs.weaponProperties,
+  });
 
   const monkDieRaw = isMonk
     ? classRef?.classResources?.find((r) => r.id === 'monk-res-3')?.values[safeLevel - 1]
     : undefined;
-  const monkDie = monkDieRaw && /^1?[кk]\d+/i.test(monkDieRaw) ? monkDieRaw.toLowerCase() : isMonk ? '1к6' : null;
+  const monkDie =
+    monkDieRaw && /^1?[кk]\d+/i.test(monkDieRaw) ? monkDieRaw.toLowerCase() : isMonk ? '1к6' : null;
   const rageDamageRaw = isBarbarian
     ? classRef?.classResources?.find((r) => r.id === 'barbarian-res-4')?.values[safeLevel - 1]
     : undefined;
@@ -2688,7 +3577,8 @@ export function computeHeroActions(
       : Boolean(
           catalogs.backgrounds &&
             player.backgroundId &&
-            catalogs.backgrounds.find((b) => b.id === player.backgroundId)?.featId === 'tavern_brawler'
+            catalogs.backgrounds.find((b) => b.id === player.backgroundId)?.featId ===
+              'tavern_brawler'
         );
 
   const actions: HeroActionItem[] = [];
@@ -2736,15 +3626,22 @@ export function computeHeroActions(
 
   // 2 & 3. Melee & Ranged Weapon Attacks from inventory
   const weaponsInInventory = (player.inventory ?? []).filter((item) => item.category === 'weapon');
-  const sortedWeapons = [...weaponsInInventory].sort((a, b) => Number(b.equipped) - Number(a.equipped));
+  const sortedWeapons = [...weaponsInInventory].sort(
+    (a, b) => Number(b.equipped) - Number(a.equipped)
+  );
+
+  const equippedLightWeapons: Array<{
+    item: InventoryItem;
+    baseDamage: string;
+    abilityMod: number;
+    abilityShort: string;
+    hitBonus: number;
+    rangeLabel: string;
+    hasNickMastery: boolean;
+  }> = [];
 
   for (const item of sortedWeapons) {
-    const catalogWeapon =
-      (item.catalogItemId
-        ? catalogs.weapons.find((w) => w.id === item.catalogItemId)
-        : undefined) ??
-      catalogs.weapons.find((w) => w.name.trim().toLowerCase() === item.name.trim().toLowerCase());
-
+    const catalogWeapon = resolveWeaponCatalogItem(item, catalogs);
     const resolvedRange = resolveWeaponReachRange(item, catalogs);
     const isRanged = resolvedRange.rangeType === 'ranged';
     const rangeLabel =
@@ -2752,13 +3649,19 @@ export function computeHeroActions(
         ? `${resolvedRange.normalFt}/${resolvedRange.maxFt} фт.`
         : `${resolvedRange.normalFt} фт.`;
 
-    const propsStr = (item.properties || catalogWeapon?.properties || '').toLowerCase();
-    const isFinesse = propsStr.includes('фехтовал');
+    const resolvedProps = resolveWeaponPropertyRefs(item, catalogs);
+    const propIds = new Set(resolvedProps.map((p) => p.id));
+    const isFinesse = propIds.has('prop-finesse');
+    const isLight = propIds.has('prop-light');
+    const isVersatile = propIds.has('prop-versatile');
+    const isThrown = propIds.has('prop-thrown');
+    const isTwoHanded = propIds.has('prop-two-handed');
+    const isHeavy = propIds.has('prop-heavy');
+    const isReach = propIds.has('prop-reach');
+    const isLoading = propIds.has('prop-loading');
+
     const wpnCat = item.weaponCategory ?? catalogWeapon?.category;
-    const isMonkWeapon =
-      isMonk &&
-      !isRanged &&
-      (wpnCat === 'simple' || propsStr.includes('лёгк') || propsStr.includes('легк'));
+    const isMonkWeapon = isMonk && !isRanged && (wpnCat === 'simple' || isLight);
 
     const baseDamage = item.damage || catalogWeapon?.damage || '1к4';
     let abilityMod = isRanged ? dexMod : strMod;
@@ -2777,6 +3680,92 @@ export function computeHeroActions(
       notes.push(`Коварная атака: +${sneakAttackRaw}`);
     }
 
+    // Versatile two-handed damage calculation
+    let versatileAttack: HeroActionItem['versatileAttack'] = null;
+    if (isVersatile && !isRanged) {
+      const vDice =
+        item.versatileDamage ||
+        catalogWeapon?.versatileDamage ||
+        inferVersatileDamageFromText(item.properties || catalogWeapon?.properties) ||
+        '1к8';
+      const vBase = replaceDamageDice(baseDamage, vDice);
+      const otherHandFree = item.equipped ? handsUsage.usedHands <= 1 : true;
+      versatileAttack = {
+        damageFormula: formatDamageWithAbilityMod(vBase, abilityMod),
+        damageBreakdown: `${vBase} + ${abilityShort} (${formatModifier(abilityMod)})`,
+        availableNow: otherHandFree,
+        note: otherHandFree
+          ? 'Двумя руками (вторая рука свободна)'
+          : 'Вторая рука занята — сейчас используется одной рукой',
+      };
+    }
+
+    // Thrown ranged attack calculation
+    let thrownAttack: HeroActionItem['thrownAttack'] = null;
+    if (isThrown && !isRanged) {
+      const normalFt = item.thrownNormalFt ?? catalogWeapon?.thrownNormalFt ?? 20;
+      const maxFt = item.thrownMaxFt ?? catalogWeapon?.thrownMaxFt ?? 60;
+      thrownAttack = {
+        hitFormula: formatHitFormula(hitBonus),
+        damageFormula: formatDamageWithAbilityMod(baseDamage, abilityMod),
+        normalFt,
+        maxFt,
+      };
+    }
+
+    // Ammunition status
+    const ammoReq = resolveWeaponAmmoRequirement(item, catalogs);
+    let ammoStatus: HeroActionItem['ammoStatus'] = null;
+    if (ammoReq.required && ammoReq.ammoRef) {
+      const cap = getAmmoCapacityForPlayer(player.inventory, ammoReq.ammoRef, catalogs);
+      ammoStatus = {
+        ammoItemId: ammoReq.ammoRef.id,
+        ammoName: ammoReq.ammoRef.name,
+        currentQty: cap.currentQty,
+        maxCapacity: Number.isFinite(cap.maxCapacity) ? cap.maxCapacity : cap.currentQty,
+        containerName: ammoReq.containerRef?.name ?? null,
+        hasContainer: !ammoReq.containerRef || cap.containerCount > 0,
+      };
+    }
+
+    // Weapon Mastery (ONLY active when weapon is equipped AND hero has "Оружейное мастерство")
+    const masteryRef = resolveWeaponMasteryRef(item, catalogs);
+    let activeMastery: HeroActionItem['activeMastery'] = null;
+    if (item.equipped && hasMasteryFeature && masteryRef) {
+      const saveDc = masteryRef.id === 'mst-topple' ? 8 + profBonus + abilityMod : undefined;
+      let computedHint: string | undefined;
+      if (masteryRef.id === 'mst-topple' && saveDc !== undefined) {
+        computedHint = `Спасбросок Тел. Сл ${saveDc} (8 + БМ ${profBonus} + ${abilityShort} ${formatModifier(abilityMod)}) → Опрокинутый`;
+      } else if (masteryRef.id === 'mst-sap') {
+        computedHint = 'Помеха на следующий бросок атаки цели до начала вашего следующего хода';
+      } else if (masteryRef.id === 'mst-slow') {
+        computedHint = 'Скорость цели −10 фт. до начала вашего следующего хода (не складывается)';
+      } else if (masteryRef.id === 'mst-nick') {
+        computedHint = 'Доп. атака Лёгким оружием — частью действия Атака (1/ход) вместо Бонусного действия';
+      } else if (masteryRef.id === 'mst-graze') {
+        computedHint = `При промахе наносит ${Math.max(0, abilityMod)} урона (${abilityShort})`;
+      }
+      activeMastery = {
+        id: masteryRef.id,
+        name: masteryRef.name,
+        description: masteryRef.description,
+        saveDc,
+        computedHint,
+      };
+    }
+
+    if (item.equipped && isLight) {
+      equippedLightWeapons.push({
+        item,
+        baseDamage,
+        abilityMod,
+        abilityShort,
+        hitBonus,
+        rangeLabel,
+        hasNickMastery: Boolean(activeMastery && activeMastery.id === 'mst-nick'),
+      });
+    }
+
     actions.push({
       id: `action-wpn-${item.id}`,
       kind: isRanged ? 'ranged' : 'melee',
@@ -2784,20 +3773,473 @@ export function computeHeroActions(
       subtitle: isRanged ? 'Дальнобойная атака оружием' : 'Рукопашная атака оружием',
       equipped: item.equipped,
       inventoryItemId: item.id,
+      handsRequired: isTwoHanded ? 2 : 1,
       hitBonus,
       hitFormula: formatHitFormula(hitBonus),
       hitBreakdown: formatHitBreakdown(profBonus, abilityShort, abilityMod, exPen, hitBonus),
       damageFormula: formatDamageWithAbilityMod(baseDamage, abilityMod),
       damageBreakdown: `${baseDamage} + ${abilityShort} (${formatModifier(abilityMod)})`,
       rangeLabel,
-      properties: item.properties || catalogWeapon?.properties,
-      mastery: item.mastery || catalogWeapon?.mastery,
+      properties:
+        resolvedProps.length > 0
+          ? formatWeaponPropertiesSummary(
+              {
+                propertyIds: resolvedProps.map((p) => p.id),
+                properties: item.properties || catalogWeapon?.properties || '',
+                versatileDamage: item.versatileDamage || catalogWeapon?.versatileDamage,
+                rangeType: resolvedRange.rangeType,
+                rangeNormalFt: isRanged ? resolvedRange.normalFt : undefined,
+                rangeMaxFt: isRanged ? resolvedRange.maxFt : undefined,
+                thrownNormalFt: item.thrownNormalFt ?? catalogWeapon?.thrownNormalFt,
+                thrownMaxFt: item.thrownMaxFt ?? catalogWeapon?.thrownMaxFt,
+              },
+              catalogs
+            )
+          : item.properties || catalogWeapon?.properties,
+      resolvedProperties: resolvedProps,
+      mastery: masteryRef?.name ?? (item.mastery || catalogWeapon?.mastery),
+      activeMastery,
+      versatileAttack,
+      thrownAttack,
+      heavyDisadvantage: isHeavy && strScore < 13,
+      loadingNote: isLoading,
+      finesseChoice: isFinesse,
+      reachBonusNote: isReach,
+      ammoStatus,
       bonusNote: notes.length > 0 ? notes.join(' · ') : undefined,
+    });
+  }
+
+  // 4. Automatic Extra Attack from Two Equipped Light Weapons (or Nick mastery!)
+  if (equippedLightWeapons.length >= 2) {
+    const offhand = equippedLightWeapons[1];
+    const hasNick = equippedLightWeapons.some((w) => w.hasNickMastery);
+    const offhandDmgMod = offhand.abilityMod < 0 ? offhand.abilityMod : 0;
+    actions.push({
+      id: 'action-light-extra',
+      kind: 'bonus_light',
+      name: hasNick
+        ? `Доп. атака: ${offhand.item.name} (Быстрое)`
+        : `Доп. атака: ${offhand.item.name}`,
+      subtitle: hasNick
+        ? 'Частью действия Атака (1/ход, мастерство «Быстрое»)'
+        : 'Бонусное действие (свойство «Лёгкое»)',
+      equipped: true,
+      inventoryItemId: offhand.item.id,
+      hitBonus: offhand.hitBonus,
+      hitFormula: formatHitFormula(offhand.hitBonus),
+      hitBreakdown: formatHitBreakdown(
+        profBonus,
+        offhand.abilityShort,
+        offhand.abilityMod,
+        exPen,
+        offhand.hitBonus
+      ),
+      damageFormula: formatDamageWithAbilityMod(offhand.baseDamage, offhandDmgMod),
+      damageBreakdown:
+        offhandDmgMod < 0
+          ? `${offhand.baseDamage} ${offhandDmgMod} (отрицат. мод. ${offhand.abilityShort})`
+          : `${offhand.baseDamage} (без положит. модификатора характеристики)`,
+      rangeLabel: offhand.rangeLabel,
+      isBonusAction: true,
+      bonusNote: hasNick
+        ? 'Освобождает Бонусное действие — выполняется внутри действия Атака после атаки другим Лёгким оружием.'
+        : 'Совершается другим Лёгким оружием после действия Атака Лёгким оружием.',
     });
   }
 
   return actions;
 }
+
+// ============================================================================
+// Inventory Weight Limit & Encumbrance (Heroes Only)
+// ============================================================================
+
+export const ENCUMBRANCE_CONDITION_NAMES = [
+  'Слегка перегружен',
+  'Сильно перегружен',
+  'Максимальный лимит',
+] as const;
+
+export const DYING_AUTO_CONDITIONS = [
+  'Умирающий',
+  'Бессознательный',
+  'Недееспособный',
+  'Опрокинутый',
+] as const;
+
+/**
+ * Parses Russian/English weight strings like "2 фнт.", "0,5 фнт.", "1/4 фнт.", "1 1/2", "12.5 lb".
+ * Returns weight in pounds (фнт.), or 0 if empty / unparseable.
+ */
+export function parseWeightLb(raw?: string | number | null): number {
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 100) / 100 : 0;
+  }
+  if (!raw || typeof raw !== 'string') return 0;
+  const cleaned = raw.trim().replace(/,/g, '.');
+  if (!cleaned || cleaned === '—' || cleaned === '-') return 0;
+
+  // Mixed fraction e.g. "1 1/2"
+  const mixed = /(\d+)\s+(\d+)\s*\/\s*(\d+)/.exec(cleaned);
+  if (mixed) {
+    const whole = Number(mixed[1]);
+    const num = Number(mixed[2]);
+    const den = Number(mixed[3]);
+    if (den > 0 && Number.isFinite(whole) && Number.isFinite(num)) {
+      return Math.round((whole + num / den) * 100) / 100;
+    }
+  }
+
+  // Simple fraction e.g. "1/4" or "1/2"
+  const frac = /(\d+)\s*\/\s*(\d+)/.exec(cleaned);
+  if (frac) {
+    const num = Number(frac[1]);
+    const den = Number(frac[2]);
+    if (den > 0 && Number.isFinite(num)) {
+      return Math.round((num / den) * 100) / 100;
+    }
+  }
+
+  const decimal = /(\d+(?:\.\d+)?)/.exec(cleaned);
+  if (decimal) {
+    const val = Number(decimal[1]);
+    if (Number.isFinite(val) && val > 0) {
+      return Math.round(val * 100) / 100;
+    }
+  }
+  return 0;
+}
+
+export function formatWeightLb(lb: number): string {
+  const safe = Number.isFinite(lb) && lb > 0 ? Math.round(lb * 100) / 100 : 0;
+  if (Math.abs(safe - Math.round(safe)) < 0.001) {
+    return String(Math.round(safe));
+  }
+  return safe.toFixed(2).replace(/0$/, '').replace('.', ',');
+}
+
+export function getInventoryItemUnitWeightLb(
+  item: InventoryItem,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'armors' | 'gearItems'>> | null
+): number {
+  const gearRef = resolveGearCatalogItem(item, catalogs);
+  const packQty =
+    item.packQuantity && item.packQuantity > 1
+      ? item.packQuantity
+      : gearRef?.kind === 'ammunition' && gearRef.packQuantity && gearRef.packQuantity > 1
+        ? gearRef.packQuantity
+        : 1;
+
+  const direct = parseWeightLb(item.weight);
+  if (direct > 0) {
+    return packQty > 1 ? Math.round((direct / packQty) * 1000) / 1000 : direct;
+  }
+  if (!catalogs) return 0;
+
+  const lowerName = item.name.trim().toLowerCase();
+  if (item.category === 'weapon' && catalogs.weapons) {
+    const w =
+      (item.catalogItemId
+        ? catalogs.weapons.find((x) => x.id === item.catalogItemId)
+        : undefined) ??
+      catalogs.weapons.find((x) => x.name.trim().toLowerCase() === lowerName);
+    if (w?.weight) return parseWeightLb(w.weight);
+  } else if (item.category === 'armor' && catalogs.armors) {
+    const a =
+      (item.catalogItemId
+        ? catalogs.armors.find((x) => x.id === item.catalogItemId)
+        : undefined) ??
+      catalogs.armors.find((x) => x.name.trim().toLowerCase() === lowerName);
+    if (a?.weight) return parseWeightLb(a.weight);
+  } else if (gearRef?.weight) {
+    const base = parseWeightLb(gearRef.weight);
+    return packQty > 1 ? Math.round((base / packQty) * 1000) / 1000 : base;
+  }
+  return 0;
+}
+
+export interface HeroEncumbranceInfo {
+  strScore: number;
+  totalWeightLb: number;
+  lightThresholdLb: number;
+  heavyThresholdLb: number;
+  maxCarryLb: number;
+  tier: 'none' | 'light' | 'heavy' | 'max';
+  conditionName: string | null;
+  speedPenaltyFt: number;
+  speedCapFt: number | null;
+  hasStrDexConDisadvantage: boolean;
+  summary: string;
+}
+
+export function computeHeroEncumbrance(
+  player: Pick<PlayerCharacter, 'abilities' | 'inventory'>,
+  catalogs?: Partial<Pick<GameCatalogs, 'weapons' | 'armors' | 'gearItems'>> | null
+): HeroEncumbranceInfo {
+  const rawStr = Number(player.abilities?.str ?? 10);
+  const strScore = Number.isFinite(rawStr) && rawStr > 0 ? Math.round(rawStr) : 10;
+  const lightThresholdLb = strScore * 5;
+  const heavyThresholdLb = strScore * 10;
+  const maxCarryLb = strScore * 15;
+
+  let rawTotal = 0;
+  for (const item of player.inventory ?? []) {
+    const unit = getInventoryItemUnitWeightLb(item, catalogs);
+    const qty = Math.max(0, Number(item.quantity) || 0);
+    rawTotal += unit * qty;
+  }
+  const totalWeightLb = Math.round(rawTotal * 100) / 100;
+
+  if (totalWeightLb > maxCarryLb) {
+    return {
+      strScore,
+      totalWeightLb,
+      lightThresholdLb,
+      heavyThresholdLb,
+      maxCarryLb,
+      tier: 'max',
+      conditionName: 'Максимальный лимит',
+      speedPenaltyFt: 0,
+      speedCapFt: 5,
+      hasStrDexConDisadvantage: true,
+      summary:
+        'Вес превышает Сила × 15: скорость падает до 5 фт., помеха на проверки, атаки и спасброски СИЛ, ЛОВ и ТЕЛ.',
+    };
+  }
+  if (totalWeightLb > heavyThresholdLb) {
+    return {
+      strScore,
+      totalWeightLb,
+      lightThresholdLb,
+      heavyThresholdLb,
+      maxCarryLb,
+      tier: 'heavy',
+      conditionName: 'Сильно перегружен',
+      speedPenaltyFt: 20,
+      speedCapFt: null,
+      hasStrDexConDisadvantage: true,
+      summary:
+        'Вес превышает Сила × 10: скорость −20 фт., помеха на проверки, атаки и спасброски СИЛ, ЛОВ и ТЕЛ.',
+    };
+  }
+  if (totalWeightLb > lightThresholdLb) {
+    return {
+      strScore,
+      totalWeightLb,
+      lightThresholdLb,
+      heavyThresholdLb,
+      maxCarryLb,
+      tier: 'light',
+      conditionName: 'Слегка перегружен',
+      speedPenaltyFt: 10,
+      speedCapFt: null,
+      hasStrDexConDisadvantage: false,
+      summary: 'Вес превышает Сила × 5: скорость снижается на 10 фт.',
+    };
+  }
+  return {
+    strScore,
+    totalWeightLb,
+    lightThresholdLb,
+    heavyThresholdLb,
+    maxCarryLb,
+    tier: 'none',
+    conditionName: null,
+    speedPenaltyFt: 0,
+    speedCapFt: null,
+    hasStrDexConDisadvantage: false,
+    summary: 'Нагрузка в норме — штрафов к скорости и броскам нет.',
+  };
+}
+
+// ============================================================================
+// In-Game Clock & Dynamic Day/Night Map Tinting
+// ============================================================================
+
+/** 24 in-game hours = 4 real hours => 6 in-game minutes per 1 real minute */
+export const DEFAULT_GAME_CLOCK_SCALE = 6;
+
+export function createDefaultGameClock(nowMs: number = Date.now()): GameClockState {
+  return {
+    anchorGameMinutes: 9 * 60, // Day 1, 09:00
+    anchorRealMs: nowMs,
+    timeScale: DEFAULT_GAME_CLOCK_SCALE,
+    paused: false,
+  };
+}
+
+export function computeCurrentGameMinutes(
+  clock: GameClockState | undefined | null,
+  nowMs: number = Date.now()
+): number {
+  if (!clock) return 9 * 60;
+  const base = Number.isFinite(clock.anchorGameMinutes) ? Math.max(0, clock.anchorGameMinutes) : 9 * 60;
+  if (clock.paused) return base;
+  const scale =
+    typeof clock.timeScale === 'number' && Number.isFinite(clock.timeScale) && clock.timeScale >= 0
+      ? clock.timeScale
+      : DEFAULT_GAME_CLOCK_SCALE;
+  const elapsedRealMin = Math.max(0, (nowMs - clock.anchorRealMs) / 60000);
+  return base + elapsedRealMin * scale;
+}
+
+export interface FormattedGameClock {
+  totalMinutes: number;
+  day: number;
+  hours: number;
+  minutes: number;
+  minuteOfDay: number;
+  timeText: string;
+  dayText: string;
+  phaseLabel: string;
+  phaseIcon: 'moon' | 'sunrise' | 'sun' | 'sunset';
+  lighting: MapLighting;
+  overlayCss: string;
+  filterCss: string;
+  paused: boolean;
+}
+
+function lerpNum(a: number, b: number, t: number): number {
+  return a + (b - a) * Math.max(0, Math.min(1, t));
+}
+
+export function formatGameClock(
+  clock: GameClockState | undefined | null,
+  nowMs: number = Date.now()
+): FormattedGameClock {
+  const totalMinutes = computeCurrentGameMinutes(clock, nowMs);
+  const wholeMinutes = Math.floor(totalMinutes);
+  const day = Math.floor(wholeMinutes / 1440) + 1;
+  const minuteOfDay = ((wholeMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(minuteOfDay / 60);
+  const minutes = minuteOfDay % 60;
+  const timeText = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  const dayText = `День ${day}`;
+
+  // Continuous hour value for smooth lighting/color transitions
+  const h = (totalMinutes % 1440) / 60;
+
+  let phaseLabel: string;
+  let phaseIcon: 'moon' | 'sunrise' | 'sun' | 'sunset';
+  let lighting: MapLighting;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let alpha = 0;
+  let brightness = 1;
+  let saturate = 1;
+
+  if (h < 5.0 || h >= 21.0) {
+    // Deep Night (21:00 – 05:00)
+    phaseLabel = 'Ночь';
+    phaseIcon = 'moon';
+    lighting = 'darkness';
+    r = 8;
+    g = 14;
+    b = 42;
+    alpha = 0.56;
+    brightness = 0.62;
+    saturate = 0.78;
+  } else if (h < 6.5) {
+    // Dawn (05:00 – 06:30): night indigo -> warm sunrise rose/gold
+    const t = (h - 5.0) / 1.5;
+    phaseLabel = 'Рассвет';
+    phaseIcon = 'sunrise';
+    lighting = 'dim';
+    r = lerpNum(14, 215, t);
+    g = lerpNum(20, 120, t);
+    b = lerpNum(56, 72, t);
+    alpha = lerpNum(0.5, 0.24, t);
+    brightness = lerpNum(0.68, 0.9, t);
+    saturate = lerpNum(0.82, 1.05, t);
+  } else if (h < 8.0) {
+    // Early Morning (06:30 – 08:00): warm golden light -> bright clear day
+    const t = (h - 6.5) / 1.5;
+    phaseLabel = 'Утро';
+    phaseIcon = 'sunrise';
+    lighting = h < 7.0 ? 'dim' : 'bright';
+    r = lerpNum(230, 255, t);
+    g = lerpNum(155, 220, t);
+    b = lerpNum(80, 160, t);
+    alpha = lerpNum(0.2, 0.0, t);
+    brightness = lerpNum(0.92, 1.0, t);
+    saturate = lerpNum(1.04, 1.0, t);
+  } else if (h < 17.5) {
+    // Day (08:00 – 17:30): bright clear light
+    phaseLabel = h < 11.5 ? 'Утро' : 'День';
+    phaseIcon = 'sun';
+    lighting = 'bright';
+    r = 0;
+    g = 0;
+    b = 0;
+    alpha = 0;
+    brightness = 1;
+    saturate = 1;
+  } else if (h < 19.5) {
+    // Sunset / Evening (17:30 – 19:30): golden hour -> warm amber-crimson sunset
+    const t = (h - 17.5) / 2.0;
+    phaseLabel = h < 18.5 ? 'Вечер' : 'Закат';
+    phaseIcon = 'sunset';
+    lighting = h < 18.0 ? 'bright' : 'dim';
+    r = lerpNum(235, 195, t);
+    g = lerpNum(145, 72, t);
+    b = lerpNum(55, 52, t);
+    alpha = lerpNum(0.05, 0.3, t);
+    brightness = lerpNum(0.98, 0.84, t);
+    saturate = lerpNum(1.04, 1.08, t);
+  } else {
+    // Twilight (19:30 – 21:00): sunset crimson -> deep night indigo
+    const t = (h - 19.5) / 1.5;
+    phaseLabel = 'Сумерки';
+    phaseIcon = 'moon';
+    lighting = h < 20.5 ? 'dim' : 'darkness';
+    r = lerpNum(155, 10, t);
+    g = lerpNum(62, 16, t);
+    b = lerpNum(76, 46, t);
+    alpha = lerpNum(0.32, 0.55, t);
+    brightness = lerpNum(0.82, 0.63, t);
+    saturate = lerpNum(1.02, 0.8, t);
+  }
+
+  const overlayCss =
+    alpha <= 0.005
+      ? 'transparent'
+      : `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha.toFixed(3)})`;
+  const filterCss =
+    Math.abs(brightness - 1) < 0.01 && Math.abs(saturate - 1) < 0.01
+      ? 'none'
+      : `brightness(${brightness.toFixed(2)}) saturate(${saturate.toFixed(2)})`;
+
+  return {
+    totalMinutes,
+    day,
+    hours,
+    minutes,
+    minuteOfDay,
+    timeText,
+    dayText,
+    phaseLabel,
+    phaseIcon,
+    lighting,
+    overlayCss,
+    filterCss,
+    paused: Boolean(clock?.paused),
+  };
+}
+
+export function resolveEffectiveMapLighting(
+  mapLighting: MapLighting | undefined,
+  affectedByTimeOfDay: boolean | undefined,
+  clock: GameClockState | undefined | null,
+  nowMs: number = Date.now()
+): MapLighting {
+  if (affectedByTimeOfDay && clock) {
+    return formatGameClock(clock, nowMs).lighting;
+  }
+  return mapLighting ?? 'bright';
+}
+
 
 
 

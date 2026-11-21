@@ -14,16 +14,24 @@ import {
   Eye,
   FlaskConical,
   GitBranch,
+  HeartPulse,
   Image as ImageIcon,
   KeyRound,
   Layers,
   Loader2,
   LogOut,
   MapPin,
+  Moon,
   Package,
+  Pause,
   RefreshCw,
+  Scale,
   Shield,
+  Skull,
   Sparkles,
+  Sun,
+  Sunrise,
+  Sunset,
   Sword,
   Swords,
   User,
@@ -32,16 +40,22 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  computeEquippedHandsUsage,
   computeHeroActions,
+  computeHeroEncumbrance,
   computeHeroSkillTotal,
   computeLevelFromXp,
   computePlayerAcDetails,
   computePlayerEffectiveSpeed,
   computePlayerInitiativeDetails,
   formatEntityVisions,
+  formatGameClock,
   formatModifier,
+  formatWeaponPropertiesSummary,
+  formatWeightLb,
   getAbilityModifier,
   getActiveConditionEffects,
+  getAmmoCapacityForPlayer,
   getArmorCategoryLabel,
   getClassProficiencyBonus,
   getClassResourcesAtLevel,
@@ -49,9 +63,15 @@ import {
   getHeroClassFeatures,
   getHeroFeats,
   getHeroSubclassFeatures,
+  getInventoryItemUnitWeightLb,
   getNextLevelThreshold,
   getWeaponCategoryLabel,
   getWeaponRangeLabel,
+  getWeaponRequiredHands,
+  hasHeroWeaponMasteryFeature,
+  resolveGearCatalogItem,
+  resolveWeaponMasteryRef,
+  resolveWeaponPropertyRefs,
   resolveWeaponReachRange,
   sanitizeBackgroundAbilityBonuses,
   sortLevels,
@@ -119,6 +139,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [expandedFeatureId, setExpandedFeatureId] = useState<string | null>(null);
   const [expandedConditionName, setExpandedConditionName] = useState<string | null>(null);
+  const [expandedActionPropKey, setExpandedActionPropKey] = useState<string | null>(null);
   const [onlyProficientSkills, setOnlyProficientSkills] = useState(false);
 
   // Hero AI portrait generation modal state (used only inside entered hero sheet)
@@ -127,8 +148,14 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
   const [isGeneratingPortrait, setIsGeneratingPortrait] = useState(false);
   const [portraitError, setPortraitError] = useState<string | null>(null);
   const [portraitSuccessNote, setPortraitSuccessNote] = useState<string | null>(null);
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setClockNowMs(Date.now()), 2000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const handleAccountRegistered = useCallback((account: UserAccount) => {
     window.localStorage.setItem(ACCOUNT_STORAGE_KEY, account.id);
@@ -1007,6 +1034,22 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
       )
     : catalogs.skills;
 
+  const encumbrance = computeHeroEncumbrance(self, catalogs);
+  const handsUsage = computeEquippedHandsUsage(self.inventory, catalogs);
+  const hasWeaponMastery = hasHeroWeaponMasteryFeature(self, catalogs);
+  const myToken = playerState.tokens.find((t) => t.playerId === self.id);
+  const isMyTurn = Boolean(myToken && playerState.scene.activeTurnTokenId === myToken.id);
+  const deathSaves = self.deathSaves ?? { successes: 0, failures: 0, status: 'none' as const };
+  const formattedClock = formatGameClock(playerState.gameClock, clockNowMs);
+  const ClockPhaseIcon =
+    formattedClock.phaseIcon === 'moon'
+      ? Moon
+      : formattedClock.phaseIcon === 'sunrise'
+        ? Sunrise
+        : formattedClock.phaseIcon === 'sunset'
+          ? Sunset
+          : Sun;
+
   const handleToggleEquip = (item: InventoryItem) => {
     send({
       type: 'player:toggleEquip',
@@ -1109,8 +1152,19 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 px-2">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div
+            className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg bg-[#131A26] border border-slate-800 text-[11px] text-slate-300"
+            title={`${formattedClock.dayText} · ${formattedClock.phaseLabel}`}
+          >
+            <ClockPhaseIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="font-mono tabular-nums font-semibold text-slate-100">
+              {formattedClock.timeText}
+            </span>
+            {formattedClock.paused && <Pause className="w-3 h-3 text-slate-400 shrink-0" />}
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 px-1.5">
             <span
               className={`w-2 h-2 rounded-full ${
                 status === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
@@ -1123,11 +1177,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
           <button
             type="button"
             onClick={handleSwitchPlayer}
-            className="min-h-[44px] px-3 rounded-xl text-xs font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-800/80 flex items-center gap-1.5 transition-colors"
+            className="min-h-[44px] px-2.5 rounded-xl text-xs font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-800/80 flex items-center gap-1.5 transition-colors"
             aria-label="К списку персонажей"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Персонажи</span>
+            <span className="hidden xs:inline">Персонажи</span>
           </button>
         </div>
       </header>
@@ -1140,7 +1194,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
         >
           <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1 space-y-0.5">
-            <div className="text-xs font-semibold text-red-200">Невозможно экипировать</div>
+            <div className="text-xs font-semibold text-red-200">Действие недоступно</div>
             <p className="text-xs text-red-100 leading-relaxed">{errorNotice.message}</p>
           </div>
           <button
@@ -1170,6 +1224,165 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
                 {playerState.tvDisplay.travelMessage || 'Мастер готовит следующую локацию...'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Compact Mobile In-Game Time Strip */}
+        <div className="sm:hidden flex items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#131A26] border border-slate-800/90 text-xs">
+          <div className="flex items-center gap-2 text-slate-300">
+            <ClockPhaseIcon className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-medium">{formattedClock.phaseLabel}</span>
+            <span className="text-slate-500">·</span>
+            <span className="text-slate-400">{formattedClock.dayText}</span>
+          </div>
+          <div className="flex items-center gap-1.5 font-mono tabular-nums font-semibold text-slate-100">
+            <span>{formattedClock.timeText}</span>
+            {formattedClock.paused && (
+              <span className="text-[10px] font-sans font-medium text-amber-400">Пауза</span>
+            )}
+          </div>
+        </div>
+
+        {/* Active Turn Banner */}
+        {isMyTurn && deathSaves.status !== 'dead' && (
+          <div className="rounded-2xl p-3.5 border border-amber-400/70 bg-amber-500/15 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Swords className="w-5 h-5 text-amber-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-amber-200 leading-tight">
+                  Сейчас ваш ход!
+                </div>
+                <div className="text-[11px] text-amber-100/80 leading-snug">
+                  Раунд {playerState.scene.round}
+                  {encumbrance.tier === 'light'
+                    ? ' · Слегка перегружен: скорость −10 фт.'
+                    : encumbrance.tier === 'heavy'
+                      ? ' · Сильно перегружен: скорость −20 фт. и помеха!'
+                      : encumbrance.tier === 'max'
+                        ? ' · Максимальный лимит веса: скорость 5 фт. и помеха!'
+                        : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Death Saving Throws / Dying / Stabilized / Dead Status Banner */}
+        {deathSaves.status === 'dying' && (
+          <div
+            className={`rounded-2xl p-4 border space-y-3 ${
+              isMyTurn
+                ? 'bg-red-950/75 border-red-400 shadow-lg shadow-red-950/50'
+                : 'bg-red-950/50 border-red-600/70'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <HeartPulse className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="text-sm font-bold text-red-200">
+                  {isMyTurn
+                    ? 'Ваш ход — бросьте спасбросок от смерти (1к20)!'
+                    : 'Персонаж при смерти (0 HP, без сознания)'}
+                </div>
+                <p className="text-xs text-red-100/90 leading-relaxed">
+                  {isMyTurn
+                    ? 'Бросьте 1к20 и назовите результат мастеру: 10+ — успех, 2–9 — провал, 20 — очнуться с 1 HP, 1 — сразу 2 провала.'
+                    : 'В начале вашего хода бросьте 1к20: 3 успеха стабилизируют героя, 3 провала приведут к гибели.'}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <div className="rounded-xl bg-[#0B0F17]/80 border border-emerald-500/30 px-3 py-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-emerald-300">Успехи</span>
+                <div className="flex items-center gap-1.5">
+                  {[0, 1, 2].map((idx) => (
+                    <span
+                      key={idx}
+                      className={`w-3.5 h-3.5 rounded-full border ${
+                        idx < deathSaves.successes
+                          ? 'bg-emerald-400 border-emerald-300'
+                          : 'bg-slate-900 border-slate-600'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl bg-[#0B0F17]/80 border border-red-500/40 px-3 py-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-red-300">Провалы</span>
+                <div className="flex items-center gap-1.5">
+                  {[0, 1, 2].map((idx) => (
+                    <span
+                      key={idx}
+                      className={`w-3.5 h-3.5 rounded-full border ${
+                        idx < deathSaves.failures
+                          ? 'bg-red-500 border-red-300'
+                          : 'bg-slate-900 border-slate-600'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {deathSaves.status === 'stabilized' && (
+          <div className="rounded-2xl p-4 border border-emerald-500/50 bg-emerald-950/35 flex items-start gap-3">
+            <HeartPulse className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="text-sm font-semibold text-emerald-200">
+                Стабилизирован (0 HP, без сознания)
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Спасброски от смерти больше не требуются. Любой урон снова переведёт героя в состояние «Умирающий».
+              </p>
+            </div>
+          </div>
+        )}
+
+        {deathSaves.status === 'dead' && (
+          <div className="rounded-2xl p-4 border border-red-600/80 bg-red-950/65 flex items-start gap-3">
+            <Skull className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="text-sm font-bold text-red-200">Персонаж погиб</div>
+              <p className="text-xs text-red-100/85 leading-relaxed">
+                Три провала спасбросков от смерти. Требуется воскрешение или решение мастера.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Prominent Disadvantage Warning for Heavy / Max Encumbrance (extra-bright on player's turn) */}
+        {encumbrance.hasStrDexConDisadvantage && deathSaves.status !== 'dead' && (
+          <div
+            className={`rounded-2xl p-4 border flex items-start gap-3 ${
+              isMyTurn
+                ? 'bg-rose-950/75 border-rose-400 shadow-lg shadow-rose-950/40'
+                : 'bg-amber-950/40 border-amber-500/60'
+            }`}
+          >
+            <AlertTriangle
+              className={`w-5 h-5 shrink-0 mt-0.5 ${isMyTurn ? 'text-rose-300' : 'text-amber-400'}`}
+            />
+            <div className="min-w-0 space-y-1">
+              <div
+                className={`text-xs font-bold uppercase tracking-wide ${
+                  isMyTurn ? 'text-rose-200' : 'text-amber-200'
+                }`}
+              >
+                {isMyTurn ? 'Внимание в ваш ход · ' : ''}
+                {encumbrance.conditionName} ({formatWeightLb(encumbrance.totalWeightLb)} /{' '}
+                {encumbrance.maxCarryLb} фнт.)
+              </div>
+              <p className="text-xs text-slate-100 leading-relaxed">
+                <span className="font-semibold text-rose-300">ПОМЕХА</span> на все проверки
+                способностей, броски атаки и спасброски, использующие{' '}
+                <span className="font-semibold">Силу, Ловкость или Телосложение</span>.{' '}
+                {encumbrance.tier === 'max'
+                  ? 'Скорость снижена до 5 фт.'
+                  : 'Скорость снижена на 20 фт.'}
               </p>
             </div>
           </div>
@@ -1216,6 +1429,130 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
               </div>
             </div>
 
+            {/* Hero Weight Limit & Encumbrance Card */}
+            {(() => {
+              const weightPct = Math.min(
+                100,
+                Math.round((encumbrance.totalWeightLb / Math.max(1, encumbrance.maxCarryLb)) * 100)
+              );
+              const barColor =
+                encumbrance.tier === 'max'
+                  ? 'bg-red-500'
+                  : encumbrance.tier === 'heavy'
+                    ? 'bg-rose-500'
+                    : encumbrance.tier === 'light'
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-500';
+              const cardTone =
+                encumbrance.tier === 'max'
+                  ? 'border-red-500/60 bg-red-950/25'
+                  : encumbrance.tier === 'heavy'
+                    ? 'border-rose-500/50 bg-rose-950/20'
+                    : encumbrance.tier === 'light'
+                      ? 'border-amber-500/50 bg-amber-950/15'
+                      : 'border-slate-800 bg-[#131A26]';
+              return (
+                <div className={`rounded-2xl border p-4 space-y-2.5 ${cardTone}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+                      <Scale className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Нагрузка и лимит веса</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {encumbrance.conditionName && (
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
+                            encumbrance.tier === 'light'
+                              ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                              : 'bg-red-500/20 border-red-400/60 text-red-200'
+                          }`}
+                        >
+                          {encumbrance.conditionName}
+                        </span>
+                      )}
+                      <span className="text-sm font-mono tabular-nums font-bold text-slate-100">
+                        {formatWeightLb(encumbrance.totalWeightLb)} / {encumbrance.maxCarryLb} фнт.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress bar with 1/3 (STR×5) and 2/3 (STR×10) threshold ticks */}
+                  <div className="relative h-2.5 rounded-full bg-slate-800/90 overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-200 ${barColor}`}
+                      style={{ width: `${weightPct}%` }}
+                    />
+                    <span
+                      className="absolute top-0 bottom-0 left-1/3 w-px bg-slate-950/80"
+                      title={`Слегка перегружен: > ${encumbrance.lightThresholdLb} фнт.`}
+                    />
+                    <span
+                      className="absolute top-0 bottom-0 left-2/3 w-px bg-slate-950/80"
+                      title={`Сильно перегружен: > ${encumbrance.heavyThresholdLb} фнт.`}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 gap-2">
+                    <span>0</span>
+                    <span className={encumbrance.tier === 'light' ? 'text-amber-300 font-semibold' : ''}>
+                      ×5: {encumbrance.lightThresholdLb} фнт.
+                    </span>
+                    <span className={encumbrance.tier === 'heavy' ? 'text-rose-300 font-semibold' : ''}>
+                      ×10: {encumbrance.heavyThresholdLb} фнт.
+                    </span>
+                    <span className={encumbrance.tier === 'max' ? 'text-red-300 font-semibold' : ''}>
+                      Макс (СИЛ {encumbrance.strScore}×15): {encumbrance.maxCarryLb} фнт.
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-snug">{encumbrance.summary}</p>
+                </div>
+              );
+            })()}
+
+            {/* Hands Usage Summary Card */}
+            <div className="rounded-2xl border border-slate-800 bg-[#131A26] p-3.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+                  <Swords className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Занятость рук</span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-xs font-mono font-semibold border ${
+                    handsUsage.usedHands >= 2
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  {handsUsage.usedHands} / {handsUsage.maxHands} рук
+                </span>
+              </div>
+              {handsUsage.slots.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  Обе руки свободны — можно взять одноручное оружие, щит или двуручное оружие.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {handsUsage.slots.map((slot) => (
+                    <span
+                      key={slot.itemId}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0B0F17] border border-slate-700/90 text-xs text-slate-200"
+                    >
+                      <span className="font-medium">{slot.name}</span>
+                      <span className="text-[10px] font-mono text-amber-300">
+                        {slot.hands === 2 ? '2 руки' : '1 рука'}
+                      </span>
+                    </span>
+                  ))}
+                  {handsUsage.freeHands > 0 && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-[11px] text-emerald-300">
+                      Свободна {handsUsage.freeHands} рука
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {self.inventory.length === 0 ? (
               <div className="p-8 rounded-2xl bg-[#131A26] border border-slate-800 text-center space-y-1.5">
                 <p className="text-sm font-medium text-slate-300">Рюкзак пуст</p>
@@ -1225,7 +1562,18 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
               </div>
             ) : (
               <div className="rounded-2xl bg-[#131A26] border border-slate-800 divide-y divide-slate-800/80 overflow-hidden">
-                {self.inventory.map((item) => (
+                {self.inventory.map((item) => {
+                  const gearRef =
+                    item.category === 'gear' ? resolveGearCatalogItem(item, catalogs) : undefined;
+                  const weaponHands =
+                    item.category === 'weapon' ? getWeaponRequiredHands(item, catalogs) : null;
+                  const weaponPropRefs =
+                    item.category === 'weapon' ? resolveWeaponPropertyRefs(item, catalogs) : [];
+                  const weaponMastery =
+                    item.category === 'weapon' && item.equipped && hasWeaponMastery
+                      ? resolveWeaponMasteryRef(item, catalogs)
+                      : null;
+                  return (
                   <div key={item.id} className="p-4 flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3 min-w-0">
                       <div className="w-10 h-10 rounded-xl bg-[#0B0F17] border border-slate-800 flex items-center justify-center shrink-0 mt-0.5">
@@ -1239,6 +1587,16 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                           <span className="text-xs font-mono tabular-nums text-amber-400 font-semibold">
                             ×{item.quantity}
                           </span>
+                          {weaponHands && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] font-mono text-slate-300">
+                              {weaponHands === 2 ? '2 руки' : '1 рука'}
+                            </span>
+                          )}
+                          {item.category === 'armor' && item.armorCategory === 'shield' && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] font-mono text-sky-300">
+                              1 рука
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-400">
                           {item.weaponCategory
@@ -1255,7 +1613,7 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                           {item.equipped ? ' · Экипировано' : ''}
                         </div>
                         {item.category === 'weapon' && (
-                          <div className="mt-1.5 text-[11px] text-slate-300 space-y-0.5">
+                          <div className="mt-1.5 text-[11px] text-slate-300 space-y-1">
                             <div>
                               {item.damage && (
                                 <>
@@ -1276,12 +1634,32 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                                   </span>
                                 );
                               })()}
-                              {item.mastery && item.mastery !== '—' && (
-                                <span className="text-slate-400"> · Мастерство: {item.mastery}</span>
-                              )}
                             </div>
-                            {item.properties && item.properties !== '—' && (
-                              <div className="text-slate-400">Свойства: {item.properties}</div>
+                            {(weaponPropRefs.length > 0 || (item.properties && item.properties !== '—')) && (
+                              <div className="text-slate-400">
+                                Свойства:{' '}
+                                {weaponPropRefs.length > 0
+                                  ? formatWeaponPropertiesSummary(
+                                      {
+                                        propertyIds: weaponPropRefs.map((p) => p.id),
+                                        properties: item.properties || '',
+                                        versatileDamage: item.versatileDamage,
+                                        rangeType: item.weaponRangeType ?? 'melee',
+                                        rangeNormalFt: item.rangeNormalFt,
+                                        rangeMaxFt: item.rangeMaxFt,
+                                        thrownNormalFt: item.thrownNormalFt,
+                                        thrownMaxFt: item.thrownMaxFt,
+                                      },
+                                      catalogs
+                                    )
+                                  : item.properties}
+                              </div>
+                            )}
+                            {weaponMastery && (
+                              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/40 text-violet-200 font-medium">
+                                <Sparkles className="w-3 h-3 text-violet-300" />
+                                <span>Мастерство: {weaponMastery.name}</span>
+                              </div>
                             )}
                             {(item.weight || item.price) && (
                               <div className="text-slate-500 font-mono">
@@ -1313,6 +1691,44 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                             )}
                           </div>
                         )}
+                        {gearRef?.kind === 'ammunition' && (() => {
+                          const cap = getAmmoCapacityForPlayer(self.inventory, gearRef, catalogs);
+                          const hasCap = Number.isFinite(cap.maxCapacity);
+                          return (
+                            <div className="mt-1.5 text-[11px] space-y-0.5">
+                              <div
+                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border font-mono ${
+                                  cap.containerCount > 0 || !cap.containerRef
+                                    ? 'bg-sky-950/35 border-sky-500/35 text-sky-200'
+                                    : 'bg-rose-950/35 border-rose-500/45 text-rose-200'
+                                }`}
+                              >
+                                <span>
+                                  Запас: {cap.currentQty}
+                                  {hasCap ? ` / ${cap.maxCapacity}` : ''}
+                                </span>
+                                {cap.containerRef && (
+                                  <span className="font-sans text-[10px] opacity-85">
+                                    · {cap.containerRef.name}
+                                    {cap.containerCount === 0 ? ' (нет в инвентаре!)' : ` ×${cap.containerCount}`}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {gearRef?.kind === 'container' && (() => {
+                          const storedAmmo = gearRef.storedAmmoId
+                            ? catalogs.gearItems.find((g) => g.id === gearRef.storedAmmoId)
+                            : undefined;
+                          const totalCap = (gearRef.capacity ?? 20) * Math.max(1, item.quantity);
+                          return (
+                            <div className="mt-1 text-[11px] text-sky-300/90">
+                              Контейнер: вмещает до {totalCap} шт.
+                              {storedAmmo ? ` (${storedAmmo.name})` : ''}
+                            </div>
+                          );
+                        })()}
                         {item.description &&
                           item.category !== 'weapon' &&
                           item.category !== 'armor' && (
@@ -1320,6 +1736,17 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                               {item.description}
                             </p>
                           )}
+                        {(() => {
+                          const unitLb = getInventoryItemUnitWeightLb(item, catalogs);
+                          if (unitLb <= 0) return null;
+                          const totalLb = Math.round(unitLb * Math.max(0, item.quantity) * 100) / 100;
+                          return (
+                            <div className="mt-1 text-[11px] font-mono text-slate-400">
+                              Вес: {formatWeightLb(totalLb)} фнт.
+                              {item.quantity > 1 ? ` (${formatWeightLb(unitLb)} × ${item.quantity})` : ''}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1351,7 +1778,8 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
@@ -1656,9 +2084,20 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   <Swords className="w-4 h-4 text-amber-400 shrink-0" />
                   <span>Действия ({heroActions.length})</span>
                 </h2>
-                <span className="text-[11px] font-mono text-slate-400">
-                  БМ +{profBonus}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono border ${
+                      handsUsage.usedHands >= 2
+                        ? 'bg-amber-500/15 border-amber-500/45 text-amber-200'
+                        : 'bg-[#131A26] border-slate-800 text-slate-300'
+                    }`}
+                  >
+                    Руки: {handsUsage.usedHands}/{handsUsage.maxHands}
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    БМ +{profBonus}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-2.5">
@@ -1666,24 +2105,39 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                   const invItem = act.inventoryItemId
                     ? self.inventory.find((i) => i.id === act.inventoryItemId)
                     : undefined;
+                  const activeExpandedProp = act.resolvedProperties?.find(
+                    (p) => `${act.id}:${p.id}` === expandedActionPropKey
+                  );
                   return (
                     <div
                       key={act.id}
                       className={`rounded-2xl border p-4 space-y-2.5 transition-colors ${
-                        act.equipped
-                          ? 'bg-[#131A26] border-slate-800'
-                          : 'bg-[#131A26]/65 border-slate-800/70 opacity-85'
+                        act.kind === 'bonus_light'
+                          ? 'bg-amber-950/15 border-amber-500/40'
+                          : act.equipped
+                            ? 'bg-[#131A26] border-slate-800'
+                            : 'bg-[#131A26]/65 border-slate-800/70 opacity-85'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-sm font-semibold text-slate-100">
                               {act.name}
                             </span>
                             <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px] text-slate-300">
                               {act.rangeLabel}
                             </span>
+                            {act.handsRequired && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/80 font-mono text-[10px] text-slate-300">
+                                {act.handsRequired === 2 ? '2 руки' : '1 рука'}
+                              </span>
+                            )}
+                            {act.kind === 'bonus_light' && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-[10px] font-semibold text-amber-200">
+                                {act.name.includes('Быстрое') ? 'Часть Атаки' : 'Бонусное действие'}
+                              </span>
+                            )}
                             {!act.equipped && (
                               <span className="px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-400">
                                 В рюкзаке
@@ -1706,7 +2160,21 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="rounded-xl bg-[#0B0F17] border border-slate-800/90 px-3 py-2">
-                          <div className="text-[10px] text-slate-400">Бросок попадания</div>
+                          <div className="flex items-center justify-between gap-1 flex-wrap">
+                            <span className="text-[10px] text-slate-400">Бросок попадания</span>
+                            <div className="flex items-center gap-1">
+                              {act.heavyDisadvantage && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-[9px] font-semibold text-rose-300">
+                                  Помеха (СИЛ&lt;13)
+                                </span>
+                              )}
+                              {encumbrance.hasStrDexConDisadvantage && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-[9px] font-semibold text-rose-300">
+                                  Помеха
+                                </span>
+                              )}
+                            </div>
+                          </div>
                           <div className="text-sm font-mono tabular-nums font-bold text-amber-400">
                             {act.hitFormula}
                           </div>
@@ -1725,23 +2193,211 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                         </div>
                       </div>
 
+                      {/* Equipped Weapon Active Property Details */}
+                      {act.equipped && act.versatileAttack && (
+                        <div
+                          className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 ${
+                            act.versatileAttack.availableNow
+                              ? 'bg-sky-950/25 border-sky-500/35'
+                              : 'bg-slate-900/50 border-slate-800'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-sky-200">
+                              Универсальное — двумя руками
+                            </div>
+                            <div className="text-[10px] text-slate-400 leading-snug">
+                              {act.versatileAttack.note}
+                            </div>
+                          </div>
+                          <div className="text-right font-mono tabular-nums shrink-0">
+                            <div className="text-xs font-bold text-sky-300">
+                              {act.versatileAttack.damageFormula}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {act.versatileAttack.damageBreakdown}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {act.equipped && act.thrownAttack && (
+                        <div className="rounded-xl bg-amber-950/20 border border-amber-500/30 px-3 py-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-amber-200">
+                              Метательная атака ({act.thrownAttack.normalFt}/{act.thrownAttack.maxFt} фт.)
+                            </div>
+                            <div className="text-[10px] text-slate-400 leading-snug">
+                              Помеха дальше {act.thrownAttack.normalFt} фт. · Можно вынуть частью атаки
+                            </div>
+                          </div>
+                          <div className="text-right font-mono tabular-nums shrink-0">
+                            <div className="text-xs font-bold text-amber-300">
+                              {act.thrownAttack.hitFormula}
+                            </div>
+                            <div className="text-[11px] text-rose-300">
+                              {act.thrownAttack.damageFormula}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {act.equipped && act.ammoStatus && (
+                        <div
+                          className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 ${
+                            act.ammoStatus.currentQty > 0 && act.ammoStatus.hasContainer
+                              ? 'bg-[#0B0F17] border-sky-500/35'
+                              : 'bg-rose-950/30 border-rose-500/50'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-slate-200">
+                              Боеприпас: {act.ammoStatus.ammoName}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {act.ammoStatus.containerName
+                                ? `${act.ammoStatus.containerName} · `
+                                : ''}
+                              <span
+                                className={`font-mono font-semibold ${
+                                  act.ammoStatus.currentQty === 0
+                                    ? 'text-rose-300'
+                                    : 'text-sky-300'
+                                }`}
+                              >
+                                {act.ammoStatus.currentQty} / {act.ammoStatus.maxCapacity}
+                              </span>
+                              {act.ammoStatus.currentQty === 0 ? ' — боеприпасы закончились!' : ''}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              disabled={act.ammoStatus.currentQty <= 0}
+                              onClick={() =>
+                                send({
+                                  type: 'player:spendAmmo',
+                                  playerId: self.id,
+                                  ammoItemId: act.ammoStatus!.ammoItemId,
+                                  delta: -1,
+                                })
+                              }
+                              className="min-h-[32px] px-2.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 disabled:opacity-40 border border-rose-500/40 text-[11px] font-semibold text-rose-200 transition-colors"
+                            >
+                              −1 выстрел
+                            </button>
+                            <button
+                              type="button"
+                              disabled={act.ammoStatus.currentQty >= act.ammoStatus.maxCapacity}
+                              onClick={() =>
+                                send({
+                                  type: 'player:spendAmmo',
+                                  playerId: self.id,
+                                  ammoItemId: act.ammoStatus!.ammoItemId,
+                                  delta: 1,
+                                })
+                              }
+                              className="min-h-[32px] px-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-[11px] font-mono text-slate-200 transition-colors"
+                              title="Подобрать/вернуть боеприпас"
+                            >
+                              +1
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {act.equipped &&
+                        (act.heavyDisadvantage ||
+                          act.loadingNote ||
+                          act.finesseChoice ||
+                          act.reachBonusNote) && (
+                          <div className="space-y-1 text-[11px]">
+                            {act.heavyDisadvantage && (
+                              <div className="rounded-lg bg-rose-950/35 border border-rose-500/45 px-2.5 py-1.5 text-rose-200">
+                                Тяжёлое оружие: ваша Сила меньше 13 — броски атаки совершаются с Помехой.
+                              </div>
+                            )}
+                            {act.loadingNote && (
+                              <div className="rounded-lg bg-amber-950/25 border border-amber-500/30 px-2.5 py-1 text-amber-200">
+                                Перезарядка: не более 1 выстрела за действие, бонусное действие или реакцию.
+                              </div>
+                            )}
+                            {act.finesseChoice && (
+                              <div className="text-[10px] text-slate-400 px-0.5">
+                                Фехтовальное: можно использовать модификатор Силы или Ловкости (выбран лучший).
+                              </div>
+                            )}
+                            {act.reachBonusNote && (
+                              <div className="text-[10px] text-slate-400 px-0.5">
+                                Досягаемость: +5 фт. к дальности рукопашных атак в свой ход и атак при провокации.
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                       {act.bonusNote && (
                         <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-2.5 py-1.5 text-[11px] text-emerald-300 leading-snug">
                           {act.bonusNote}
                         </div>
                       )}
 
-                      {((act.properties && act.properties !== '—') ||
-                        (act.mastery && act.mastery !== '—')) && (
-                        <div className="text-[11px] text-slate-400 leading-snug">
-                          {act.mastery && act.mastery !== '—' && (
-                            <span className="text-amber-300/90 font-medium">
-                              Мастерство: {act.mastery}
-                              {act.properties && act.properties !== '—' ? ' · ' : ''}
+                      {/* Active Weapon Mastery — ONLY shown when equipped AND hero has «Оружейное мастерство» */}
+                      {act.activeMastery && (
+                        <div className="rounded-xl bg-violet-950/35 border border-violet-500/45 px-3 py-2.5 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-violet-200 flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                              <span>Мастерство: {act.activeMastery.name}</span>
                             </span>
+                            {act.activeMastery.saveDc !== undefined && (
+                              <span className="px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-400/50 font-mono text-[10px] font-bold text-violet-100">
+                                Сл {act.activeMastery.saveDc}
+                              </span>
+                            )}
+                          </div>
+                          {act.activeMastery.computedHint && (
+                            <div className="text-[11px] font-medium text-amber-200/95 leading-snug">
+                              {act.activeMastery.computedHint}
+                            </div>
                           )}
-                          {act.properties && act.properties !== '—' && (
-                            <span>{act.properties}</span>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            {act.activeMastery.description}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Interactive Weapon Property Chips */}
+                      {act.resolvedProperties && act.resolvedProperties.length > 0 && (
+                        <div className="space-y-1.5 pt-0.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            {act.resolvedProperties.map((prop) => {
+                              const propKey = `${act.id}:${prop.id}`;
+                              const isOpen = expandedActionPropKey === propKey;
+                              return (
+                                <button
+                                  key={prop.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedActionPropKey(isOpen ? null : propKey)
+                                  }
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors ${
+                                    isOpen
+                                      ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                                      : 'bg-[#0B0F17] border-slate-700/80 text-slate-300 hover:border-slate-500'
+                                  }`}
+                                >
+                                  {prop.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {activeExpandedProp && (
+                            <div className="rounded-lg bg-[#0B0F17] border border-slate-700/90 px-2.5 py-2 text-[11px] text-slate-300 leading-relaxed">
+                              <span className="font-semibold text-amber-200">
+                                {activeExpandedProp.name}:{' '}
+                              </span>
+                              {activeExpandedProp.description}
+                            </div>
                           )}
                         </div>
                       )}
@@ -1758,10 +2414,17 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                 {catalogs.abilities.map((ab) => {
                   const val = self.abilities[ab.id] ?? 10;
                   const mod = getAbilityModifier(val, catalogs.abilityModifiers);
+                  const hasEncDisadv =
+                    encumbrance.hasStrDexConDisadvantage &&
+                    (ab.id === 'str' || ab.id === 'dex' || ab.id === 'con');
                   return (
                     <div
                       key={ab.id}
-                      className="rounded-2xl bg-[#131A26] border border-slate-800 p-3.5 space-y-1.5"
+                      className={`rounded-2xl border p-3.5 space-y-1.5 ${
+                        hasEncDisadv
+                          ? 'bg-rose-950/20 border-rose-500/45'
+                          : 'bg-[#131A26] border-slate-800'
+                      }`}
                     >
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-xs font-medium text-slate-300 truncate">
@@ -1777,6 +2440,11 @@ export function PlayerView({ onNavigate }: PlayerViewProps) {
                           {val}
                         </span>
                       </div>
+                      {hasEncDisadv && (
+                        <div className="text-[10px] font-medium text-rose-300">
+                          Помеха (перегрузка)
+                        </div>
+                      )}
                     </div>
                   );
                 })}
